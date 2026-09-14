@@ -81,10 +81,12 @@ export default function App() {
   const sync = liveStatus?.syncStatus;
   const syncOk = sync?.ok;
   const activeWorkspace = workspaceState?.activeWorkspace;
-  const activeTasks = tasks.filter((task) => isEdict(task) && !isArchived(task) && !['Done', 'Cancelled'].includes(task.state));
-  const currentNav = activeTab === 'memorials' ? 'archive' : activeTab === 'skills' ? 'skills' : activeTab === 'preflight' ? 'guard' : activeTab === 'monitor' ? 'monitor' : 'run';
+  const currentNav = activeTab === 'memorials' ? 'archive' : activeTab === 'skills' ? 'skills' : activeTab === 'preflight' ? 'guard' : ['monitor', 'officials'].includes(activeTab) ? 'monitor' : activeTab === 'models' ? 'settings' : 'run';
+  const visibleTabs = TAB_DEFS.filter((tab) => currentNav === 'run'
+    ? ['edicts', 'court', 'yushufang', 'sessions', 'templates', 'morning'].includes(tab.key)
+    : currentNav === 'monitor' ? ['monitor', 'officials'].includes(tab.key) : false);
 
-  const openSettings = (tab?: string) => void window.edictDesktop?.openSettings?.(tab);
+  const openSettings = (tab?: string) => window.edictDesktop?.openSettings ? void window.edictDesktop.openSettings(tab) : setActiveTab('models');
   const openWorkspacePermissions = () => void window.edictDesktop?.openWorkspacePermissions?.();
   const switchWorkspace = async (id: string) => {
     if (!id || id === workspaceState?.activeWorkspaceId) return;
@@ -165,20 +167,11 @@ export default function App() {
               {item.icon}<span>{item.label}</span>
             </button>)}
           </nav>
-          <div className="rail-label">当前项目</div>
-          <div className="rail-project">{activeWorkspace?.projectPath ? activeWorkspace.projectPath.split('/').pop() : '未绑定项目'}</div>
-          <button className={`rail-link ${activeTab === 'edicts' ? 'active' : ''}`} type="button" onClick={() => setActiveTab('edicts')}>任务运行 <span>{activeTasks.length}</span></button>
-          <button className={`rail-link ${activeTab === 'yushufang' ? 'active' : ''}`} type="button" onClick={() => setActiveTab('yushufang')}>实时问询</button>
-          <div className="rail-divider" />
-          <div className="rail-label">三省六部</div>
-          <div className="rail-flow"><span>太子</span><span>中书省</span><span>门下省</span><span>尚书省</span><span>六部</span><span>回奏</span></div>
-          <button className="rail-link" type="button" onClick={() => openSettings()}>供应商与模型 <span>设置</span></button>
-          <button className={`rail-link ${activeTab === 'preflight' ? 'active' : ''}`} type="button" onClick={() => setActiveTab('preflight')}>执行保障 <span>检测</span></button>
         </aside>
 
         <main className="workbench-main">
-          <div className="tabs" role="tablist" aria-label="三省六部详细页面">
-            {TAB_DEFS.map((t) => (
+          {visibleTabs.length > 0 && <div className="tabs" role="tablist" aria-label="当前分组页面">
+            {visibleTabs.map((t) => (
               <button
                 key={t.key}
                 type="button"
@@ -192,9 +185,9 @@ export default function App() {
                 {tabBadge(t.key) && <span className="tbadge">{tabBadge(t.key)}</span>}
               </button>
             ))}
-          </div>
+          </div>}
 
-          {readiness && !readiness.ready && <section className="readiness-banner" role="status" aria-label="开工体检状态">
+          {activeTab !== 'preflight' && readiness && !readiness.ready && <section className="readiness-banner" role="status" aria-label="开工体检状态">
             <div className="readiness-copy">
               <strong>开工体检未通过</strong>
               <span>{readiness.next || '请先修复下面列出的运行环境问题。'}</span>

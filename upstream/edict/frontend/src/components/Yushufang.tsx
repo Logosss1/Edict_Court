@@ -20,9 +20,10 @@ export default function Yushufang() {
   const [officials, setOfficials] = useState<YushufangOfficial[]>([])
   const [rooms, setRooms] = useState<YushufangRoom[]>([])
   const [room, setRoom] = useState<YushufangRoom | null>(null)
-  const [audience, setAudience] = useState<'prince' | 'ministers'>('ministers')
+  const [draft, setDraft] = useState(() => sessionStorage.getItem('edict-question-draft') || '')
+  const [audience, setAudience] = useState<'prince' | 'ministers'>(() => sessionStorage.getItem('edict-question-draft') ? 'prince' : 'ministers')
   const [selected, setSelected] = useState<string[]>([])
-  const [topic, setTopic] = useState('')
+  const [topic, setTopic] = useState(() => (sessionStorage.getItem('edict-question-draft') || '').slice(0, 500))
   const [thinking, setThinking] = useState('default')
   const modelCapabilities = useModelCapabilities()
   const [busy, setBusy] = useState('')
@@ -219,6 +220,14 @@ export default function Yushufang() {
           <button className="btn btn-g" onClick={() => beginRoom('ministers')} disabled={Boolean(busy)}><MessageSquare size={15} />新议事</button>
         </div>
       </header>
+      {draft && <section className="command-handoff" aria-label="来自总控台的问询">
+        <strong>来自总控台的问询</strong><p>{draft}</p>
+        <p>{active ? `将发送到当前会话「${room?.topic}」，由该会话中的 Agent 回答。` : '问题已保留。先开启太子密谈，再发送问询，无需重新输入。'}</p>
+        <button className="btn btn-p" disabled={!active || Boolean(busy) || Boolean(paused) || !runtime?.ok || !thinkingReady} onClick={async () => {
+          if (await send(draft, [])) { sessionStorage.removeItem('edict-question-draft'); setDraft('') }
+        }}>向当前会话发送</button>
+        <button className="btn btn-g" disabled={Boolean(busy)} onClick={() => { sessionStorage.removeItem('edict-question-draft'); setDraft('') }}>丢弃问询草稿</button>
+      </section>}
       {error && <div className="yushu-alert error" role="alert"><AlertTriangle size={16} />{error}</div>}
       {notice && !paused && <div className="yushu-alert success" role="status"><Check size={16} />{notice}</div>}
       <section className={`yushu-runtime ${runtime?.ok ? 'ready' : 'unavailable'}`} aria-label="运行依赖">

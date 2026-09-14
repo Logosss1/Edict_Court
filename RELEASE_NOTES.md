@@ -2,6 +2,15 @@
 
 Release descriptions are maintained in English on the [GitHub Releases page](https://github.com/Logosss1/Edict_InnerCourt/releases). Each version keeps its own installation packages; later releases do not overwrite earlier ones.
 
+## 0.3.2
+
+- Fix the desktop startup handoff so a successful local dashboard launch reliably leaves the loading screen and opens the main console.
+- Make the Settings return path restore the dashboard window instead of leaving the app on a stale or hidden startup page.
+- Improve the startup and dashboard IPC coordination, including bounded navigation recovery and clearer readiness sequencing.
+- Improve Agent settings presentation with Chinese role names and concise responsibility descriptions while preserving the canonical Agent IDs and the Three Departments and Six Ministries workflow.
+- Add regression coverage for startup recovery, settings-window return, project file access, workflow display, and the desktop workbench experience.
+- Publish fresh Apple Silicon macOS, Intel macOS, Windows x64, and Linux x64 packages without replacing earlier release artifacts.
+
 ## 0.3.1
 
 - Make desktop task dispatch work locally by default after provider/model setup, without requiring a separately running OpenClaw Gateway.

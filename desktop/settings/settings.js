@@ -10,6 +10,7 @@ const els = {
   list: $('#provider-list'), empty: $('#empty-providers'), form: $('#provider-form'),
   title: $('#editor-title'), status: $('#provider-status'), id: $('#provider-id'), idPreview: $('#provider-id-preview'),
   name: $('#provider-name'), type: $('#provider-type'), url: $('#provider-url'), key: $('#provider-key'), keyHint: $('#key-hint'),
+  keyToggle: $('#toggle-provider-key'), keyReplace: $('#replace-provider-key'),
   models: $('#provider-models'), defaultModel: $('#provider-default-model'), error: $('#form-error'), success: $('#form-success'),
   testMeta: $('#provider-test-meta'),
   remove: $('#remove-provider'), diagnostics: $('#diagnostics'),
@@ -40,8 +41,32 @@ let capabilityAgents = []
 let capabilityError = ''
 let discoveredModels = null
 let providerFormRevision = 0
+let revealKeyBusy = false
 
 const BUILTIN_PROVIDER_IDS = new Set(['anthropic', 'openai', 'openai-codex', 'google', 'copilot', 'github-copilot'])
+
+// Display-only labels. Keep the stable English IDs for routing, config and API calls.
+const AGENT_DISPLAY = Object.freeze({
+  taizi: { name: '太子', description: '消息分拣与旨意整理' },
+  zhongshu: { name: '中书省', description: '接旨规划与任务拆解' },
+  menxia: { name: '门下省', description: '方案审议、风险把关与封驳' },
+  shangshu: { name: '尚书省', description: '任务派发、协调与结果汇总' },
+  hubu: { name: '户部', description: '数据分析、资源与成本核算' },
+  libu: { name: '礼部', description: '文档、规范与对外表达' },
+  bingbu: { name: '兵部', description: '工程开发、代码与算法实现' },
+  xingbu: { name: '刑部', description: '测试验收、安全与合规审查' },
+  gongbu: { name: '工部', description: '基础设施、部署与自动化工具' },
+  libu_hr: { name: '吏部', description: 'Agent 管理、权限与能力培训' },
+  zaochao: { name: '早朝官', description: '早朝简报与信息汇总' },
+})
+
+function agentDisplay(bindingOrId) {
+  const agentId = typeof bindingOrId === 'string' ? bindingOrId : bindingOrId?.agentId
+  const known = agentId ? AGENT_DISPLAY[agentId] : null
+  if (known) return known
+  const fallbackName = typeof bindingOrId === 'object' ? bindingOrId?.label : ''
+  return { name: fallbackName || agentId || '未命名 Agent', description: '协同处理任务' }
+}
 
 function isCustomModelReference(model) {
   const value = String(model || '').trim()
@@ -171,12 +196,38 @@ function clearDiscoveredModels() {
   providerFormRevision += 1
 }
 
+function setKeyVisibility(visible) {
+  els.key.type = visible ? 'text' : 'password'
+  els.keyToggle.setAttribute('aria-pressed', String(visible))
+  els.keyToggle.setAttribute('aria-label', visible ? '隐藏 API Key' : '显示 API Key')
+  els.keyToggle.title = visible ? '隐藏 API Key' : '显示 API Key'
+  els.keyToggle.querySelector('.eye-visible').hidden = visible
+  els.keyToggle.querySelector('.eye-hidden').hidden = !visible
+}
+
+function setKeyEditState({ stored = false, replacing = false } = {}) {
+  setKeyVisibility(false)
+  els.key.disabled = stored && !replacing
+  els.keyToggle.disabled = false
+  els.keyReplace.hidden = !stored || replacing
+  if (stored && !replacing) {
+    els.key.placeholder = '密钥已安全保存'
+    els.keyHint.textContent = '密钥已安全保存；点击眼睛可回显，点击“更换密钥”后才能修改。'
+  } else if (stored) {
+    els.key.placeholder = '输入新密钥；留空并保存将继续使用原密钥'
+    els.keyHint.textContent = '这里只显示本次输入；保存后会重新锁定。'
+  } else {
+    els.key.placeholder = '输入供应商 API Key'
+    els.keyHint.textContent = '保存后默认隐藏；点击眼睛可回显，密钥仍由系统安全存储保护。'
+  }
+}
+
 function resetProviderForm() {
   clearDiscoveredModels()
   selectedProviderId = ''
   els.form.reset(); els.id.value = ''; els.idPreview.value = ''
   els.title.textContent = '新增供应商'; els.remove.hidden = true
-  els.keyHint.textContent = '保存后只显示“已设置”，不会回显原密钥。'
+  setKeyEditState()
   setStatus(els.status, 'neutral', '未保存'); setProviderTestMeta(); setMessage()
 }
 
@@ -187,7 +238,8 @@ function fillProviderForm(provider) {
   els.type.value = provider.type || 'openai-compatible'; els.url.value = provider.baseUrl || ''; els.key.value = ''
   els.models.value = (provider.models || []).join('\n'); els.defaultModel.value = provider.defaultModel || provider.defaultModelId || ''
   els.title.textContent = `编辑 · ${provider.name || provider.id}`; els.remove.hidden = false
-  els.keyHint.textContent = provider.secretStored ? '密钥已安全保存；留空表示继续使用现有密钥。' : '尚未设置密钥。'
+  setKeyEditState({ stored: Boolean(provider.secretStored) })
+  if (!provider.secretStored) els.keyHint.textContent = '尚未设置密钥。'
   setStatus(els.status, provider.secretStored ? 'ok' : 'neutral', provider.secretStored ? '密钥已设置' : '待设置密钥'); setProviderTestMeta(); setMessage()
 }
 
@@ -202,6 +254,10 @@ function renderProviderList() {
 
 async function loadProviders() {
   providers = await api.listProviders()
+  if (!selectedProviderId && providers.length) {
+    selectedProviderId = providers[0].id
+    fillProviderForm(providers[0])
+  }
   renderProviderList()
   populateProviderSelect(els.agentProvider, els.agentProvider?.value)
   populateProviderSelect(els.globalProvider, els.globalProvider?.value)
@@ -224,14 +280,78 @@ els.form.addEventListener('submit', async (event) => {
   event.preventDefault(); setMessage()
   const payload = formPayload()
   if (!payload.name || !payload.baseUrl) { setMessage('请填写显示名称和 Base URL。'); return }
+  const saveButton = $('#save-provider')
+  saveButton.disabled = true
+  saveButton.textContent = '保存中…'
   try {
     const saved = await api.saveProvider(payload)
     selectedProviderId = saved.id
     await loadProviders(); const provider = providers.find((item) => item.id === selectedProviderId)
     if (provider) fillProviderForm(provider)
     const integration = saved.integration
-    setMessage('', integration && integration.ok === false ? `供应商已保存，但 OpenClaw 同步失败：${integration.error || '未知错误'}` : '供应商已保存，并已同步到 OpenClaw 模型目录。')
+    if (integration && integration.ok === false) {
+      setMessage(`供应商已保存，但 OpenClaw 同步失败：${integration.error || '未知错误'}`)
+      return
+    }
+    let activeTasks = null
+    try {
+      const snapshot = await api.getObservability?.({ timeoutMs: 2_500 })
+      activeTasks = Array.isArray(snapshot?.activeTasks) ? snapshot.activeTasks : null
+    } catch {}
+    if (activeTasks?.length === 0 && api.reloadDashboard) {
+      saveButton.textContent = '正在应用…'
+      await api.reloadDashboard()
+      await loadDiagnostics()
+      setMessage('', '供应商与密钥已保存，运行看板已重载并生效。')
+    } else {
+      await loadDiagnostics()
+      els.reloadDashboard.hidden = false
+      setMessage('', activeTasks?.length
+        ? `供应商与密钥已保存。当前有 ${activeTasks.length} 个任务，为避免中断未自动重载；请在合适时点击顶部“重载看板”。`
+        : '供应商与密钥已保存；请点击顶部“重载看板”使运行进程读取新配置。')
+    }
   } catch (error) { setMessage(errorText(error)); setStatus(els.status, 'error', '保存失败') }
+  finally { saveButton.disabled = false; saveButton.textContent = '保存供应商' }
+})
+
+async function revealStoredProviderKey() {
+  if (revealKeyBusy || !selectedProviderId) return
+  if (typeof api.revealProviderKey !== 'function') {
+    setMessage('当前桌面版本不支持 API Key 回显，请重新启动软件后重试。')
+    return
+  }
+  const providerId = selectedProviderId
+  const revision = providerFormRevision
+  revealKeyBusy = true
+  els.keyToggle.disabled = true
+  try {
+    const secret = await api.revealProviderKey(providerId)
+    if (revision !== providerFormRevision || selectedProviderId !== providerId) return
+    if (typeof secret !== 'string' || !secret) throw new Error('未找到已保存的密钥，请点击“更换密钥”重新设置。')
+    els.key.value = secret
+    setKeyVisibility(true)
+    els.key.focus()
+  } catch (error) {
+    if (revision === providerFormRevision && selectedProviderId === providerId) setMessage(`无法回显 API Key：${errorText(error)}`)
+  } finally {
+    revealKeyBusy = false
+    if (revision === providerFormRevision && selectedProviderId === providerId) els.keyToggle.disabled = false
+  }
+}
+
+els.keyToggle.addEventListener('click', async () => {
+  if (els.keyToggle.disabled) return
+  if (els.key.type === 'password' && els.key.disabled && !els.key.value) {
+    await revealStoredProviderKey()
+    return
+  }
+  setKeyVisibility(els.key.type === 'password')
+  els.key.focus()
+})
+els.keyReplace.addEventListener('click', () => {
+  els.key.value = ''
+  setKeyEditState({ stored: true, replacing: true })
+  els.key.focus()
 })
 
 $('#new-provider').addEventListener('click', () => { resetProviderForm(); renderProviderList(); els.name.focus() })
@@ -293,7 +413,19 @@ els.remove.addEventListener('click', async () => {
   if (!selectedProviderId || !window.confirm('删除此供应商及其安全存储的密钥？')) return
   try { await api.removeProvider(selectedProviderId); resetProviderForm(); await loadProviders() } catch (error) { setMessage(errorText(error)) }
 })
-$('#open-dashboard').addEventListener('click', () => api.openDashboard())
+$('#open-dashboard').addEventListener('click', async () => {
+  const button = $('#open-dashboard')
+  button.disabled = true
+  button.textContent = '返回中…'
+  try {
+    const result = await api.openDashboard()
+    if (result?.ok === false) throw new Error(result.error || '无法返回总控台')
+  } catch (error) {
+    els.diagnostics.textContent = `返回总控台失败：${errorText(error)}`
+    button.disabled = false
+    button.textContent = '返回总控台'
+  }
+})
 $('#open-monitor').addEventListener('click', () => api.openMonitor?.())
 els.reloadDashboard.addEventListener('click', async () => {
   els.reloadDashboard.disabled = true; els.reloadDashboard.textContent = '重载中…'
@@ -337,6 +469,12 @@ function boundAgentModel() {
     || bindingRecord(selectedAgentId)?.model || configSnapshot?.defaultModel || ''
 }
 
+function selectedAgentModel() {
+  return els.agentProvider.value && els.agentModel.value
+    ? `${els.agentProvider.value}/${els.agentModel.value}`
+    : boundAgentModel()
+}
+
 function populateThinking(select, model, current, inheritedLabel, details) {
   const capability = modelCapabilities.find(item => item.model === model)
   const levels = [...new Set(['default', ...(capability?.levels || [])])]
@@ -347,9 +485,15 @@ function populateThinking(select, model, current, inheritedLabel, details) {
   let value = String(current || '')
   if (value === 'off' && levels.includes('none')) value = 'none'
   if (value && !levels.includes(value)) value = levels.find(level => mapping[level] === value) || value
+  let fallbackNotice = ''
+  const knownIncompatible = Boolean(capability && value && (!levels.includes(value) || !supported(value)))
+  if (knownIncompatible) {
+    fallbackNotice = `原档位 ${value} 不适用于 ${model}，已切换为模型默认。`
+    value = 'default'
+  }
   const incompatible = Boolean(value && (!levels.includes(value) || !supported(value)))
   select.innerHTML = `<option value="">${escapeHtml(inheritedLabel)}</option>` + levels.map(level =>
-    `<option value="${escapeHtml(level)}"${supported(level) ? '' : ' disabled'}>${escapeHtml(level === 'default' ? '默认（清除显式档位）' : level)}${supported(level) ? '' : '（运行时不支持）'}</option>`
+    `<option value="${escapeHtml(level)}"${supported(level) ? '' : ' disabled'}>${escapeHtml(level === 'default' ? '模型默认（自动适配）' : level)}${supported(level) ? '' : '（运行时不支持）'}</option>`
   ).join('')
   if (incompatible && !levels.includes(value)) {
     select.insertAdjacentHTML('beforeend', `<option value="${escapeHtml(value)}" disabled>${escapeHtml(value)}（不兼容，待调整）</option>`)
@@ -362,15 +506,17 @@ function populateThinking(select, model, current, inheritedLabel, details) {
   details.textContent = [
     `模型：${model || '未绑定'} · 来源：${source}`,
     capabilityError || (!capability ? '未取得能力信息，仅可清除显式档位或保留继承。' : ''),
+    fallbackNotice,
     invalid,
     ...(capability?.warnings || []),
     value && value !== 'default' && mapping[value] && mapping[value] !== value ? `选择 → 运行时 → 供应商：${value} → ${mapping[value]} → ${capability?.wireMapping?.[value] ?? value}` : '',
   ].filter(Boolean).join('；')
   details.classList.toggle('capability-error', Boolean(invalid || capabilityError))
+  details.classList.toggle('capability-note', Boolean(fallbackNotice && !invalid && !capabilityError))
 }
 
 function renderAgentThinking(value = els.agentThinking.value) {
-  populateThinking(els.agentThinking, boundAgentModel(), value, '继承全局', $('#agent-thinking-details'))
+  populateThinking(els.agentThinking, selectedAgentModel(), value, '继承全局', $('#agent-thinking-details'))
 }
 
 function renderGlobalThinking(value = els.globalThinking.value) {
@@ -380,7 +526,7 @@ function renderGlobalThinking(value = els.globalThinking.value) {
 
 function renderPendingAgentModel() {
   const model = boundAgentModel()
-  const pending = els.agentProvider.value && els.agentModel.value ? `${els.agentProvider.value}/${els.agentModel.value}` : ''
+  const pending = els.agentProvider.value && els.agentModel.value ? selectedAgentModel() : ''
   els.agentBinding.textContent = `${model ? `当前：${model}` : '当前未绑定自定义模型'}${pending && pending !== model ? '；所选模型尚未应用，策略仍针对当前模型' : ''}`
 }
 
@@ -408,8 +554,8 @@ function configAgent(agentId) {
 
 function renderAgentList() {
   els.agentList.innerHTML = agentBindings.map((binding) => {
-    const model = isCustomModelReference(binding.model) ? binding.model : ''
-    return `<button class="provider-item ${binding.agentId === selectedAgentId ? 'active' : ''}" data-agent-id="${escapeHtml(binding.agentId)}" type="button"><span class="provider-name">${escapeHtml(binding.label || binding.agentId)}</span><span class="provider-meta">${escapeHtml(binding.agentId)} · ${escapeHtml(model || '未绑定自定义模型')}</span></button>`
+    const display = agentDisplay(binding)
+    return `<button class="provider-item ${binding.agentId === selectedAgentId ? 'active' : ''}" data-agent-id="${escapeHtml(binding.agentId)}" type="button"><span class="provider-name">${escapeHtml(display.name)}</span><span class="provider-meta agent-description">${escapeHtml(display.description)}</span></button>`
   }).join('')
   els.agentCount.textContent = `${agentBindings.length} 个实际注册 Agent（来自 agents.json）`
   els.agentList.querySelectorAll('[data-agent-id]').forEach((button) => button.addEventListener('click', () => { selectedAgentId = button.dataset.agentId; fillAgent(); renderAgentList() }))
@@ -426,7 +572,7 @@ function populateSkillAgentSelects() {
   const currentView = els.skillAgent?.value || selectedAgentId
   const currentTarget = els.skillTargetAgent?.value || selectedAgentId
   const options = agentBindings.length
-    ? agentBindings.map((binding) => `<option value="${escapeHtml(binding.agentId)}">${escapeHtml(binding.label || binding.agentId)}</option>`).join('')
+    ? agentBindings.map((binding) => `<option value="${escapeHtml(binding.agentId)}">${escapeHtml(agentDisplay(binding).name)}</option>`).join('')
     : '<option value="">暂无 Agent</option>'
   if (els.skillAgent) {
     els.skillAgent.innerHTML = options
@@ -443,8 +589,9 @@ function renderSkillWorkspace() {
   const agentId = els.skillAgent?.value || selectedAgentId
   const binding = bindingRecord(agentId)
   const skills = skillsForAgent(agentId)
+  const display = binding ? agentDisplay(binding) : agentDisplay(agentId)
   els.skillCount.textContent = `${skills.length} 个`
-  els.skillSummary.textContent = binding ? `${binding.label || agentId} 的显式技能配置` : '选择 Agent 后查看。'
+  els.skillSummary.textContent = binding ? `${display.name} 的显式技能配置` : '选择 Agent 后查看。'
   els.skillList.innerHTML = skills.length
     ? skills.map((skill) => `<div class="skill-row"><strong>${escapeHtml(skill.name)}</strong><span>${escapeHtml(skill.description || '已配置')}</span></div>`).join('')
     : '<div class="empty-state">该 Agent 暂无显式 Skill；留空表示使用工作区默认能力。</div>'
@@ -454,10 +601,11 @@ function renderSkillWorkspace() {
 function fillAgent() {
   const binding = bindingRecord(selectedAgentId); const config = configAgent(selectedAgentId)
   if (!binding) { els.agentTitle.textContent = '选择 Agent'; setStatus(els.agentStatus, 'neutral', '未选择'); return }
+  const display = agentDisplay(binding)
   const model = isCustomModelReference(binding.model) ? binding.model : ''
   const providerId = model && binding.providerId && !BUILTIN_PROVIDER_IDS.has(String(binding.providerId).toLowerCase()) ? binding.providerId : providers[0]?.id || ''
   const modelId = model ? (binding.modelId || (model.includes('/') ? model.split('/').slice(1).join('/') : model)) : ''
-  els.agentTitle.textContent = binding.label || binding.agentId; els.agentMeta.textContent = `${binding.agentId} · ${binding.workspace || '工作区未声明'}`
+  els.agentTitle.textContent = display.name; els.agentMeta.textContent = `${display.description} · Agent ID：${binding.agentId} · ${binding.workspace || '工作区未声明'}`
   populateProviderSelect(els.agentProvider, providerId); populateModelSelect(els.agentModel, providerId, modelId)
   renderPendingAgentModel()
   renderAgentThinking(config?.thinkingDefault || '')
@@ -477,8 +625,8 @@ async function loadAgents() {
 }
 
 $('#refresh-agents').addEventListener('click', () => loadAgents())
-els.agentProvider.addEventListener('change', () => { populateModelSelect(els.agentModel, els.agentProvider.value, ''); renderPendingAgentModel() })
-els.agentModel.addEventListener('change', renderPendingAgentModel)
+els.agentProvider.addEventListener('change', () => { populateModelSelect(els.agentModel, els.agentProvider.value, ''); renderPendingAgentModel(); renderAgentThinking() })
+els.agentModel.addEventListener('change', () => { renderPendingAgentModel(); renderAgentThinking() })
 $('#apply-agent-model').addEventListener('click', async () => {
   if (!selectedAgentId || !els.agentProvider.value || !els.agentModel.value) return
   setStatus(els.agentStatus, 'neutral', '应用中…'); els.agentError.textContent = ''; els.agentSuccess.textContent = ''
@@ -487,7 +635,7 @@ $('#apply-agent-model').addEventListener('click', async () => {
 })
 $('#set-default-model').addEventListener('click', async () => {
   if (!els.agentProvider.value || !els.agentModel.value) return
-  try { const result = await api.patchGlobal({ defaultModel: `${els.agentProvider.value}/${els.agentModel.value}` }); const syncFailed = result?.agentConfigSync && result.agentConfigSync.ok === false; els.agentSuccess.textContent = syncFailed ? `全局默认模型已保存，但看板名册同步失败：${result.agentConfigSync.error || '请重载看板后重试。'}` : '已提交全局默认模型变更。'; if (syncFailed) setStatus(els.agentStatus, 'error', '名册同步失败'); await loadConfig() }
+  try { const result = await api.patchGlobal({ defaultModel: `${els.agentProvider.value}/${els.agentModel.value}` }); const syncFailed = result?.agentConfigSync && result.agentConfigSync.ok === false; const adjusted = result?.thinkingAdjusted ? '；原思考档位不适用于该模型，已自动改为模型默认' : ''; els.agentSuccess.textContent = syncFailed ? `全局默认模型已保存${adjusted}，但看板名册同步失败：${result.agentConfigSync.error || '请重载看板后重试。'}` : `已提交全局默认模型变更${adjusted}。`; if (syncFailed) setStatus(els.agentStatus, 'error', '名册同步失败'); await loadConfig() }
   catch (error) { els.agentError.textContent = errorText(error) }
 })
 $('#save-agent-policy').addEventListener('click', async () => {
@@ -566,10 +714,10 @@ $('#runtime-form').addEventListener('submit', async (event) => {
     if (els.globalModel.value && els.globalProvider.value) patch.defaultModel = `${els.globalProvider.value}/${els.globalModel.value}`
     if (els.globalThinking.value) patch.defaultThinking = els.globalThinking.value
     if (els.globalToolProfile.value) patch.defaultToolProfile = els.globalToolProfile.value
-    await api.patchGlobal(patch)
+    const result = await api.patchGlobal(patch)
     if (api.setRuntimeOptions) await api.setRuntimeOptions(runtimeOptions)
     runtimeOptionsDirty = false
-    els.runtimeSuccess.textContent = '运行策略已保存；如需让看板读取新的供应商环境，请确认任务安全后手动重载。'; await loadConfig(); await loadDiagnostics()
+    els.runtimeSuccess.textContent = `运行策略已保存${result?.thinkingAdjusted ? '；原思考档位不适用于该模型，已自动改为模型默认' : ''}；如需让看板读取新的供应商环境，请确认任务安全后手动重载。`; await loadConfig(); await loadDiagnostics()
   } catch (error) { els.runtimeError.textContent = errorText(error) }
 })
 

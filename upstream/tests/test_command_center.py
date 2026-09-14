@@ -127,3 +127,89 @@ def test_task_workspace_never_displays_an_unresolved_six_ministry_agent(isolated
     assert result['ok'] is True
     assert result['task']['targetDept'] == '兵部'
     assert result['task']['targetAgent'] == 'bingbu'
+
+
+def test_approval_failure_preserves_plan_until_success(isolated_server):
+    server, data, _ = isolated_server
+    first = server.handle_command_center_message({'text': '开发一个简单网页', 'mode': 'standard'})
+    planned = server.handle_command_center_message({'text': '再开发一个简单网页', 'mode': 'complex', 'permissionMode': 'ask'})
+    failed = server.handle_command_center_approve()
+    assert failed['ok'] is False
+    assert failed['pendingPlan']['id'] == planned['pendingPlan']['id']
+    server.handle_task_action(first['taskId'], 'cancel', '测试')
+    approved = server.handle_command_center_approve()
+    assert approved['ok'] is True
+    assert approved['pendingPlan'] is None
+    assert server.handle_command_center_approve()['ok'] is False
+    snapshot = server.get_task_workspace(approved['taskId'])
+    assert snapshot['permission']['mode'] == 'ask'
+    assert snapshot['task']['targetAgent'] == 'taizi'
+
+
+def test_pause_after_advancing_preserves_latest_stage(isolated_server):
+    server, _, _ = isolated_server
+    task = server.handle_command_center_message({'text': '开发一个简单网页', 'mode': 'standard'})
+    task_id = task['taskId']
+    server.handle_task_action(task_id, 'stop', '第一阶段')
+    server.handle_task_action(task_id, 'resume', '')
+    server.modify_task(task_id, lambda item: item.update({'state': 'Menxia', 'org': '门下省'}))
+    server.handle_task_action(task_id, 'stop', '审议暂停')
+    assert server.get_task_workspace(task_id)['task']['targetAgent'] == 'menxia'
+    server.handle_task_action(task_id, 'resume', '')
+    assert next(item for item in server.load_tasks() if item['id'] == task_id)['state'] == 'Menxia'
+
+
+def test_english_work_and_multiline_route_to_work():
+    from command_center import classify_instruction
+    assert classify_instruction('Build a snake game') == 'standard'
+    assert classify_instruction('Fix the login bug') == 'standard'
+    assert classify_instruction('开发网页\n测试\n生成文档') == 'complex'
+
+
+def test_empty_project_has_no_executable_test_commands(tmp_path):
+    from execution_workspace import detect_test_commands
+    assert detect_test_commands(tmp_path) == []
+
+
+def test_dismiss_plan_does_not_create_task(isolated_server):
+    server, _, _ = isolated_server
+    server.handle_command_center_message({'text': '开发网页', 'mode': 'complex', 'permissionMode': 'ask'})
+    assert server.dismiss_command_center_plan()['pendingPlan'] is None
+    assert server.load_tasks() == []
+
+
+def test_question_handoff_is_successful_without_creating_formal_task(isolated_server):
+    server, _, _ = isolated_server
+    result = server.handle_command_center_message({'text': '请问当前进度如何？', 'mode': 'chat'})
+    assert result['ok'] is True
+    assert result['action'] == 'open-yushufang'
+    assert server.load_tasks() == []
+
+
+def test_workspace_test_streams_output_and_records_cancel(tmp_path, monkeypatch):
+    import time
+    import execution_workspace as workspace
+    monkeypatch.setattr(workspace, 'detect_test_commands', lambda _: [{
+        'id': 'fixture', 'label': 'fixture',
+        'argv': [sys.executable, '-u', '-c', 'import time; print("first output", flush=True); time.sleep(20)'],
+    }])
+    result = workspace.start_test(tmp_path, 'fixture-task', tmp_path, 'fixture')
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            run = workspace._latest_run(tmp_path, 'fixture-task')
+            if 'first output' in run['output']:
+                break
+            time.sleep(0.03)
+        assert run['status'] == 'running'
+        assert 'first output' in run['output']
+        assert workspace.cancel_run(result['runId'])['ok']
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            run = workspace._latest_run(tmp_path, 'fixture-task')
+            if run['status'] != 'running':
+                break
+            time.sleep(0.03)
+        assert run['status'] == 'cancelled'
+    finally:
+        workspace.cancel_run(result['runId'])

@@ -140,8 +140,10 @@ The app keeps ordinary provider metadata separate from secrets. Provider and cha
 
 Open [GitHub Releases](https://github.com/Logosss1/Edict_InnerCourt/releases/latest):
 
-- `Edict_InnerCourt-0.3.1-arm64-mac.zip` for Apple Silicon Macs (M-series);
-- `Edict_InnerCourt-0.3.1-mac.zip` for Intel Macs.
+- `Edict_InnerCourt-0.3.2-arm64-mac.zip` for Apple Silicon Macs (M-series);
+- `Edict_InnerCourt-0.3.2-mac.zip` for Intel Macs;
+- `Edict_InnerCourt-0.3.2-win-x64.zip` for 64-bit Windows;
+- `Edict_InnerCourt-0.3.2-linux-x86_64.AppImage` for 64-bit Linux.
 
 Extract the ZIP and open `Edict_InnerCourt.app`.
 
@@ -210,20 +212,6 @@ The app protects active tasks, sessions, and discussions from accidental deletio
 - **Desktop execution:** once a provider/model is configured, tasks leave the Taizi queue automatically; local dispatch does not require a separately started Gateway, while external channels retain the Gateway delivery path.
 - **Real interruption:** pause and cancel actions update the task atomically and terminate the active dispatch process when one exists; late process output cannot resurrect a cancelled task.
 - **Built-in capabilities:** workflow Skills and workspace-scoped MCP tools are installed idempotently on first workspace activation without bundled provider keys or network credentials.
-
-## Open-source references and adaptation boundaries
-
-Edict_InnerCourt learns from several mature open-source projects, but keeps the EDICT orchestration model as its source of truth:
-
-| Reference | What we learn | How Edict_InnerCourt applies it |
-| --- | --- | --- |
-| [OpenHands](https://github.com/OpenHands/OpenHands) | Workspace boundaries, visible execution context, and separation between the control center and execution environment. | The app requires a workspace/project, shows the active Agent, project scope, Git changes, outputs, tests, and recent activity in the execution inspector. |
-| [LobeHub](https://github.com/lobehub/lobehub) | A workbench-oriented shell that separates operating, history, settings, and Agent operations. | The desktop rail separates **Run**, **Execution Guard**, **Archive**, **Skills & MCP**, **Execution Monitor**, and **Settings**; Inner Court remains a workflow page, not a second task system. |
-| [shadcn/ui](https://github.com/shadcn-ui/ui) | Composable UI, local ownership of styles, and design tokens that can be extended without a black-box theme. | The dashboard uses local CSS tokens and small reusable state patterns. It does not add the shadcn generator or a new runtime dependency. |
-| [Radix Primitives](https://github.com/radix-ui/primitives) | Semantic controls, protected actions, focus handling, and explicit loading/success/error states. | Cancel, pause, resume, delete, and approval actions have real state transitions, confirmation paths, and visible asynchronous feedback. |
-| [Ant Design](https://github.com/ant-design/ant-design) | Dense operational information, filters, status colors, and predictable action areas. | The task board and monitor keep compact cards, active/archive/all filters, six-ministry health, and actionable blocking details while retaining the EDICT visual language. |
-
-These are implementation references, not replacement frameworks. See [`OPEN_SOURCE_ADOPTION_PLAN.md`](OPEN_SOURCE_ADOPTION_PLAN.md) for the project-by-project scope, expected results, file-level landing points, and deferred reference slots. The Three Departments and Six Ministries workflow remains unchanged.
 
 ## Troubleshooting and FAQ
 

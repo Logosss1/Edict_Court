@@ -191,6 +191,7 @@ function EdictCard({ task }: { task: Task }) {
             当前: <b style={{ color: deptColor(curStage.dept) }}>{curStage.dept} · {curStage.action}</b>
           </span>
         )}
+        {!curStage && <span>阶段待确认，请查看最近活动</span>}
       </div>
       {task.now && task.now !== '-' && (
         <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5, marginBottom: 6 }}>

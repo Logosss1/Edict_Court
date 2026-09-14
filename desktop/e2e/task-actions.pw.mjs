@@ -1,5 +1,16 @@
 import { test, expect } from '@playwright/test'
 
+// This suite runs only against innercourt_ui_server's temporary data directory.
+test.beforeEach(async ({ request }) => {
+  const payload = await (await request.get('/api/live-status')).json()
+  for (const task of payload.tasks || []) {
+    if (task.id.startsWith('JJC-') && !['Done', 'Cancelled'].includes(task.state)) {
+      const result = await (await request.post('/api/task-action', { data: { taskId: task.id, action: 'cancel', reason: '测试用例隔离' } })).json()
+      expect(result.ok).toBe(true)
+    }
+  }
+})
+
 async function readTask(request, taskId) {
   const response = await request.get('/api/live-status')
   const payload = await response.json()
@@ -11,7 +22,9 @@ async function createTask(request, label) {
     data: { title: `按钮动作验收 · ${label} · ${Date.now()}`, org: '中书省', priority: 'normal' },
   })
   expect(created.ok()).toBeTruthy()
-  const taskId = (await created.json()).taskId
+  const result = await created.json()
+  expect(result.ok, result.error).toBe(true)
+  const taskId = result.taskId
   expect(taskId).toBeTruthy()
   return taskId
 }

@@ -3,6 +3,7 @@ portable-runtime/
 .portable-runtime-cache/
 dist-electron/
 release/
+release-cross/
 .DS_Store
 test-results/
 playwright-report/

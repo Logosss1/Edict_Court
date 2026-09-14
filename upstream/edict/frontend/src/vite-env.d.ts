@@ -96,6 +96,7 @@ interface EdictDesktopWorkspaceState {
 interface Window {
   edictDesktop?: {
     listProviders: () => Promise<EdictDesktopProviderSummary[]>
+    revealProviderKey?: (providerId: string) => Promise<string>
     saveProvider: (payload: EdictDesktopProviderPayload) => Promise<EdictDesktopProviderSummary & {
       integration?: { ok?: boolean; error?: string }
     }>
@@ -106,7 +107,9 @@ interface Window {
     probeChannelAccount?: (payload: { channel: string; accountId: string }) => Promise<EdictDesktopChannelProbeResult>
     probeGateway?: () => Promise<EdictDesktopGatewayProbeResult>
     reloadDashboard?: () => Promise<unknown>
+    getDiagnostics?: () => Promise<{ dashboardReloadRequired?: boolean; providerEnvironmentCount?: number }>
     openSettings?: (tab?: string) => Promise<unknown>
+    revealProjectFile?: (path: string) => Promise<{ ok: boolean; error?: string }>
     openMonitor?: () => Promise<unknown>
     getWorkspaceState?: () => Promise<EdictDesktopWorkspaceState>
     chooseWorkspace?: (mode?: 'create' | 'existing') => Promise<unknown>

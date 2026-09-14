@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FileCode2, FolderOpen, GitBranch, LoaderCircle, Play, RefreshCw, Square, TestTube2 } from 'lucide-react';
 import { api, type TaskWorkspaceData, type WorkspaceTestRun } from '../api';
-import { isArchived, isEdict, useStore } from '../store';
+import { isEdict, useStore, stateLabel } from '../store';
 
 function formatSize(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -14,6 +14,7 @@ function runLabel(run: WorkspaceTestRun | null | undefined): string {
   if (run.status === 'running') return '测试运行中';
   if (run.status === 'passed') return '测试通过';
   if (run.status === 'timeout') return '测试超时';
+  if (run.status === 'cancelled') return '测试已停止';
   return '测试失败';
 }
 
@@ -21,13 +22,22 @@ export default function ExecutionInspector() {
   const liveStatus = useStore((state) => state.liveStatus);
   const toast = useStore((state) => state.toast);
   const tasks = useMemo(
-    () => (liveStatus?.tasks || []).filter((task) => !isArchived(task) && !['Done', 'Cancelled'].includes(task.state)),
+    () => (liveStatus?.tasks || []).filter((task) => task.projectPath),
     [liveStatus],
   );
   const [selectedId, setSelectedId] = useState('');
   const [data, setData] = useState<TaskWorkspaceData | null>(null);
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState(false);
+  const [commandId, setCommandId] = useState('');
+  const commands = data?.testCommands?.filter((command) => command.id !== 'no-detected-test') || [];
+  const selectedCommand = commands.find((command) => command.id === commandId)?.id || commands[0]?.id;
+  const reveal = async (path: string) => {
+    try {
+      const result = await window.edictDesktop?.revealProjectFile?.(path);
+      if (!result?.ok) toast(result?.error || '请在桌面端定位文件', 'err');
+    } catch { toast('无法定位文件，请确认文件仍存在', 'err'); }
+  };
 
   useEffect(() => {
     if (selectedId && tasks.some((task) => task.id === selectedId)) return;
@@ -61,8 +71,8 @@ export default function ExecutionInspector() {
     if (!selectedId || running) return;
     setRunning(true);
     try {
-      const commandId = data?.testCommands?.[0]?.id;
-      const result = await api.runTaskTest(selectedId, commandId);
+      if (!selectedCommand) return;
+      const result = await api.runTaskTest(selectedId, selectedCommand);
       if (!result.ok) toast(result.error || '测试未能启动', 'err');
       else toast(result.message || '测试已启动');
       await refresh();
@@ -76,10 +86,15 @@ export default function ExecutionInspector() {
   const cancelTest = async () => {
     const run = data?.latestTest;
     if (!run || run.status !== 'running') return;
-    const result = await api.cancelTaskTest(run.id);
-    if (result.ok) toast(result.message || '已请求停止测试');
-    else toast(result.error || '停止测试失败', 'err');
-    await refresh();
+    if (running) return;
+    setRunning(true);
+    try {
+      const result = await api.cancelTaskTest(run.id);
+      if (result.ok) toast(result.message || '已请求停止测试');
+      else toast(result.error || '停止测试失败', 'err');
+      await refresh();
+    } catch { toast('停止请求失败，请重试', 'err'); }
+    finally { setRunning(false); }
   };
 
   return (
@@ -91,18 +106,18 @@ export default function ExecutionInspector() {
         </button>
       </div>
 
-      <div className="execution-inspector-kicker">当前任务</div>
+      <div className="execution-inspector-kicker">任务与成果（含历史）</div>
       {tasks.length > 0 ? (
         <div className="execution-task-list">
           {tasks.map((task) => (
             <button key={task.id} type="button" className={selectedId === task.id ? 'selected' : ''} onClick={() => setSelectedId(task.id)}>
               <small>{task.id}</small>
               <strong>{task.title || '(无标题)'}</strong>
-              <span>{isEdict(task) ? `旨意 · ${task.org || task.state}` : `小任务 · ${task.org || task.state}`}</span>
+              <span>{isEdict(task) ? '旨意' : '小任务'} · {stateLabel(task)}{task.archived ? ' · 已归档' : ''}</span>
             </button>
           ))}
         </div>
-      ) : <p className="inspector-empty">暂无进行中的任务。先从运行页向太子下达一条指令。</p>}
+      ) : <p className="inspector-empty">暂无绑定项目的任务。先从运行页向太子下达一条指令。</p>}
 
       {data?.task && <>
         <section className="execution-inspector-section" aria-labelledby="execution-current-title">
@@ -111,7 +126,7 @@ export default function ExecutionInspector() {
             <strong>{data.task.org || data.task.state}</strong>
             <span>{data.task.state} · {data.task.targetAgent || '等待明确 Agent'}</span>
           </div>
-          <p className="execution-scope"><span>访问模式</span>{data.permission?.mode || 'full'} · 当前项目内读写、运行测试</p>
+          <p className="execution-scope"><span>审批方式</span>{data.permission?.mode === 'ask' ? '执行前询问' : data.permission?.mode === 'auto' ? '自动批准' : '完全访问'} · 当前项目范围</p>
           <p className="execution-scope" title={data.projectPath}><FolderOpen size={13} />{data.projectPath || '未绑定项目'}</p>
           {data.task.now && <p className="execution-now">{data.task.now}</p>}
           {data.task.block && data.task.block !== '无' && <p className="execution-block">{data.task.block}</p>}
@@ -122,21 +137,22 @@ export default function ExecutionInspector() {
           {data.git?.available ? <>
             <p className="execution-branch">{data.git.branch || '未命名分支'}</p>
             <p className="execution-summary">{data.git.summary || '工作区干净'}</p>
-            {data.git.changedFiles.length > 0 ? <ul className="execution-file-list">{data.git.changedFiles.slice(0, 12).map((file) => <li key={file}><FileCode2 size={12} />{file}</li>)}</ul> : <p className="inspector-empty">暂无未提交变更</p>}
+            {data.git.changedFiles.length > 0 ? <ul className="execution-file-list">{data.git.changedFiles.map((file) => <li key={file}><FileCode2 size={12} />{file}</li>)}</ul> : <p className="inspector-empty">暂无未提交变更</p>}
           </> : <p className="inspector-empty">{data.git?.summary || '当前目录不是 Git 仓库'}</p>}
         </section>
 
         <section className="execution-inspector-section" aria-labelledby="execution-output-title">
           <div className="execution-inspector-section-title" id="execution-output-title">产出文件</div>
           <p className="execution-output-path" title={data.outputDir}>{data.outputDir || 'Edict_Output/任务ID'}</p>
-          {data.artifacts.length > 0 ? <ul className="execution-file-list">{data.artifacts.slice(0, 12).map((file) => <li key={file.path}><FileCode2 size={12} /><span title={file.path}>{file.name}</span><small>{formatSize(file.size)}</small></li>)}</ul> : <p className="inspector-empty">Agent 尚未在输出目录产生文件。</p>}
+          {window.edictDesktop?.revealProjectFile && <button className="btn btn-g" onClick={() => void reveal(data.outputDir)}>定位输出目录</button>}
+          {data.artifacts.length > 0 ? <ul className="execution-file-list">{data.artifacts.map((file) => <li key={file.path}><FileCode2 size={12} /><button className="command-link" title={file.path} disabled={!window.edictDesktop?.revealProjectFile} onClick={() => void reveal(`${data.projectPath}/${file.path}`)}>{file.name}</button><small>{formatSize(file.size)}</small></li>)}</ul> : <p className="inspector-empty">Agent 尚未在输出目录产生文件。</p>}
         </section>
 
         <section className="execution-inspector-section" aria-labelledby="execution-test-title">
           <div className="execution-inspector-section-title" id="execution-test-title"><TestTube2 size={13} />快速测试</div>
           <div className="execution-test-actions">
-            <span>{data.testCommands?.[0]?.label || '未检测到测试命令'}</span>
-            {data.latestTest?.status === 'running' ? <button className="btn btn-danger" type="button" onClick={() => void cancelTest()}><Square size={12} />停止</button> : <button className="btn btn-g" type="button" disabled={running || !data.testCommands?.[0]?.id} onClick={() => void runTest()}>{running ? <LoaderCircle className="guard-spin" size={12} /> : <Play size={12} />}运行</button>}
+            {commands.length ? <select aria-label="选择测试命令" value={selectedCommand} onChange={(event) => setCommandId(event.target.value)}>{commands.map((command) => <option key={command.id} value={command.id}>{command.label}</option>)}</select> : <span>未检测到测试命令，请先在项目配置测试脚本</span>}
+            {data.latestTest?.status === 'running' ? <button className="btn btn-danger" type="button" disabled={running} onClick={() => void cancelTest()}><Square size={12} />{running ? '正在停止…' : '停止'}</button> : <button className="btn btn-g" type="button" disabled={running || !selectedCommand} onClick={() => void runTest()}>{running ? <LoaderCircle className="guard-spin" size={12} /> : <Play size={12} />}运行</button>}
           </div>
           {data.latestTest && <div className={`execution-test-result ${data.latestTest.status}`} role="status"><strong>{runLabel(data.latestTest)}</strong>{data.latestTest.exitCode !== null && data.latestTest.exitCode !== undefined && <span>退出码 {data.latestTest.exitCode}</span>}<pre>{data.latestTest.output || '等待测试输出…'}</pre></div>}
         </section>

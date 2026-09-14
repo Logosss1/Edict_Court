@@ -33,13 +33,24 @@ export default function ExecutionGuardPanel({ initialReadiness, onSelectTab }: E
   const [readiness, setReadiness] = useState<ReadinessData | null>(initialReadiness || null)
   const [loading, setLoading] = useState(!initialReadiness)
   const [repairing, setRepairing] = useState(false)
+  const [reloading, setReloading] = useState(false)
+  const [pendingSecretReload, setPendingSecretReload] = useState(false)
   const [error, setError] = useState('')
 
   const refresh = async () => {
     setLoading(true)
     setError('')
     try {
-      setReadiness(await api.readiness())
+      const [nextReadiness, diagnostics] = await Promise.all([
+        api.readiness(),
+        window.edictDesktop?.getDiagnostics?.().catch(() => null),
+      ])
+      setReadiness(nextReadiness)
+      setPendingSecretReload(Boolean(
+        diagnostics?.dashboardReloadRequired
+        && Number(diagnostics.providerEnvironmentCount || 0) > 0
+        && nextReadiness.checks?.some((check) => check.id === 'secret' && !check.ready),
+      ))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '执行保障检测失败，请检查看板连接。')
     } finally {
@@ -52,7 +63,7 @@ export default function ExecutionGuardPanel({ initialReadiness, onSelectTab }: E
   }, [initialReadiness])
 
   useEffect(() => {
-    if (!initialReadiness) void refresh()
+    void refresh()
   }, [])
 
   const failedChecks = useMemo(() => (readiness?.checks || []).filter((check) => !check.ready), [readiness])
@@ -92,6 +103,20 @@ export default function ExecutionGuardPanel({ initialReadiness, onSelectTab }: E
     }
   }
 
+  const reloadConfiguration = async () => {
+    if (!window.edictDesktop?.reloadDashboard || reloading) return
+    setReloading(true)
+    setError('')
+    try {
+      await window.edictDesktop.reloadDashboard()
+    } catch (reason) {
+      const message = reason instanceof Error ? reason.message : String(reason)
+      setError(message)
+      toast(message, 'err')
+      setReloading(false)
+    }
+  }
+
   const routes = Object.entries(readiness?.routes || {})
 
   return (
@@ -113,6 +138,13 @@ export default function ExecutionGuardPanel({ initialReadiness, onSelectTab }: E
       </div>
 
       {error && <div className="execution-guard-error" role="alert"><AlertTriangle size={16} />{error}</div>}
+      {pendingSecretReload && <div className="execution-guard-error pending" role="status">
+        <RefreshCw size={16} />
+        <span>密钥已保存，但当前看板仍在使用旧运行环境。</span>
+        <button className="btn btn-p" type="button" onClick={() => void reloadConfiguration()} disabled={reloading}>
+          {reloading ? <LoaderCircle className="guard-spin" size={15} /> : <RefreshCw size={15} />}{reloading ? '正在应用…' : '应用新配置并重载'}
+        </button>
+      </div>}
       {loading && !readiness && <div className="execution-guard-loading" role="status"><LoaderCircle className="guard-spin" size={20} />正在检查执行环境…</div>}
 
       {readiness && <>

@@ -7,6 +7,7 @@ import { chmod, copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/pro
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomUUID } from 'node:crypto'
+import { resolveProjectFile } from './project-files.js'
 
 import {
   ProviderStore,
@@ -793,14 +794,12 @@ async function restartDashboard(): Promise<void> {
     await refreshProviderEnvironment()
     await refreshChannelEnvironment()
     await startDashboard()
-    markStartup('ready')
     dashboardReloadRequired = false
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      const loadStartedAt = Date.now()
-      await dashboardWindow.loadURL(dashboardUrl)
-      startupTimings.dashboardLoadMs = Date.now() - loadStartedAt
+      await loadDashboardWindow(dashboardWindow, true)
       dashboardWindow.show()
     }
+    markStartup('ready')
     startupTimings.completedAt = new Date().toISOString()
     await persistStartupTimings()
     console.log(`[edict] dashboard reloaded in ${startupTimings.dashboardLoadMs ?? 'n/a'}ms`)
@@ -1006,6 +1005,22 @@ async function validateThinking(input: { model?: string; agentId?: string; think
   return result.thinking
 }
 
+async function validateThinkingWithFallback(
+  input: { model?: string; agentId?: string; thinking: string; global?: boolean },
+  allowDefaultFallback = false,
+): Promise<{ thinking: string; adjusted: boolean }> {
+  try {
+    return { thinking: await validateThinking(input), adjusted: false }
+  } catch (error) {
+    if (!allowDefaultFallback || input.thinking === 'default') throw error
+    try {
+      return { thinking: await validateThinking({ ...input, thinking: 'default' }), adjusted: true }
+    } catch {
+      throw error
+    }
+  }
+}
+
 async function requestedThinking(stored: string, model?: string): Promise<string> {
   if (stored === 'off') return 'none'
   if (stored === 'default' || !model) return stored
@@ -1088,6 +1103,45 @@ function createDashboardWindow(): BrowserWindow {
   window.on('closed', () => {
     if (dashboardWindow === window) dashboardWindow = undefined
   })
+  return window
+}
+
+const DASHBOARD_LOAD_TIMEOUT_MS = 20_000
+
+async function loadDashboardWindow(window: BrowserWindow, force = false): Promise<void> {
+  if (window.isDestroyed()) throw new Error('总控台窗口已关闭')
+  if (!dashboardUrl) throw new Error('看板尚未启动')
+  const currentUrl = window.webContents.getURL()
+  if (!force && (currentUrl === dashboardUrl || currentUrl.startsWith(`${dashboardUrl}/`))) return
+
+  const loadStartedAt = Date.now()
+  let timer: NodeJS.Timeout | undefined
+  try {
+    await Promise.race([
+      window.loadURL(dashboardUrl),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('打开总控台超时，请点击“重试启动”。')), DASHBOARD_LOAD_TIMEOUT_MS)
+      }),
+    ])
+    startupTimings.dashboardLoadMs = Date.now() - loadStartedAt
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function showDashboardWindow(sourceWindow?: BrowserWindow): Promise<BrowserWindow> {
+  const window = createDashboardWindow()
+  if (startupState === 'ready' && dashboardUrl) {
+    try {
+      await loadDashboardWindow(window)
+    } catch (error) {
+      markStartup('error', error instanceof Error ? error.message : String(error))
+      throw error
+    }
+  }
+  window.show()
+  window.focus()
+  if (sourceWindow && sourceWindow !== window && !sourceWindow.isDestroyed()) sourceWindow.hide()
   return window
 }
 
@@ -1242,9 +1296,9 @@ async function chooseDirectory(title: string, createDirectory: boolean): Promise
 
 function registerIpc(): void {
   ipcMain.handle('dashboard:get-url', () => dashboardUrl)
-  ipcMain.handle('dashboard:show', () => {
-    dashboardWindow?.show()
-    dashboardWindow?.focus()
+  ipcMain.handle('dashboard:show', async (event) => {
+    const sourceWindow = BrowserWindow.fromWebContents(event.sender)
+    await showDashboardWindow(sourceWindow || undefined)
     return { ok: true }
   })
   ipcMain.handle('settings:show', (_event, tab: unknown) => {
@@ -1259,6 +1313,15 @@ function registerIpc(): void {
   ipcMain.handle('workspace:state', async () => {
     await refreshWorkspaceSnapshot()
     return workspaceStoreSnapshot
+  })
+  ipcMain.handle('workspace:reveal-file', async (_event, requested: unknown) => {
+    const project = activeWorkspace()?.projectPath
+    if (!project || typeof requested !== 'string') return { ok: false, error: '请先选择项目' }
+    try {
+      const file = await resolveProjectFile(project, requested)
+      shell.showItemInFolder(file)
+      return { ok: true }
+    } catch (error) { return { ok: false, error: error instanceof Error ? error.message : '文件无法打开' } }
   })
   ipcMain.handle('workspace:preflight', async (_event, payload: unknown) => {
     const requested = payload && typeof payload === 'object' ? (payload as { path?: unknown }).path : undefined
@@ -1346,10 +1409,14 @@ function registerIpc(): void {
     return diagnostics()
   })
   ipcMain.handle('provider:list', () => providerStore.list())
-  ipcMain.handle('dashboard:models', () => {
-    const window = createDashboardWindow()
-    window.show()
-    window.focus()
+  ipcMain.handle('provider:reveal', async (event, providerId: unknown) => {
+    const sourceWindow = BrowserWindow.fromWebContents(event.sender)
+    if (!sourceWindow || sourceWindow !== settingsWindow) throw new Error('仅设置窗口可以回显供应商密钥')
+    if (typeof providerId !== 'string' || !providerId.trim()) throw new Error('供应商 ID 无效')
+    return (await providerStore.getSecret(providerId)) || ''
+  })
+  ipcMain.handle('dashboard:models', async () => {
+    const window = await showDashboardWindow()
     window.webContents.send('dashboard:models')
   })
   ipcMain.handle('provider:save', async (_event, payload: unknown) => {
@@ -1368,7 +1435,7 @@ function registerIpc(): void {
     // Do not restart the original dashboard behind the user's back: a
     // running EDICT task must not be interrupted by a settings save.
     dashboardReloadRequired = true
-    return { ...saved, integration, agentConfigSync }
+    return { ...saved, integration, agentConfigSync, requiresReload: true }
   })
   ipcMain.handle('provider:remove', async (_event, providerId: string) => {
     const removed = await providerStore.remove(providerId)
@@ -1460,20 +1527,26 @@ function registerIpc(): void {
   })
   ipcMain.handle('openclaw:global-patch', async (_event, payload: unknown) => {
     const patch = payload as GlobalPatch
+    let thinkingAdjusted = false
     if (patch.defaultThinking !== undefined || patch.defaultModel !== undefined) {
       const snapshot = await openClawConfigStore().snapshot()
-      const thinking = await validateThinking({
+      const modelChanged = patch.defaultModel !== undefined && patch.defaultModel !== snapshot.defaultModel
+      const requested = patch.defaultThinking === null
+        ? 'default'
+        : patch.defaultThinking ?? await requestedThinking(snapshot.defaultThinking ?? 'default', snapshot.defaultModel)
+      const validation = await validateThinkingWithFallback({
         model: patch.defaultModel ?? snapshot.defaultModel,
-        thinking: patch.defaultThinking === null ? 'default' : patch.defaultThinking ?? await requestedThinking(snapshot.defaultThinking ?? 'default', snapshot.defaultModel),
+        thinking: requested,
         global: true,
-      })
-      if (patch.defaultThinking !== undefined || snapshot.defaultThinking !== undefined) patch.defaultThinking = thinking === 'default' ? null : thinking as GlobalPatch['defaultThinking']
+      }, modelChanged && patch.defaultThinking === undefined)
+      thinkingAdjusted = validation.adjusted
+      if (patch.defaultThinking !== undefined || snapshot.defaultThinking !== undefined || validation.adjusted) patch.defaultThinking = validation.thinking === 'default' ? null : validation.thinking as GlobalPatch['defaultThinking']
     }
     const result = await openClawConfigStore().applyGlobalPatch(patch)
     // Global model/thinking changes affect the roster fallback shown by
     // 御书房, so regenerate the dashboard projection before reporting done.
     const agentConfigSync = await syncAgentConfig()
-    return { ...result, agentConfigSync }
+    return { ...result, agentConfigSync, thinkingAdjusted }
   })
   ipcMain.handle('openclaw:mcp-upsert', (_event, payload: unknown) => {
     const input = payload as { name?: string; config?: McpServerInput }
@@ -1507,13 +1580,11 @@ async function boot(): Promise<void> {
     await refreshChannelEnvironment()
     await syncAgentConfig()
     await startDashboard()
-    markStartup('ready')
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      const loadStartedAt = Date.now()
-      await dashboardWindow.loadURL(dashboardUrl)
-      startupTimings.dashboardLoadMs = Date.now() - loadStartedAt
+      await loadDashboardWindow(dashboardWindow)
       dashboardWindow.show()
     }
+    markStartup('ready')
     startupTimings.completedAt = new Date().toISOString()
     await persistStartupTimings()
     console.log(`[edict] startup ready: app=${startupTimings.appReadyMs ?? 'n/a'}ms runtime=${startupTimings.runtimeDataMs ?? 'n/a'}ms python=${startupTimings.pythonSpawnMs ?? 'n/a'}ms healthz=${startupTimings.healthzMs ?? 'n/a'}ms dashboard=${startupTimings.dashboardLoadMs ?? 'n/a'}ms`)

@@ -93,6 +93,7 @@ test('full settings uses the dashboard dark theme and editable provider fields',
   page.on('pageerror', error => errors.push(error.message))
   await page.addInitScript(() => {
     window.edictDesktop = {
+      openDashboard: async () => { window.dashboardReturnCalls = (window.dashboardReturnCalls || 0) + 1; return { ok: true } },
       listProviders: async () => [],
       getDiagnostics: async () => ({ startupState: 'ready', version: '0.3.1-test', runtimeOptions: {}, workspace: { name: '测试工作区', projectPath: '/fixture/project' }, dataDirectory: '/fixture/data', runtimeDependencies: { openclawPath: '/fixture/openclaw', nodePath: '/fixture/node' } }),
       getOpenClawSnapshot: async () => ({ agents: [], mcpServers: [], network: { search: { enabled: true }, fetch: { enabled: true } } }),
@@ -109,6 +110,13 @@ test('full settings uses the dashboard dark theme and editable provider fields',
   await page.locator('#provider-key').fill('fixture-secret')
   await expect(page.locator('#provider-url')).toHaveValue('https://fixture.example/v1')
   await expect(page.locator('#provider-key')).toHaveValue('fixture-secret')
+  await expect(page.locator('#provider-key')).toHaveAttribute('type', 'password')
+  await page.getByRole('button', { name: '显示 API Key' }).click()
+  await expect(page.locator('#provider-key')).toHaveAttribute('type', 'text')
+  await page.getByRole('button', { name: '隐藏 API Key' }).click()
+  await expect(page.locator('#provider-key')).toHaveAttribute('type', 'password')
+  await page.getByRole('button', { name: '返回总控台' }).click()
+  await expect.poll(() => page.evaluate(() => window.dashboardReturnCalls)).toBe(1)
   expect(await page.locator('body').evaluate(el => getComputedStyle(el).backgroundColor)).toBe('rgb(7, 9, 15)')
   await page.screenshot({ path: 'test-results/settings-desktop.png', fullPage: true })
   for (const tab of ['general', 'agents', 'runtime', 'dependencies', 'skills', 'mcp', 'ops', 'about']) {
@@ -129,6 +137,54 @@ test('full settings uses the dashboard dark theme and editable provider fields',
   await page.locator('[data-tab="providers"]').click()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy()
   await page.screenshot({ path: 'test-results/settings-narrow.png', fullPage: true })
+  expect(errors).toEqual([])
+})
+
+test('saved API keys stay locked, can be intentionally revealed or replaced, and apply without a running task', async ({ page }) => {
+  const errors = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.addInitScript(() => {
+    const savedProvider = {
+      id: 'fixture-provider', name: 'Fixture Provider', type: 'openai-compatible', baseUrl: 'https://fixture.example/v1',
+      models: ['fixture-model'], defaultModel: 'fixture-model', secretStored: true,
+    }
+    window.providerApplyCalls = []
+    window.edictDesktop = {
+      listProviders: async () => [savedProvider],
+      revealProviderKey: async providerId => providerId === savedProvider.id ? 'fixture-stored-secret' : '',
+      saveProvider: async payload => {
+        window.providerApplyCalls.push({ kind: 'save', payload })
+        return { ...savedProvider, integration: { ok: true }, requiresReload: true }
+      },
+      reloadDashboard: async () => { window.providerApplyCalls.push({ kind: 'reload' }); return { ok: true } },
+      getDiagnostics: async () => ({ startupState: 'ready', dashboardReloadRequired: false, runtimeOptions: {} }),
+      getObservability: async () => ({ activeTasks: [] }),
+      getOpenClawSnapshot: async () => ({ agents: [], mcpServers: [], network: {} }),
+      getAgentBindings: async () => ({ agents: [] }),
+    }
+  })
+  await page.goto('/settings/index.html')
+  await expect(page.getByRole('heading', { name: '编辑 · Fixture Provider' })).toBeVisible()
+  await expect(page.locator('#provider-key')).toBeDisabled()
+  await expect(page.locator('#provider-key')).toHaveValue('')
+  await expect(page.getByRole('button', { name: '显示 API Key' })).toBeEnabled()
+  await page.getByRole('button', { name: '显示 API Key' }).click()
+  await expect(page.locator('#provider-key')).toHaveValue('fixture-stored-secret')
+  await expect(page.locator('#provider-key')).toHaveAttribute('type', 'text')
+  await page.getByRole('button', { name: '隐藏 API Key' }).click()
+  await expect(page.locator('#provider-key')).toHaveAttribute('type', 'password')
+  await page.getByRole('button', { name: '更换密钥' }).click()
+  await expect(page.locator('#provider-key')).toBeEnabled()
+  await expect(page.locator('#provider-key')).toHaveValue('')
+  await page.locator('#provider-key').fill('replacement-fixture-secret')
+  await page.getByRole('button', { name: '显示 API Key' }).click()
+  await expect(page.locator('#provider-key')).toHaveAttribute('type', 'text')
+  await page.getByRole('button', { name: '保存供应商' }).click()
+  await expect(page.locator('#form-success')).toHaveText('供应商与密钥已保存，运行看板已重载并生效。')
+  await expect(page.locator('#provider-key')).toBeDisabled()
+  await expect(page.locator('#provider-key')).toHaveValue('')
+  const calls = await page.evaluate(() => window.providerApplyCalls.map(call => ({ kind: call.kind, hasKey: Boolean(call.payload?.apiKey) })))
+  expect(calls).toEqual([{ kind: 'save', hasKey: true }, { kind: 'reload', hasKey: false }])
   expect(errors).toEqual([])
 })
 
@@ -172,7 +228,7 @@ test('桌面版可在软件内配置 OpenClaw 派发渠道', async ({ page }) =>
   await page.route('**/api/model-change-log', route => route.fulfill({ json: [] }))
   await page.route('**/api/set-dispatch-channel', route => route.fulfill({ json: { ok: true } }))
   await page.goto('/')
-  await page.getByRole('tab', { name: '模型配置', exact: true }).click()
+  await page.getByRole('navigation', { name: '应用导航' }).getByRole('button', { name: '设置', exact: true }).click()
   await expect(page.getByRole('heading', { name: '派发渠道', exact: true })).toBeVisible()
   await expect(page.getByText('已关闭', { exact: true })).toBeVisible()
   await page.getByLabel('开启外部派发渠道').check()

@@ -17,6 +17,8 @@ const els = {
   selectProject: document.querySelector('#select-project'),
 }
 
+let dashboardOpening = false
+
 function setBusy(busy) {
   for (const button of [els.createWorkspace, els.selectWorkspace, els.useWorkspaceProject, els.selectProject]) {
     button.disabled = busy
@@ -26,6 +28,19 @@ function setBusy(busy) {
 function showSetupError(error) {
   els.workspaceError.hidden = !error
   els.workspaceError.textContent = error || ''
+}
+
+async function openDashboardWhenReady() {
+  if (dashboardOpening) return
+  dashboardOpening = true
+  try {
+    const result = await api.openDashboard()
+    if (result?.ok === false) throw new Error(result.error || '无法打开总控台')
+  } catch (error) {
+    els.details.textContent = error instanceof Error ? error.message : String(error)
+  } finally {
+    dashboardOpening = false
+  }
 }
 
 function render(state, workspaceState) {
@@ -61,6 +76,7 @@ function render(state, workspaceState) {
     els.message.textContent = '原始 EDICT 看板已就绪。'
     els.progress.style.width = '100%'
     els.retry.hidden = true
+    void openDashboardWhenReady()
     return
   }
   if (status === 'error' || status === 'crashed') {

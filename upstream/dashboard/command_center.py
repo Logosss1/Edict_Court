@@ -94,7 +94,7 @@ def classify_instruction(text: str, requested_mode: str | None = None) -> str:
         return "chat"
     if _QUESTION_RE.search(value) and not any(marker in value for marker in ("写", "生成", "实现", "修改", "开发")):
         return "chat"
-    if len(value) >= 180 or value.count("\n") >= 2 or sum(value.count(marker) for marker in _COMPLEX_MARKERS) >= 2:
+    if len(value) >= 180 or str(text).count("\n") >= 2 or sum(value.count(marker) for marker in _COMPLEX_MARKERS) >= 2:
         return "complex"
     if any(marker.lower() in value for marker in _COMPLEX_MARKERS) and len(value) >= 60:
         return "complex"
@@ -104,7 +104,12 @@ def classify_instruction(text: str, requested_mode: str | None = None) -> str:
         return "standard"
     if len(value) <= 70 and any(marker.lower() in value for marker in _SMALL_MARKERS):
         return "small"
-    return "chat"
+    if re.search(r"\b(build|fix|write|create|implement|develop|generate|refactor|test|deploy)\b", value):
+        return "standard"
+    if re.search(r"\b(hello|hi|thanks|status|progress|what|why|how)\b", value) or any(word in value for word in ('你好', '谢谢', '进展', '状态', '如何', '？', '?')):
+        return "chat"
+    # Unknown instructions must reach Taizi's actual triage, not a canned chat response.
+    return "standard"
 
 
 def build_plan(text: str, mode: str | None = None) -> dict[str, Any]:

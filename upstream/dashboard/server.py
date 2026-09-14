@@ -396,7 +396,7 @@ def handle_task_action(task_id, action, reason):
         _ensure_scheduler(task)
         _scheduler_snapshot(task, f'task-action-before-{action}')
         if action == 'stop':
-            task['_prev_state'] = task.get('_prev_state') or old_state
+            task['_prev_state'] = old_state
             task['state'] = 'Blocked'
             task['block'] = reason
             task['now'] = f'⏸️ 已暂停：{reason}'
@@ -1119,12 +1119,13 @@ def _command_center_reply(store, text, plan, **extra):
 def _execute_command_center_plan(store, text, plan, permission_mode='full', command_message_id=''):
     mode = plan.get('mode')
     if mode == 'chat':
-        return _command_center_reply(
+        message = _command_center_reply(
             store,
             '太子分拣：这是实时问询，不建立正式任务。若要询问某个 Agent 的实时进度，请进入御书房；御书房会读取该 Agent 当前工作会话，不会把问询误建成旨意。',
             plan,
             action='open-yushufang',
         )
+        return {'ok': True, **message}
     if mode == 'small':
         result = handle_create_small_task(text, plan, command_message_id)
     else:
@@ -1160,6 +1161,11 @@ def _execute_command_center_plan(store, text, plan, permission_mode='full', comm
 
 
 def handle_command_center_message(body):
+    with _COMMAND_APPROVAL_LOCK:
+        return _handle_command_center_message(body)
+
+
+def _handle_command_center_message(body):
     """Classify a desktop instruction, then route it to the existing workflow."""
     text = str((body or {}).get('text') or '').strip()
     if not text:
@@ -1192,17 +1198,25 @@ def handle_command_center_message(body):
         )
         return {'ok': True, 'requiresApproval': True, 'plan': plan, 'commandMessageId': command_message_id, **store.snapshot()}
 
-    store.set_pending(None)
     result = _execute_command_center_plan(store, text, plan, permission_mode, command_message_id)
+    if result.get('ok'):
+        store.set_pending(None)
     return {**result, 'plan': plan, 'commandMessageId': command_message_id, **store.snapshot()}
 
 
+_COMMAND_APPROVAL_LOCK = threading.RLock()
+
+
 def handle_command_center_approve():
+    with _COMMAND_APPROVAL_LOCK:
+        return _approve_command_center_plan()
+
+
+def _approve_command_center_plan():
     store = _command_center_store()
     pending = store.snapshot().get('pendingPlan')
     if not isinstance(pending, dict) or not pending.get('text') or not isinstance(pending.get('plan'), dict):
         return {'ok': False, 'error': '当前没有待确认的复杂任务'}
-    store.set_pending(None)
     result = _execute_command_center_plan(
         store,
         pending['text'],
@@ -1210,7 +1224,16 @@ def handle_command_center_approve():
         str(pending.get('permissionMode') or 'full'),
         str(pending.get('id') or ''),
     )
+    if result.get('ok'):
+        store.set_pending(None)
     return {**result, 'plan': pending['plan'], 'commandMessageId': pending.get('id', ''), **store.snapshot()}
+
+
+def dismiss_command_center_plan():
+    with _COMMAND_APPROVAL_LOCK:
+        store = _command_center_store()
+        store.set_pending(None)
+        return {'ok': True, **store.snapshot()}
 
 
 def get_task_workspace(task_id):
@@ -1221,12 +1244,11 @@ def get_task_workspace(task_id):
     if not task:
         return {'ok': False, 'error': f'任务 {clean_id} 不存在'}
     execution_department, execution_agent = _resolve_execution_assignment(task)
-    current_agent = _STATE_AGENT_MAP.get(task.get('state'))
+    current_state = task.get('_prev_state') if task.get('state') in {'Blocked', 'Cancelled'} else task.get('state')
+    current_agent = _STATE_AGENT_MAP.get(current_state)
     if (
-        task.get('state') in {'Doing', 'Next'}
-        or task.get('targetDept')
-        or task.get('org') in {'六部', '执行中'}
-        or _normalize_six_ministry(task.get('targetDept') or task.get('org'))
+        current_state in {'Doing', 'Next'}
+        or (not current_state and (task.get('org') in {'六部', '执行中'} or _normalize_six_ministry(task.get('org'))))
     ):
         current_agent = execution_agent or task.get('targetAgent', '')
     current_department = task.get('targetDept') or execution_department
@@ -1258,7 +1280,7 @@ def get_task_workspace(task_id):
         },
         'agentId': current_agent or task.get('targetAgent', ''),
         'permission': {
-            'mode': task.get('permissionMode', 'full'),
+            'mode': task.get('approvalMode') or task.get('permissionMode', 'full'),
             'scope': '当前任务可在选定项目目录内读写、运行项目命令和测试；工作区外及系统级敏感操作不自动放行',
         },
         'activity': get_task_activity(clean_id).get('activity', []),
@@ -4012,6 +4034,10 @@ class Handler(BaseHTTPRequestHandler):
         if p == '/api/command-center/approve':
             result = handle_command_center_approve()
             self.send_json(result, 200 if result.get('ok') else 400)
+            return
+
+        if p == '/api/command-center/dismiss':
+            self.send_json(dismiss_command_center_plan())
             return
 
         if p == '/api/task-workspace/test':

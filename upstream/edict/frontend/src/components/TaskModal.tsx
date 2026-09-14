@@ -374,6 +374,7 @@ export default function TaskModal() {
           )}
 
           {/* Pipeline */}
+          {!activeStage && <p role="status">未记录暂停前阶段，请查看最近活动；不会将未知阶段标为已完成。</p>}
           <div className="m-pipe">
             {stages.map((s, i) => (
               <div className="mp-stage" key={s.key}>

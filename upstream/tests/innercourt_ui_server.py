@@ -15,6 +15,9 @@ os.environ["EDICT_DATA_DIR"] = storage.name
 os.environ["EDICT_OPENCLAW_HOME"] = str(pathlib.Path(storage.name) / "openclaw")
 os.environ["EDICT_AUTO_DISPATCH"] = "0"
 os.environ["EDICT_SKIP_GATEWAY_RESTART"] = "1"
+project = pathlib.Path(storage.name) / 'project'
+project.mkdir()
+os.environ['EDICT_PROJECT_DIR'] = str(project)
 import server
 import court_discuss
 from yushufang import YushufangService

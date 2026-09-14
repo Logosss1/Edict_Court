@@ -42,6 +42,7 @@ export const api = {
   commandCenterMessage: (data: CommandCenterMessagePayload) =>
     postJ<CommandCenterResult>(`${API_BASE}/api/command-center/message`, data),
   commandCenterApprove: () => postJ<CommandCenterResult>(`${API_BASE}/api/command-center/approve`, {}),
+  commandCenterDismiss: () => postJ<CommandCenterData>(`${API_BASE}/api/command-center/dismiss`, {}),
   taskWorkspace: (id: string) =>
     fetchJ<TaskWorkspaceData>(`${API_BASE}/api/task-workspace/${encodeURIComponent(id)}`),
   runTaskTest: (taskId: string, commandId?: string) =>

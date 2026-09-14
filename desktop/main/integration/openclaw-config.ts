@@ -471,7 +471,7 @@ export function mergeAgentModelBindings(
       ...(model ? { model } : {}),
       ...(defaultModel ? { defaultModel } : {}),
       ...(model && separator > 0 ? { providerId: model.slice(0, separator), modelId: model.slice(separator + 1) } : {}),
-      ...(entry.workspace ? { workspace: entry.workspace } : {}),
+      ...(typeof runtime?.workspace === 'string' ? { workspace: runtime.workspace } : {}),
     }
   })
 }

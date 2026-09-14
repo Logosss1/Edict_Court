@@ -27,6 +27,7 @@ from file_lock import atomic_json_read, atomic_json_update
 MAX_OUTPUT = 16_000
 _RUN_LOCK = threading.RLock()
 _RUN_PROCESSES: dict[str, subprocess.Popen[str]] = {}
+_CANCELLED_RUNS: set[str] = set()
 
 
 def resolve_project(path: str | pathlib.Path) -> pathlib.Path:
@@ -62,8 +63,6 @@ def detect_test_commands(project: str | pathlib.Path) -> list[dict[str, Any]]:
                 commands.append({"id": "make-test", "label": "make test", "argv": ["make", "test"]})
         except OSError:
             pass
-    if not commands:
-        commands.append({"id": "no-detected-test", "label": "未检测到测试命令", "argv": []})
     return commands[:6]
 
 
@@ -117,7 +116,7 @@ def git_snapshot(project: str | pathlib.Path) -> dict[str, Any]:
     branch = run(["branch", "--show-current"])
     stat = run(["diff", "--stat"])
     changed = [line[:300] for line in status.splitlines() if line.strip()][:100]
-    return {"available": True, "branch": branch, "changedFiles": changed, "summary": stat or "工作区干净"}
+    return {"available": True, "branch": branch, "changedFiles": changed, "summary": stat or (f"{len(changed)} 个已暂存或未跟踪的变更" if changed else "工作区干净")}
 
 
 def _latest_run(data_dir: pathlib.Path, task_id: str) -> dict[str, Any] | None:
@@ -194,9 +193,25 @@ def start_test(project: str | pathlib.Path, task_id: str, data_dir: str | pathli
             process = subprocess.Popen(command["argv"], **options)
             with _RUN_LOCK:
                 _RUN_PROCESSES[run_id] = process
-            output, _ = process.communicate(timeout=900)
+            # Drain output as it arrives; communicate() hides all progress until exit.
+            output_chunks: list[str] = []
+            def read_output() -> None:
+                if process is None or process.stdout is None:
+                    return
+                for line in iter(process.stdout.readline, ''):
+                    output_chunks.append(line)
+                    text = ''.join(output_chunks)[-MAX_OUTPUT:]
+                    output_chunks[:] = [text]
+                    _update_run(data_root, run_id, lambda row: row.update({'output': text}))
+            reader = threading.Thread(target=read_output, daemon=True)
+            reader.start()
+            process.wait(timeout=900)
+            reader.join(timeout=2)
+            output = ''.join(output_chunks)
+            with _RUN_LOCK:
+                cancelled = run_id in _CANCELLED_RUNS
             _update_run(data_root, run_id, lambda row: row.update({
-                "status": "passed" if process and process.returncode == 0 else "failed",
+                "status": "cancelled" if cancelled else "passed" if process and process.returncode == 0 else "failed",
                 "finishedAt": time.time(), "exitCode": process.returncode if process else None,
                 "output": (output or "")[-MAX_OUTPUT:],
             }))
@@ -209,6 +224,7 @@ def start_test(project: str | pathlib.Path, task_id: str, data_dir: str | pathli
         finally:
             with _RUN_LOCK:
                 _RUN_PROCESSES.pop(run_id, None)
+                _CANCELLED_RUNS.discard(run_id)
 
     threading.Thread(target=worker, name=f"edict-test-{run_id[:8]}", daemon=True).start()
     return {"ok": True, "runId": run_id, "message": f"已开始执行：{command.get('label', command_id)}"}
@@ -217,6 +233,8 @@ def start_test(project: str | pathlib.Path, task_id: str, data_dir: str | pathli
 def cancel_run(run_id: str) -> dict[str, Any]:
     with _RUN_LOCK:
         process = _RUN_PROCESSES.get(run_id)
+        if process and process.poll() is None:
+            _CANCELLED_RUNS.add(run_id)
     if not process:
         return {"ok": False, "error": "测试进程不存在或已结束"}
     try:
@@ -226,4 +244,16 @@ def cancel_run(run_id: str) -> dict[str, Any]:
             process.terminate()
     except OSError:
         pass
+    def ensure_stopped() -> None:
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                if os.name != 'nt':
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                else:
+                    subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'], capture_output=True, timeout=5)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    threading.Thread(target=ensure_stopped, daemon=True).start()
     return {"ok": True, "message": "已请求停止测试"}

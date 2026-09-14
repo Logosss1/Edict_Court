@@ -85,7 +85,20 @@
                 <label><span>协议</span><select id="provider-type" name="type"><option value="openai-compatible">OpenAI 兼容</option></select></label>
               </div>
               <label><span>Base URL</span><input id="provider-url" name="baseUrl" placeholder="https://example.com/v1" inputmode="url" required /><small>测试会尝试标准的 <code>/v1/models</code> 路径。</small></label>
-              <label><span>API Key</span><input id="provider-key" name="apiKey" type="password" placeholder="仅在新增或更换密钥时填写" autocomplete="new-password" /><small id="key-hint">保存后只显示“已设置”，不会回显原密钥。</small></label>
+              <div class="field-block">
+                <label class="field-label" for="provider-key">API Key</label>
+                <div class="secret-row">
+                  <div class="secret-input">
+                    <input id="provider-key" name="apiKey" type="password" placeholder="仅在新增或更换密钥时填写" autocomplete="new-password" aria-describedby="key-hint" />
+                    <button id="toggle-provider-key" class="secret-visibility" type="button" aria-label="显示 API Key" aria-pressed="false" title="显示 API Key">
+                      <svg class="eye-visible" aria-hidden="true" viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/></svg>
+                      <svg class="eye-hidden" aria-hidden="true" viewBox="0 0 24 24" hidden><path d="m3 3 18 18M10.6 6.2c.5-.1.9-.2 1.4-.2 6 0 9.5 6 9.5 6a17 17 0 0 1-2.1 2.8M6.5 7.5C3.9 9.2 2.5 12 2.5 12s3.5 6 9.5 6c1.5 0 2.8-.4 4-.9M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
+                    </button>
+                  </div>
+                  <button id="replace-provider-key" class="button secondary secret-replace" type="button" hidden>更换密钥</button>
+                </div>
+                <small id="key-hint">保存后默认隐藏；点击眼睛可回显，密钥仍由系统安全存储保护。</small>
+              </div>
               <label><span>模型 ID</span><textarea id="provider-models" name="models" rows="5" placeholder="每行一个模型 ID，例如：gpt-4o-mini"></textarea><small>测试发现的模型可直接回填，再保存到 OpenClaw 模型目录。</small></label>
               <div class="form-grid">
                 <label><span>默认模型</span><input id="provider-default-model" name="defaultModel" placeholder="可选，必须在模型列表中" /></label>
@@ -105,17 +118,22 @@
         <div class="layout agent-layout">
           <aside class="panel provider-list-panel"><div class="panel-heading"><div><h2>已注册 Agent</h2><p id="agent-count">读取 agents.json</p></div><button id="refresh-agents" class="icon-button" title="刷新 Agent" type="button">↻</button></div><div id="agent-list" class="provider-list"></div></aside>
           <section class="panel editor-panel">
-            <div class="panel-heading editor-heading"><div><h2 id="agent-title">选择 Agent</h2><p id="agent-meta">模型与策略会写入 OpenClaw 的 agents.list</p></div><span id="agent-status" class="status-dot neutral">未选择</span></div>
+            <div class="panel-heading editor-heading"><div><h2 id="agent-title">选择 Agent</h2><p id="agent-meta">先选择供应商和模型；思考、工具及权限在高级策略中调整</p></div><span id="agent-status" class="status-dot neutral">未选择</span></div>
             <form id="agent-form" novalidate>
               <div class="form-grid"><label><span>供应商</span><select id="agent-provider"></select></label><label><span>模型</span><select id="agent-model"></select></label></div>
               <div class="actions compact"><button id="apply-agent-model" class="button primary" type="button">应用 Agent 模型</button><button id="set-default-model" class="button secondary" type="button">设为全局默认</button><span id="agent-binding" class="inline-note"></span></div>
-              <div class="section-rule"></div>
-              <div class="form-grid"><label><span>思考档位</span><select id="agent-thinking" aria-describedby="agent-thinking-details"><option value="">继承全局</option></select><small id="agent-thinking-details" role="status"></small></label><label><span>工具配置</span><select id="agent-tool-profile"><option value="">继承全局</option><option>minimal</option><option>coding</option><option>messaging</option><option>full</option></select></label></div>
-              <div class="actions capability-actions"><button class="button secondary" type="button" data-manage-capabilities>管理模型思考档位</button><button class="button secondary" type="button" data-refresh-capabilities hidden>重试读取档位</button></div>
-              <div class="form-grid"><label><span>技能白名单</span><textarea id="agent-skills" rows="4" placeholder="每行一个 skill；留空表示清除显式限制"></textarea></label><label><span>可调用 Agent</span><textarea id="agent-allow-agents" rows="4" placeholder="每行一个 Agent ID"></textarea></label></div>
-              <div class="form-grid"><label><span>沙箱模式</span><select id="agent-sandbox-mode"><option value="">继承默认</option><option>off</option><option>non-main</option><option>all</option></select></label><label><span>工作区访问</span><select id="agent-workspace-access"><option value="">继承默认</option><option>none</option><option>ro</option><option>rw</option></select></label></div>
+              <small class="model-config-note">切换模型后会自动使用该模型支持的思考档位；DeepSeek 等不提供推理档位的模型使用“模型默认”。</small>
+              <details class="agent-advanced">
+                <summary><span><strong>高级 Agent 策略</strong><small>思考档位、工具、技能和工作区权限</small></span></summary>
+                <div class="agent-advanced-body">
+                  <div class="form-grid"><label><span>思考档位</span><select id="agent-thinking" aria-describedby="agent-thinking-details"><option value="">继承全局</option></select><small id="agent-thinking-details" role="status"></small></label><label><span>工具配置</span><select id="agent-tool-profile"><option value="">继承全局</option><option>minimal</option><option>coding</option><option>messaging</option><option>full</option></select></label></div>
+                  <div class="actions capability-actions"><button class="button secondary" type="button" data-manage-capabilities>管理模型思考档位</button><button class="button secondary" type="button" data-refresh-capabilities hidden>重试读取档位</button></div>
+                  <div class="form-grid"><label><span>技能白名单</span><textarea id="agent-skills" rows="4" placeholder="每行一个 skill；留空表示清除显式限制"></textarea></label><label><span>可调用 Agent</span><textarea id="agent-allow-agents" rows="4" placeholder="每行一个 Agent ID"></textarea></label></div>
+                  <div class="form-grid"><label><span>沙箱模式</span><select id="agent-sandbox-mode"><option value="">继承默认</option><option>off</option><option>non-main</option><option>all</option></select></label><label><span>工作区访问</span><select id="agent-workspace-access"><option value="">继承默认</option><option>none</option><option>ro</option><option>rw</option></select></label></div>
+                  <div class="actions"><button id="save-agent-policy" class="button primary" type="button">保存 Agent 策略</button><span class="spacer"></span><button id="add-skill" class="button secondary" type="button">新增 Skill</button></div>
+                </div>
+              </details>
               <div id="agent-form-error" class="form-error"></div><div id="agent-form-success" class="form-success"></div>
-              <div class="actions"><button id="save-agent-policy" class="button primary" type="button">保存 Agent 策略</button><span class="spacer"></span><button id="add-skill" class="button secondary" type="button">新增 Skill</button></div>
             </form>
           </section>
         </div>

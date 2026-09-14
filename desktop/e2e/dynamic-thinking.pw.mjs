@@ -59,7 +59,7 @@ test('model page shows exact levels, blocks stale choice, and probes only after 
     applied = route.request().postDataJSON()
     await route.fulfill({ json: { ok: true, agentCount: 3 } })
   })
-  await page.getByRole('tab', { name: /模型配置/ }).click()
+  await page.getByRole('navigation', { name: '应用导航' }).getByRole('button', { name: '设置', exact: true }).click()
   await expect(page.getByRole('radio', { name: 'max', exact: true })).toBeVisible()
   await expect(page.getByRole('radio', { name: 'ultra', exact: true })).toHaveCount(0)
   await page.getByRole('radio', { name: 'max', exact: true }).check()

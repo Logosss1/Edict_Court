@@ -13,9 +13,8 @@ const modeOptions = [
 
 function PlanPreview({ plan }: { plan: CommandPlan }) {
   return <div className="command-plan" aria-label="太子分拣计划">
-    <div className="command-plan-head"><strong>{plan.modeLabel}</strong><span>{plan.reason}</span></div>
+    <div className="command-plan-head"><strong>{plan.modeLabel}</strong></div>
     <div className="command-plan-grid">
-      <div><small>目标 Agent</small><span>{plan.suggestedAgents.join(' → ')}</span></div>
       <div><small>下一步</small><span>{plan.nextStep}</span></div>
     </div>
     <p><ShieldCheck size={12} />{plan.permissionScope}</p>
@@ -31,6 +30,11 @@ export default function CommandCenterPanel() {
   const [mode, setMode] = useState<typeof modeOptions[number]['value']>('');
   const [permissionMode, setPermissionMode] = useState<'ask' | 'auto' | 'full'>('full');
   const [sending, setSending] = useState(false);
+  const [historyLimit, setHistoryLimit] = useState(8);
+  const openQuestion = (question: string) => {
+    sessionStorage.setItem('edict-question-draft', question);
+    setActiveTab('yushufang');
+  };
 
   const refresh = async () => {
     try { setData(await api.commandCenter()); } catch { /* dashboard startup may still be loading */ }
@@ -56,6 +60,7 @@ export default function CommandCenterPanel() {
       setData(result);
       if (result.ok && !result.requiresApproval) {
         setText('');
+        if (result.plan?.mode === 'chat') openQuestion(value);
         if (result.taskId) toast(`📜 ${result.taskId} 已进入执行队列`);
       } else if (!result.ok) {
         toast(result.error || '太子分拣失败', 'err');
@@ -84,7 +89,17 @@ export default function CommandCenterPanel() {
     }
   };
 
-  const messages = (data?.messages || []).slice(-8);
+  const dismiss = async (edit: boolean) => {
+    if (sending) return;
+    setSending(true);
+    try {
+      const result = await api.commandCenterDismiss();
+      if (result.ok) { if (edit) setText(data?.pendingPlan?.text || ''); setData(result); }
+      else toast(result.error || '撤回失败', 'err');
+    } catch { toast('撤回失败，方案仍保留，请重试', 'err'); }
+    finally { setSending(false); }
+  };
+  const messages = (data?.messages || []).slice(-historyLimit);
   const pending = data?.pendingPlan;
   const plan = pending?.plan || lastPlan;
 
@@ -97,7 +112,7 @@ export default function CommandCenterPanel() {
       </div>
       <div className="command-permission" title="Codex 完全访问的工作区边界：在选定项目内读写和执行，工作区外及系统敏感操作另行确认">
         <ShieldCheck size={15} />
-        <span>完全访问 · 当前工作区</span>
+        <span>{permissionMode === 'ask' ? '执行前询问' : permissionMode === 'auto' ? '自动批准' : '完全访问'} · 当前工作区</span>
       </div>
     </div>
 
@@ -119,10 +134,11 @@ export default function CommandCenterPanel() {
     </form>
 
     {plan && <PlanPreview plan={plan} />}
-    {pending && <div className="command-approval" role="status"><div><strong>复杂任务等待确认</strong><span>确认后才会建立唯一的正式任务并调用三省六部。</span></div><button className="btn btn-p" type="button" onClick={() => void approve()} disabled={sending}><CheckCircle2 size={14} />确认执行</button></div>}
+    {pending && <div className="command-approval" role="status"><div><strong>复杂任务等待确认</strong><span>执行失败时方案会保留，可修复后重试。</span></div><button className="btn btn-g" type="button" onClick={() => void dismiss(true)} disabled={sending}>修改方案</button><button className="btn btn-g" type="button" onClick={() => void dismiss(false)} disabled={sending}>撤回</button><button className="btn btn-p" type="button" onClick={() => void approve()} disabled={sending}>{sending ? <LoaderCircle className="guard-spin" size={14} /> : <CheckCircle2 size={14} />}{sending ? '正在确认…' : '确认执行'}</button></div>}
 
     {messages.length > 0 && <div className="command-history" aria-label="总控台对话记录">
-      {messages.map((message) => <div className={`command-message ${message.role}`} key={message.id}><span>{message.role === 'emperor' ? '皇上' : '太子'}</span><p>{message.text}</p>{message.action === 'open-yushufang' && <button className="command-link" type="button" onClick={() => setActiveTab('yushufang')}>打开御书房实时问询</button>}{message.taskId && <button className="command-link" type="button" onClick={() => setModalTaskId(message.taskId || null)}>查看任务详情</button>}</div>)}
+      {(data?.messages.length || 0) > historyLimit && <button className="btn btn-g" onClick={() => setHistoryLimit((limit) => limit + 20)}>加载更早记录</button>}
+      {messages.map((message) => <div className={`command-message ${message.role}`} key={message.id}><span>{message.role === 'emperor' ? '皇上' : '太子'}</span><p>{message.text}</p>{message.action === 'open-yushufang' && <button className="command-link" type="button" onClick={() => openQuestion((data?.messages || []).slice(0, data?.messages.findIndex((item) => item.id === message.id)).reverse().find((item) => item.role === 'emperor')?.text || '')}>打开御书房实时问询</button>}{message.taskId && <button className="command-link" type="button" onClick={() => setModalTaskId(message.taskId || null)}>查看任务详情</button>}</div>)}
     </div>}
   </section>;
 }

@@ -140,8 +140,10 @@ Edict_InnerCourt 是 [EDICT](https://github.com/cft0808/edict) 的 macOS 桌面�
 
 打开 [GitHub Releases](https://github.com/Logosss1/Edict_InnerCourt/releases/latest)：
 
-- Apple Silicon（M 系列）下载 `Edict_InnerCourt-0.3.1-arm64-mac.zip`；
-- Intel Mac 下载 `Edict_InnerCourt-0.3.1-mac.zip`。
+- Apple Silicon（M 系列）下载 `Edict_InnerCourt-0.3.2-arm64-mac.zip`；
+- Intel Mac 下载 `Edict_InnerCourt-0.3.2-mac.zip`；
+- 64 位 Windows 下载 `Edict_InnerCourt-0.3.2-win-x64.zip`；
+- 64 位 Linux 下载 `Edict_InnerCourt-0.3.2-linux-x86_64.AppImage`。
 
 解压后打开 `Edict_InnerCourt.app`。
 
@@ -210,20 +212,6 @@ Edict_InnerCourt 是 [EDICT](https://github.com/cft0808/edict) 的 macOS 桌面�
 - **桌面自动执行：** 配好供应商和模型后，任务会自动离开太子队列；无外部渠道时走内置本地模式，外部渠道仍走 Gateway 投递。
 - **真实叫停：** 叫停和取消会原子更新任务状态，并在有后台派发进程时实际终止它；迟到的进程输出不能把已取消任务恢复。
 - **内置能力：** 首次进入工作区时幂等安装工作流 Skills 和工作区级 MCP，不包含供应商密钥或网络凭据。
-
-## 开源参考与改造边界
-
-Edict_InnerCourt 参考了几个成熟的开源项目，但始终以 EDICT 的三省六部编排为唯一核心：
-
-| 参考项目 | 借鉴重点 | 在 Edict_InnerCourt 中的实现 |
-| --- | --- | --- |
-| [OpenHands](https://github.com/OpenHands/OpenHands) | 工作区边界、执行过程可见，以及控制中心与执行环境分离。 | 软件要求先选择工作区/项目，并在执行详情中显示当前 Agent、项目范围、Git 变更、产出、测试和最近活动。 |
-| [LobeHub](https://github.com/lobehub/lobehub) | 以工作台为中心，把运行、历史、设置和 Agent 运营分层。 | 桌面左侧分为“运行、执行保障、档案、Skills & MCP、执行监控、设置”；御书房仍是工作流页面，不另造第二套任务系统。 |
-| [shadcn/ui](https://github.com/shadcn-ui/ui) | 可组合组件、本地拥有样式，以及不依赖黑盒主题的设计 token。 | 看板使用本地 CSS token 和可复用状态模式，不增加 shadcn 生成器或新的运行时依赖。 |
-| [Radix Primitives](https://github.com/radix-ui/primitives) | 语义化控件、受保护操作、焦点管理，以及明确的加载/成功/失败状态。 | 叫停、暂停、恢复、删除和审批都有真实状态变化、确认路径和可见的异步反馈。 |
-| [Ant Design](https://github.com/ant-design/ant-design) | 运维型密集信息、筛选、状态色和稳定的操作区。 | 旨意看板和执行监控保留紧凑卡片、活跃/归档/全部筛选、六部体检和阻塞详情，同时保持 EDICT 的视觉语言。 |
-
-这些项目是实现参考，不是替换框架。具体的逐项目范围、预期结果、代码落点和暂缓名额见 [`OPEN_SOURCE_ADOPTION_PLAN.md`](OPEN_SOURCE_ADOPTION_PLAN.md)。三省六部核心工作流不变。
 
 ## 常见问题与排查
 
