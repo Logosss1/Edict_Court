@@ -70,7 +70,11 @@
       {
         "from": "portable-runtime/${arch}/python",
         "to": "runtime/python",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc"
+        ]
       },
       {
         "from": "builtin",
