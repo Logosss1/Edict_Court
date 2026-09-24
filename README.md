@@ -1,319 +1,84 @@
-# Edict_InnerCourt
+# Edict for Mac · 三省六部像素朝堂 AI 编程工作站
 
-English | [中文](README.zh-CN.md)
+> 以 [Edict](https://github.com/cft0808/edict) 的三省六部多 Agent 协作为核心，参考 [Yan-Agent](https://github.com/ViaTumLab/Yan-Agent) 与 VS Code 的成熟能力，
+> 构建的 macOS（**仅 Apple Silicon / arm64**）桌面 AI 编程工具。Web 技术构建界面（Electron + React + Monaco + xterm.js + Phaser 3），原生桌面应用形态交付。
 
-<p align="center">
-  <strong>A desktop distribution of EDICT's Three Departments and Six Ministries multi-agent workflow.</strong><br>
-  <sub>The orchestration core stays the same; the desktop edition packages the runtime, configuration, Inner Court, and record management into a safer macOS user experience.</sub>
-</p>
-
-<p align="center">
-  <a href="https://github.com/Logosss1/Edict_InnerCourt/releases/latest"><img src="https://img.shields.io/github/v/release/Logosss1/Edict_InnerCourt?display_name=tag&label=latest%20release" alt="Latest release"></a>
-  <img src="https://img.shields.io/badge/platform-macOS-111827" alt="macOS">
-  <img src="https://img.shields.io/badge/Electron-desktop-47848F?logo=electron&logoColor=white" alt="Electron desktop">
-  <img src="https://img.shields.io/badge/OpenClaw-bundled-2563EB" alt="OpenClaw bundled">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22C55E" alt="MIT License"></a>
-</p>
-
-<p align="center">
-  <a href="https://github.com/Logosss1/Edict_InnerCourt/releases/latest">Download the latest macOS release</a> ·
-  <a href="SECURITY.md">Security</a> ·
-  <a href="CONTRIBUTING.md">Contributing</a> ·
-  <a href="NOTICE.md">Attribution</a>
-</p>
-
-## What this project is
-
-Edict_InnerCourt is the macOS desktop adaptation of [EDICT](https://github.com/cft0808/edict). It keeps the original Three Departments and Six Ministries model as the product's core: the user issues a decree, the Crown Prince triages it, the Secretariat plans, the Chancellery reviews, the Department of State Affairs dispatches, and the Ministries execute and report back.
-
-This is a packaging and workflow project, not a replacement for that institutional design. The main additions are the parts needed to make the system practical on a new Mac:
-
-- a distributable Electron application with bundled Node.js, Python, and OpenClaw runtimes;
-- a workspace-first desktop workbench: choose or create a workspace folder, then bind the project folder before work can begin;
-- first-run provider, model, Agent, runtime, and dispatch-channel configuration inside the app;
-- a persistent, single-room Inner Court that can inspect the live work of existing Agents;
-- built-in EDICT workflow Skills plus local workspace and memory MCP servers, provisioned per workspace without API keys;
-- safer deletion and cleanup for finished records and their attachments;
-- isolated local data, secure credential storage, diagnostics, and release documentation.
-
-## What stays the same
-
-The following are intentionally preserved from EDICT rather than redesigned away:
-
-- the Three Departments and Six Ministries division of responsibility;
-- Crown Prince triage, Secretariat planning, Chancellery review, State Affairs dispatch, and Ministry execution;
-- approval gates before proposals become executable tasks;
-- Agent roles, workspaces, Skills, audit-oriented records, and the task-board workflow;
-- the principle that orchestration should be observable, reviewable, and interruptible.
-
-The desktop layer changes how the system is installed and operated. It does not remove the original governance model.
-
-## What changed from the upstream project
-
-| Area | Original EDICT | Edict_InnerCourt |
-| --- | --- | --- |
-| Distribution | Clone the repository and prepare OpenClaw, Python, and Node.js on the machine. | Download a macOS ZIP with the runtime bundle included. |
-| Work boundary | The repository and OpenClaw workspaces are prepared separately by local scripts and conventions. | The app requires a workspace and project selection before opening the workbench, and scopes the local runtime to that workspace. |
-| First setup | Use shell scripts and OpenClaw commands to create workspaces, register Agents, sync data, and restart services. | Use the in-app readiness checks and Settings flow; the app creates its isolated runtime data on first launch. |
-| Provider and model setup | Configure OpenClaw credentials and model files as part of the local environment. | Configure provider endpoints, credentials, model discovery, Agent bindings, and thinking depth in Settings. |
-| Dispatch channels | Configure OpenClaw channel plugins and account fields outside the desktop UI. | Configure supported Feishu, Telegram, Discord, Slack, and Signal accounts in **Dispatch Channel**. |
-| Inner Court | Repository/dashboard workflow without a packaged macOS boundary for one shared live room. | One unfinished discussion at a time; new rooms reuse each Agent's canonical main session and can ask for read-only live progress. |
-| History management | The desktop edition adds consistent deletion controls. | Finished Inner Court, Court Discussion, task, memorial, session, and detail records can be removed with confirmation and cleanup. |
-| Runtime safety | The original project provides the orchestration logic and scripts. | Isolated user data, secure secrets, attachment isolation, runtime diagnostics, cancellable dispatch, and packaged launch behavior are added around it. |
-
-## The core workflow
-
-```text
-                    user / external channel
-                              │ decree
-                              ▼
-                     Crown Prince · triage
-                              │
-                              ▼
-                    Secretariat · planning
-                              │ proposal
-                              ▼
-                   Chancellery · review / veto
-                              │ approved plan
-                              ▼
-                 State Affairs · dispatch / coordination
-                              │
-             ┌────────────────┼────────────────┐
-             ▼                ▼                ▼
-          Ministries        Skills          Agent workspaces
-             └────────────────┼────────────────┘
-                              ▼
-                     reports / audit trail
+```
+皇上下旨 → 太子分拣（闲聊直答）→ 中书省规划 → 门下省审议（准奏 / 封驳，封驳强制返工）
+        → 尚书省派发 → 六部并行执行 → 汇总回奏 → 皇上御批结案（奏折自动归档）
 ```
 
-The Chancellery is not decorative: it is the quality gate between planning and execution. A proposal must be reviewed and approved before the normal task API can receive it. Edict_InnerCourt adds the Inner Court as a controlled consultation layer; it does not bypass the original flow.
+## 两种模式，同一个运行时（⌘J 切换）
 
-## Feature overview
+| 工作台（默认） | 朝堂（像素 · 唐） |
+|---|---|
+| ![工作台](docs/screenshots/03-workbench-final-gate.png) | ![太和殿](docs/screenshots/08-court-taihe-presenter.png) |
+| Cursor 式下旨输入框（⌘L 隐藏/显示）· 模型 / 三档 / 多 Agent 开关 · 实时活动流 · 准奏/封驳 · Editor | 皇上端坐龙椅；官员小人的动作 = Agent 实时状态；点击小人查看工作并朱批；奏折批阅浮层 |
 
-| Area | What it provides |
-| --- | --- |
-| **Task Board** | Track decree status, department ownership, progress, retries, pause, cancellation, and final reports. |
-| **Desktop Workbench** | Start from a required workspace and project, submit a formal decree inside the app, and keep the active project visible while the original task flow runs. |
-| **Monitor** | Inspect Agent health, activity, task counts, and runtime observations. |
-| **Models and Providers** | Configure OpenAI-compatible endpoints, discover or define models, bind a model per Agent, and select supported thinking depth. |
-| **Dispatch Channel** | Configure named Feishu, Telegram, Discord, Slack, and Signal accounts, install the supported channel component on first save, probe the connection, remove accounts, and reload the dashboard. |
-| **Inner Court** | Hold one live discussion at a time, invite selected Agents, share their canonical working memory, inspect read-only current progress, and approve proposals before task creation. |
-| **Court Discussion** | Run multi-Agent topic discussions while preserving the discussion record and approval boundary. |
-| **Memorials and Sessions** | Review completed work, task history, session details, and terminal records; delete finished records when they are no longer needed. |
-| **Attachments** | Select, paste, drag, upload, retry, and download files with room-scoped isolation and size limits. |
-| **Skills and Agent roles** | Keep the upstream Agent role and Skills model available to the packaged dashboard and runtime. |
-| **Built-in capabilities** | Install audited EDICT triage, planning, review, engineering, and documentation Skills, plus local workspace and memory MCP tools on first workspace activation. |
+- 两种模式只是**同一份运行时状态**（主进程）的两种投影：任务、审批、结果、审计完全一致、实时双向同步。
+- 在朝堂里准奏，工作台立即结案；在工作台叫停，朝堂里的官员立即停笔。
 
-## Desktop architecture
+## 协同三档
 
-```text
-┌─────────────────────────────────────────────────────────┐
-│ Edict_InnerCourt.app                                    │
-│                                                         │
-│  Electron shell                                         │
-│  ├─ Settings and runtime readiness                       │
-│  ├─ macOS secure credential bridge                       │
-│  ├─ provider/model/channel configuration                 │
-│  └─ dashboard lifecycle and diagnostics                  │
-│                                                         │
-│  Bundled runtime                                         │
-│  ├─ Node.js                                              │
-│  ├─ Python                                               │
-│  └─ OpenClaw + channel components                        │
-│                                                         │
-│  Packaged EDICT services                                 │
-│  ├─ React dashboard                                      │
-│  ├─ Python task, Court Discussion, and Inner Court APIs  │
-│  ├─ Agent definitions and Skills                         │
-│  └─ isolated per-install user data                      │
-└─────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-             OpenClaw Agent main sessions and providers
-```
+| 档位 | 流程 | 适用 |
+|---|---|---|
+| **Solo** | 独相直接对话、读写文件、执行命令，无编排 | 简单任务，最省 token |
+| **Court Lite**（默认） | 太子分拣 → 中书规划 → 门下审议（封驳上限 1，超限升级御裁）→ 六部执行 → 回奏御批 | 日常任务 |
+| **Full Court** | 太子 / 中书 / 门下 / 尚书 / 六部全流程；可选**朝堂议政**；**方案御览（可朱笔涂改）**；六部并行（依赖图）；门下**审议成果**；封驳循环（上限 3） | 复杂长任务 |
 
-The app keeps ordinary provider metadata separate from secrets. Provider and channel secrets are stored in the local encrypted credential store; OpenClaw configuration receives environment-backed SecretRefs rather than plaintext secret values. Release assets contain generic demo data, not the maintainer's provider configuration or user data.
+关闭「协同」开关 = Solo。
 
-## Quick start for users
+## 核心能力
 
-### 1. Download the correct package
+- **制度性审核**：状态机与 Edict 的 `STATE_TRANSITIONS` 一致，中书 → 尚书之间**没有任何绕过门下省的路径**；非法流转被拒绝并写入审计；高风险流转（执行中取消、审议中取消、结案）必须由皇上亲自完成。
+- **完全可观测**：每位官员的 thinking（流式）、工具调用与返回、日志、状态、错误实时显示；心跳 + 健康检测（🟢活跃 🟡停滞 🔴告警）。
+- **实时可干预**：叫停 / 取消 / 恢复；**朱批**（给任一 Agent 留言，其下一轮必须读到并回应，回应写入审计）；**插话**（朝堂议政中官员针对你的发言继续辩论）；**涂改方案**（修改中书省方案后放行，按修改版执行）。
+- **全程可审计**：SHA-256 哈希链审计日志（可一键校验）；奏折阁五阶段时间线（圣旨 → 中书 → 门下 → 六部 → 回奏）；记录模型、协议、run ID、退出状态、产物路径与**系统核验的哈希**（不采信模型自述）。
+- **局部恢复**：每一步都是持久化节点；失败 / 应用重启中断后只**重放失败节点**，不重放整棵 Agent 树。
+- **Editor**：文件树、多标签、Monaco 语法高亮与诊断、全局搜索替换（正则/大小写/全字/包含）、集成终端（无原生模块的 PTY）、问题面板、Git 状态 / diff / 暂存 / 提交；Agent 改动实时刷新到打开的文件。
+- **军机处全部面板**：旨意看板、省部调度、奏折阁、旨库（9 模板）、官员总览（Token 排行）、天下要闻、模型配置（每 Agent 独立热切换）、技能配置、小任务 Sessions、上朝仪式、朝堂议政，另有审计日志与使用说明。
+- **多协议 / 多供应商**：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses；DeepSeek / GLM / Qwen / Kimi / OpenAI / Anthropic / 本地 Ollama 预设（只预填 base_url，模型 id 由你填写或从服务拉取；**没有任何硬编码 Key**）。
+- **Token 经济性**：强 / 经济模型分级路由；仓库地图 + 符号大纲代替全量源码；文件按需读取；子 Agent 只回传结构化结论；稳定系统前缀（Anthropic `cache_control`，OpenAI/DeepSeek 前缀缓存）；长对话滚动压缩；封驳次数与预算上限（超限升级御批）；下旨前预估、每任务 / 每官员实时统计。
 
-Open [GitHub Releases](https://github.com/Logosss1/Edict_InnerCourt/releases/latest):
+## 安装（Apple Silicon）
 
-- `Edict_InnerCourt-0.3.2-arm64-mac.zip` for Apple Silicon Macs (M-series);
-- `Edict_InnerCourt-0.3.2-mac.zip` for Intel Macs;
-- `Edict_InnerCourt-0.3.2-win-x64.zip` for 64-bit Windows;
-- `Edict_InnerCourt-0.3.2-linux-x86_64.AppImage` for 64-bit Linux.
+见 [docs/INSTALL_MAC.md](docs/INSTALL_MAC.md)。**安装包未签名（仅 ad-hoc）、未公证**：首次打开需在「系统设置 → 隐私与安全性」中点「仍要打开」。
 
-Extract the ZIP and open `Edict_InnerCourt.app`.
-
-### 2. Choose the workspace and project
-
-On first launch, choose or create a workspace folder. Then choose the project folder that the current work should operate on. The app will not enter the workbench until both are set. Switching workspaces creates a separate local EDICT runtime boundary; the selected project is recorded in each new task and included in Agent dispatch context.
-
-### 3. Complete the in-app setup
-
-In **Settings**:
-
-1. Enter your provider Base URL and API key.
-2. Discover or define the models exposed by that provider.
-3. Bind a model to each Agent and review the available thinking levels.
-4. Confirm that the bundled runtime and OpenClaw checks are ready.
-5. If external message dispatch is needed, open **Dispatch Channel**, enter the platform-issued account details, save, test the connection, and reload the dashboard when prompted.
-
-The platform-side work is still external: creating a Feishu app or bot, granting permissions, enabling WebSocket or Socket Mode, and copying the credentials into the app. The desktop app cannot create an account on a third-party platform for you.
-
-### 4. Issue a decree
-
-Once setup is ready, use **Run → Issue a decree** in the desktop workbench, or use a configured external channel. The normal EDICT flow remains:
-
-```text
-decree → Crown Prince triage → Secretariat plan
-      → Chancellery review → State Affairs dispatch
-      → Ministry execution → report and audit trail
-```
-
-After a provider and model are configured, desktop automatic dispatch is enabled by default. With no external channel selected, the bundled OpenClaw runs locally; when a Feishu, Telegram, Discord, Slack, or Signal channel is selected, dispatch uses the configured OpenClaw Gateway. You can pause automatic dispatch in **Settings → Runtime**.
-
-## Inner Court workflow
-
-The Inner Court is a live consultation room, not a second task system.
-
-1. Open **Inner Court** and create the one available unfinished discussion.
-2. Invite only the Agents needed for the topic.
-3. Ask questions or attach files. Messages are processed serially inside the room.
-4. Use the live work panel to see what an Agent is currently doing and request a read-only progress report.
-5. Review the Agents' replies and proposals. Nothing becomes a task automatically.
-6. Approve a proposal and explicitly confirm task creation when it should return to the normal EDICT workflow.
-7. End, archive, or delete the finished discussion when it is no longer needed.
-
-Every Agent keeps its canonical main session, so the same Agent can continue its existing work when summoned to the Inner Court. A second unfinished Inner Court room is rejected to prevent competing live contexts.
-
-## Record and data policy
-
-```text
-Active record   → keep it; pause, resume, finish, or inspect it
-Terminal record → ask for confirmation, then delete its record and dedicated runtime data
-```
-
-The app protects active tasks, sessions, and discussions from accidental deletion. Finished Inner Court archives, Court Discussions, tasks, memorials, sessions, and detail records expose deletion controls. Room-scoped attachments and temporary runtime files are cleaned with the record where applicable.
-
-## Technical highlights
-
-- **Packaged runtime:** Node.js, Python, and OpenClaw are shipped with the app so a new Mac does not need a separate runtime installation for normal use.
-- **Isolated user data:** the application uses its own per-install data directory instead of reading personal OpenClaw state from the source tree.
-- **Secure credential boundary:** provider and channel secrets are stored separately from ordinary metadata and are injected only into the child runtime that needs them.
-- **OpenClaw SecretRefs:** desktop-managed channel configuration writes environment references to OpenClaw JSON, not plaintext tokens.
-- **Canonical Agent memory:** Inner Court rooms attach to `agent:<agentId>:main` so consultation does not fork an Agent's working memory.
-- **Single-room coordination:** one unfinished Inner Court room and a serial room queue avoid concurrent replies fighting over the same shared session.
-- **Attachment isolation:** uploaded files are scoped to the room/message and cleaned safely after terminal records are deleted.
-- **Failure recovery:** partial runs preserve successful replies, pause unfinished work, surface the actual error, and allow a retry without silently replaying completed work.
-- **Capability-aware models:** the UI checks model capabilities and prevents unsupported thinking-depth requests from being sent blindly.
-- **Desktop execution:** once a provider/model is configured, tasks leave the Taizi queue automatically; local dispatch does not require a separately started Gateway, while external channels retain the Gateway delivery path.
-- **Real interruption:** pause and cancel actions update the task atomically and terminate the active dispatch process when one exists; late process output cannot resurrect a cancelled task.
-- **Built-in capabilities:** workflow Skills and workspace-scoped MCP tools are installed idempotently on first workspace activation without bundled provider keys or network credentials.
-
-## Troubleshooting and FAQ
-
-### macOS says the app cannot be opened
-
-The current packages are not signed or notarized with an Apple Developer certificate. Verify that the ZIP came from the official [Release page](https://github.com/Logosss1/Edict_InnerCourt/releases), then Control-click the app, choose **Open**, and follow the macOS prompt.
-
-### The app says that the runtime is not ready
-
-Open **Settings → Runtime** and run the dependency check again. The packaged build should prefer its bundled Node.js, Python, and OpenClaw. If this is a development build, confirm that the build was started from `desktop` after preparing the portable runtime.
-
-### The provider or model list cannot be loaded
-
-Check the Base URL, API key, network access, and whether the endpoint exposes an OpenAI-compatible `/models` response. Save the provider again, refresh the model catalog, and bind a model to the Agent before sending a decree.
-
-### A thinking level is unavailable
-
-Thinking levels are capability-dependent. Choose one of the levels shown for the selected model, or run the explicit capability probe after confirming that the provider may receive a test request. Do not force a level that the provider rejected.
-
-### The dispatch channel is saved but messages do not arrive
-
-Run **Detect connection**, verify the third-party platform permissions, confirm WebSocket or Socket Mode settings, and use **Reload dashboard** after changing a channel secret. The app configures the supported channel account; it cannot repair permissions inside the external platform.
-
-### A decree remains at “Crown Prince · triage”
-
-On the desktop, this should only be a short handoff state. Check **Settings → Runtime** and confirm automatic dispatch is enabled, then check the provider/model readiness. If the local run cannot start, the task is marked **Blocked** with the actual reason and can be resumed after the configuration is corrected. External channels additionally require a running OpenClaw Gateway.
-
-### Why does a second Inner Court room fail to open?
-
-That is intentional. The desktop edition allows one unfinished Inner Court discussion at a time because all summoned Agents share their canonical working sessions. Finish or delete the current terminal room before opening another.
-
-### I cannot delete a record
-
-Active tasks, sessions, and discussions are protected. Finish, cancel, or otherwise move the record to a terminal state first; then use its confirmed delete action.
-
-### Can I use this package on Windows or Linux?
-
-The distributed application provides x64 packages for Windows and Linux, plus arm64 and x64 packages for macOS. Other architectures are not currently packaged.
-
-## Development and verification
-
-The source tree is for development and customization. End users should use the Release ZIP instead of building the project on a new Mac.
+## 从源码构建
 
 ```bash
-cd desktop
-npm ci
-npm run verify       # TypeScript checks + Electron unit tests
-npm run test:ui      # Playwright dashboard tests
-npm run build        # Python, frontend, and Electron build
-npm run dist:mac     # arm64 + x64 macOS ZIP packages
-npm run dist:win     # Windows x64 ZIP package
-npm run dist:linux   # Linux x64 AppImage
+npm install              # electron / esbuild / react / playwright（需要 npm 网络）
+npm run assets           # 生成像素占位美术（已提交，可跳过）
+npm run build            # esbuild 打包 main / preload / renderer 到 dist/
+npx electron dist        # 运行
+npm test                 # 单元 + 集成测试（mock LLM）
+npm run package:mac      # 组装 Edict.app（arm64）、ad-hoc 签名、生成 zip + DMG
 ```
 
-The Python suite is run from the repository root:
+在 macOS 上 `package:mac` 使用 `codesign` 与 `hdiutil`；在 Linux 上使用 rcodesign 与 ISO9660+RockRidge → UDIF（libdmg-hfsplus）。
 
-```bash
-python3 -m pytest -q
-```
+## 验证状态（诚实标注）
 
-The packaging process writes generated applications and archives under `desktop/release/`; generated runtime data, caches, test output, local credentials, and personal provider configuration are excluded from source control.
+| 类别 | 内容 | 结果 |
+|---|---|---|
+| 单元测试 | SSE、JSON 抽取、权限策略、工作区边界/搜索替换/大纲、RSS、方案校验、审计哈希链、端点解析、美术导入 | 11/11 ✅ |
+| 集成测试（**mock LLM**，真实 SSE 线协议） | 三种协议下的 Court Lite + 封驳循环、Full Court + 涂改方案 + 成果返工、失败节点局部重试、重启恢复、叫停/朱批/取消、路径越界与高风险审批、议政插话、Solo、预算门 | 13/13 ✅ |
+| 端到端 UI（**mock LLM**，Linux + Xvfb 上运行真实 Electron 应用） | 通过 UI 配置模型、下旨、审批、御批、Editor/终端/搜索/问题面板、朝堂四场景、奏折批阅浮层中涂改方案、议政插话、Solo、全部面板、审计校验、Key 不落盘 | 20/20 ✅ |
+| DMG 结构校验 | 解码 UDIF → 挂载 ISO → 可执行位、框架符号链接、Applications 链接、签名封印、二进制一致 | ✅ |
+| **真实模型** | `scripts/verify-real.ts`（需你的 Key） | ⏳ 未在本构建环境执行（无可用 Key / 无外网模型） |
+| **真实 Mac 宿主** | 安装、Gatekeeper、Retina 渲染、BSD `script` 终端 | ⏳ 未验证（构建环境为 Linux 容器） |
 
-## Project layout
+截图全部来自 Linux + Xvfb，**不是 Mac 截图**。详见 [docs/STATUS.md](docs/STATUS.md)。
 
-```text
-Edict_InnerCourt/
-├── desktop/
-│   ├── electron/             # Electron main process, preload, secure storage, lifecycle
-│   ├── main/                 # runtime discovery and OpenClaw integration
-│   ├── builtin/               # bundled workflow Skills and local MCP servers
-│   ├── e2e/                  # packaged-app and dashboard smoke tests
-│   ├── tests/                # TypeScript integration/unit tests
-│   ├── settings/             # standalone desktop Settings window
-│   └── scripts/              # portable-runtime preparation and packaging helpers
-├── upstream/
-│   ├── agents/               # Three Departments and Six Ministries roles and rules
-│   ├── dashboard/            # task board, Inner Court, Court Discussion, and APIs
-│   ├── edict/frontend/       # React dashboard frontend
-│   ├── scripts/              # state machine, synchronization, and runtime helpers
-│   ├── tests/                # Python service and workflow tests
-│   └── docker/demo_data/     # generic first-run data only
-├── LICENSE                  # MIT license for this distribution
-├── NOTICE.md                # upstream attribution and packaging boundary
-├── SECURITY.md              # private vulnerability reporting and security guidance
-├── CONTRIBUTING.md          # development and contribution workflow
-├── CODE_OF_CONDUCT.md       # community expectations
-├── README.md                # default English documentation
-└── README.zh-CN.md          # Chinese documentation
-```
+## 文档
 
-The `upstream/` directory is an intentional repository layout choice: it contains the EDICT-derived core that this desktop edition packages. GitHub does not require a directory with this name, and a fork does not have to keep an `upstream` remote. Renaming it is possible, but it would require updating the desktop packaging filters, runtime paths, dashboard imports, and tests; keeping the name is the lower-risk option while the core remains the original EDICT foundation.
+- [docs/STATUS.md](docs/STATUS.md) — 现状盘点、交付清单、已知限制
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 运行时、状态机、编排、Token 经济性
+- [docs/SECURITY.md](docs/SECURITY.md) — 权限、路径边界、数据位置、外发范围
+- [docs/ART_PIPELINE.md](docs/ART_PIPELINE.md) — 像素美术规格锁、AI 生图 prompt 包、Aseprite 规整与导入
+- [docs/TESTING.md](docs/TESTING.md) — 测试与验证方法
+- [AI_HANDOFF.md](AI_HANDOFF.md) — 交接文档
 
-## Security, support, and attribution
+## 许可证
 
-- Read [SECURITY.md](SECURITY.md) before reporting a vulnerability. Do not put API keys, provider credentials, OpenClaw user data, or private logs in a public issue.
-- Read [CONTRIBUTING.md](CONTRIBUTING.md) before changing the runtime boundary or the Three Departments and Six Ministries workflow.
-- The project is distributed under the [MIT License](LICENSE). Upstream EDICT attribution and license information are preserved in [NOTICE.md](NOTICE.md) and `upstream/LICENSE`.
-- Share product ideas, workflow improvements, and general feedback in [GitHub Discussions](https://github.com/Logosss1/Edict_InnerCourt/discussions).
-- Report reproducible bugs through [GitHub Issues](https://github.com/Logosss1/Edict_InnerCourt/issues) and include the app version, macOS version, architecture, reproduction steps, and redacted logs.
-- Do not include API keys, provider credentials, OpenClaw user data, or private logs in public discussions or issues.
-- For the original orchestration design, see the [upstream EDICT project](https://github.com/cft0808/edict).
-
-## Release policy
-
-Each version is uploaded as a separate GitHub Release; later versions do not replace earlier installation packages. The latest stable package is always available from [Releases](https://github.com/Logosss1/Edict_InnerCourt/releases), with a compact local history in [RELEASE_NOTES.md](RELEASE_NOTES.md).
+MIT。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。不使用 Visual Studio Code 的名称、图标或 Marketplace。

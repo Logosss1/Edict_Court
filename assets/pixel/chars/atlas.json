@@ -1,0 +1,63 @@
+{
+ "frameWidth": 32,
+ "frameHeight": 48,
+ "columns": 11,
+ "anims": {
+  "idle": [
+   0,
+   1
+  ],
+  "walk_down": [
+   2,
+   3,
+   4,
+   5
+  ],
+  "walk_up": [
+   6,
+   7,
+   8,
+   9
+  ],
+  "walk_side": [
+   10,
+   11,
+   12,
+   13
+  ],
+  "talk": [
+   14,
+   15
+  ],
+  "think": [
+   16,
+   17
+  ],
+  "kneel": [
+   18,
+   19
+  ],
+  "reject": [
+   20,
+   21
+  ]
+ },
+ "characters": [
+  "emperor",
+  "taizi",
+  "zhongshu",
+  "menxia",
+  "shangshu",
+  "hubu",
+  "libu",
+  "bingbu",
+  "xingbu",
+  "gongbu",
+  "libu_hr",
+  "zaochao",
+  "solo",
+  "guard",
+  "lady",
+  "clerk"
+ ]
+}

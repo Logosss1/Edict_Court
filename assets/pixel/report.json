@@ -1,0 +1,98 @@
+{
+ "spec": {
+  "tile": 16,
+  "character": [
+   32,
+   48
+  ],
+  "scene": [
+   640,
+   360
+  ],
+  "paletteSize": 31
+ },
+ "scenes": {
+  "taihe": {
+   "colors": 31,
+   "ok": true
+  },
+  "junjichu": {
+   "colors": 30,
+   "ok": true
+  },
+  "liubu": {
+   "colors": 30,
+   "ok": true
+  },
+  "chengtian": {
+   "colors": 29,
+   "ok": true
+  }
+ },
+ "characters": {
+  "emperor": {
+   "frames": 22,
+   "colors": 11
+  },
+  "taizi": {
+   "frames": 22,
+   "colors": 15
+  },
+  "zhongshu": {
+   "frames": 22,
+   "colors": 15
+  },
+  "menxia": {
+   "frames": 22,
+   "colors": 15
+  },
+  "shangshu": {
+   "frames": 22,
+   "colors": 15
+  },
+  "hubu": {
+   "frames": 22,
+   "colors": 13
+  },
+  "libu": {
+   "frames": 22,
+   "colors": 15
+  },
+  "bingbu": {
+   "frames": 22,
+   "colors": 14
+  },
+  "xingbu": {
+   "frames": 22,
+   "colors": 13
+  },
+  "gongbu": {
+   "frames": 22,
+   "colors": 14
+  },
+  "libu_hr": {
+   "frames": 22,
+   "colors": 15
+  },
+  "zaochao": {
+   "frames": 22,
+   "colors": 14
+  },
+  "solo": {
+   "frames": 22,
+   "colors": 13
+  },
+  "guard": {
+   "frames": 22,
+   "colors": 15
+  },
+  "lady": {
+   "frames": 22,
+   "colors": 14
+  },
+  "clerk": {
+   "frames": 22,
+   "colors": 15
+  }
+ }
+}

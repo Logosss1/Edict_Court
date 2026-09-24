@@ -1,0 +1,89 @@
+{
+  "host": "linux-xvfb (not macOS)",
+  "llm": "mock (scripted, real SSE wire formats)",
+  "results": [
+    {
+      "step": "模型配置：通过 UI 添加服务并测试连接",
+      "ok": true
+    },
+    {
+      "step": "打开工作区",
+      "ok": true
+    },
+    {
+      "step": "命令执行需皇上批准（审批卡片）",
+      "ok": true
+    },
+    {
+      "step": "Court Lite：门下封驳 1 次后重拟并准奏",
+      "ok": true
+    },
+    {
+      "step": "御批结案 → Done，奏折归档",
+      "ok": true
+    },
+    {
+      "step": "产物真实存在",
+      "ok": true
+    },
+    {
+      "step": "Editor 打开 Agent 产出的文件",
+      "ok": true
+    },
+    {
+      "step": "磁盘改动实时刷新到 Editor",
+      "ok": true
+    },
+    {
+      "step": "问题面板显示 TS 诊断",
+      "ok": true,
+      "note": "3 条"
+    },
+    {
+      "step": "集成终端可交互",
+      "ok": true
+    },
+    {
+      "step": "全局搜索",
+      "ok": true
+    },
+    {
+      "step": "L2 涂改方案：按修改后的方案执行",
+      "ok": true
+    },
+    {
+      "step": "Full Court：尚书派发 + 门下审议成果",
+      "ok": true
+    },
+    {
+      "step": "朝堂内准奏结案，工作台同步",
+      "ok": true
+    },
+    {
+      "step": "朱批入库（待下一轮回应）",
+      "ok": true
+    },
+    {
+      "step": "L2 插话：官员针对皇上发言继续辩论",
+      "ok": true,
+      "note": "2 条回应"
+    },
+    {
+      "step": "Solo 单 Agent 直接执行",
+      "ok": true
+    },
+    {
+      "step": "审计哈希链校验通过",
+      "ok": true
+    },
+    {
+      "step": "API Key 未出现在审计/状态/设置文件中",
+      "ok": true
+    },
+    {
+      "step": "无前端运行时错误",
+      "ok": true,
+      "note": ""
+    }
+  ]
+}
