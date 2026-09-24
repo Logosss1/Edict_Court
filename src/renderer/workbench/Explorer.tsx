@@ -1,3 +1,4 @@
+import { PREVIEWABLE, openPreview } from './PreviewView';
 import { useEffect, useState, useCallback } from 'react';
 import { useStore, openTab, toast } from '../store';
 import { call } from '../api';
@@ -182,6 +183,7 @@ export function Explorer() {
         <div className="ctx-menu" style={{ left: menu.x, top: menu.y }}>
           {menu.node.dir && <button onClick={() => { setOpen((o) => new Set([...o, menu.node.path])); setCreating({ parent: menu.node.path, dir: false }); }}>新建文件</button>}
           {menu.node.dir && <button onClick={() => { setOpen((o) => new Set([...o, menu.node.path])); setCreating({ parent: menu.node.path, dir: true }); }}>新建文件夹</button>}
+          {!menu.node.dir && PREVIEWABLE.test(menu.node.path) && <button onClick={() => openPreview(menu.node.path)}>在内置浏览器预览</button>}
           <button onClick={() => setRenaming(menu.node.path)}>重命名</button>
           <button onClick={() => navigator.clipboard.writeText(menu.node.path)}>复制相对路径</button>
           <button onClick={() => call('revealInFinder', menu.node.path)}>在访达中显示</button>

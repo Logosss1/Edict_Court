@@ -28,6 +28,8 @@ export interface MockOptions {
   rejectResultTimes?: number;
   failExecTimes?: number; // HTTP 500 for ministry calls N times (tests retry/blocking)
   delayMs?: number;
+  /** Return an HTTP error for a request (e.g. relay 503 "分组不支持", 400 "unknown parameter reasoning_effort"). */
+  reject?: (c: MockCall, body: any) => { status: number; body: string } | undefined;
 }
 
 export function defaultBrain(opts: MockOptions): Brain {
@@ -118,6 +120,7 @@ const chunk = (s: string, n = 12) => {
 export async function startMockLlm(opts: MockOptions = {}) {
   const brain = opts.brain ?? defaultBrain(opts);
   const calls: MockCall[] = [];
+  const bodies: any[] = [];
   let execFails = 0;
   const server = http.createServer((req, res) => {
     let body = '';
@@ -170,6 +173,12 @@ export async function startMockLlm(opts: MockOptions = {}) {
       const firstUser = messages.find((m) => m.role === 'user')?.content ?? '';
       const call: MockCall = { protocol, system, lastUser: lastUser.includes('朱批') || lastUser.includes('不合规') || lastUser.includes('请只输出') ? `${firstUser}\n${lastUser}` : lastUser, tools, auth: (req.headers.authorization as string) ?? (req.headers['x-api-key'] as string), model: j.model };
       calls.push(call);
+      bodies.push({ url, ...j });
+      const rej = opts.reject?.(call, j);
+      if (rej) {
+        res.writeHead(rej.status, { 'content-type': 'application/json' });
+        return res.end(rej.body);
+      }
       const isMinistry = /(兵部|刑部)尚书/.test(system);
       if (isMinistry && execFails < (opts.failExecTimes ?? 0)) {
         execFails++;
@@ -229,5 +238,5 @@ export async function startMockLlm(opts: MockOptions = {}) {
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
   const port = (server.address() as AddressInfo).port;
-  return { url: `http://127.0.0.1:${port}/v1`, port, calls, close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }) };
+  return { url: `http://127.0.0.1:${port}/v1`, port, calls, bodies, close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }) };
 }

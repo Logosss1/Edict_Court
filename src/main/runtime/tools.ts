@@ -1,17 +1,18 @@
 // Agent tools with permission control and workspace path boundaries.
 import path from 'node:path';
-import type { AgentId, RunNode, Task } from '../../shared/types';
+import type { AgentId, PreviewResult, RunNode, Task } from '../../shared/types';
 import type { ToolSpec } from '../llm/types';
 import type { Runtime } from './runtime';
 import { decide, type ToolClass } from './permissions';
 import { runCommand } from '../services/exec';
 import { truncate } from './util';
 import { PathBoundaryError } from '../services/workspace';
+import { isAllowedPreviewUrl, previewUrlFor } from '../services/preview';
 
-export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes';
+export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page';
 
 export const READ_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'load_skill'];
-export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill'];
+export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page'];
 
 const S = (props: Record<string, unknown>, required: string[]) => ({ type: 'object', properties: props, required, additionalProperties: false });
 
@@ -25,12 +26,13 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   delete_file: { name: 'delete_file', description: '删除文件（高风险，需要皇上确认）', parameters: S({ path: { type: 'string' } }, ['path']) },
   run_command: { name: 'run_command', description: '在工作区根目录执行 shell 命令（运行测试、构建、检查）。高风险命令需确认。', parameters: S({ command: { type: 'string' }, timeout_sec: { type: 'integer' } }, ['command']) },
   load_skill: { name: 'load_skill', description: '加载一项技能（Skill）的完整说明', parameters: S({ name: { type: 'string' } }, ['name']) },
+  preview_page: { name: 'preview_page', description: '在内置无头浏览器中打开工作区内的 HTML 页面（或本机 localhost 开发服务器）并截图，返回标题、可见文本、控制台错误与加载失败的资源。用于验证网页产物能否正常运行。', parameters: S({ path: { type: 'string', description: '工作区内的 HTML 相对路径，如 index.html' }, url: { type: 'string', description: '或本机开发服务器地址，如 http://localhost:5173/' }, wait_ms: { type: 'integer', description: '加载后额外等待毫秒数（动画/异步渲染），默认 800，最大 10000' }, width: { type: 'integer', description: '视口宽度，默认 1280' }, height: { type: 'integer', description: '视口高度，默认 800' } }, []) },
   view_changes: { name: 'view_changes', description: '查看本旨意迄今所有文件改动（统一 diff 摘要，系统记录，非 Agent 自述）', parameters: S({ path: { type: 'string', description: '可选：只看某文件' } }, []) },
 };
 
 const CLASS: Record<ToolName, ToolClass> = {
   list_dir: 'read', read_file: 'read', search: 'read', outline: 'read', load_skill: 'meta', view_changes: 'meta',
-  write_file: 'write', edit_file: 'write', delete_file: 'write', run_command: 'command',
+  write_file: 'write', edit_file: 'write', delete_file: 'write', run_command: 'command', preview_page: 'read',
 };
 
 export interface ToolContext {
@@ -69,12 +71,13 @@ export function simpleDiff(before: string, after: string, maxLines = 120): strin
 export async function executeTool(ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<{ ok: boolean; output: string }> {
   const { rt, task, agentId } = ctx;
   const tool = name as ToolName;
+  if (name.startsWith('mcp__')) return args.__unparsed ? { ok: false, output: `参数不是合法 JSON：${String(args.__unparsed).slice(0, 200)}` } : mcpTool(ctx, name, args);
   if (!TOOL_SPECS[tool]) return { ok: false, output: `未知工具：${name}` };
   if (args.__unparsed) return { ok: false, output: `参数不是合法 JSON：${String(args.__unparsed).slice(0, 200)}` };
   const str = (k: string) => (typeof args[k] === 'string' ? (args[k] as string) : args[k] === undefined ? '' : String(args[k]));
 
   if (tool === 'load_skill') {
-    const sk = rt.skills.find((s) => s.name === str('name'));
+    const sk = rt.skills.find((s) => s.name === str('name') && s.enabled !== false && (s.agents === 'all' || s.agents.includes(agentId)));
     if (!sk) return { ok: false, output: `技能不存在：${str('name')}；可用：${rt.skills.map((s) => s.name).join(', ')}` };
     try {
       const fs = await import('node:fs');
@@ -103,6 +106,8 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
     }
     return { ok: true, output: truncate(parts.join('\n\n'), 14000) };
   }
+
+  if (tool === 'preview_page') return previewPage(ctx, args);
 
   let ws;
   try {
@@ -225,7 +230,84 @@ export const describeToolCall = (name: string, args: Record<string, unknown>): s
       return `加载技能 ${String(args.name ?? '')}`;
     case 'view_changes':
       return `查看改动${p ? ' ' + p : ''}`;
+    case 'preview_page':
+      return `预览 ${p || String(args.url ?? '')}`;
     default:
+      if (name.startsWith('mcp__')) return `MCP ${name.slice(5).replace('__', ' / ')}`;
       return `${name} ${path.basename(p)}`;
   }
 };
+
+async function previewPage(ctx: ToolContext, args: Record<string, unknown>): Promise<{ ok: boolean; output: string }> {
+  const { rt, task, agentId } = ctx;
+  if (!rt.opts.previewPage) return { ok: false, output: '预览不可用：内置浏览器仅在桌面应用中提供（当前为无界面运行环境）。请改用 run_command 做静态检查。' };
+  let url = typeof args.url === 'string' ? args.url.trim() : '';
+  if (!url) {
+    const p = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : 'index.html';
+    let ws;
+    try {
+      ws = rt.requireWorkspace();
+      if (!ws.exists(p)) return { ok: false, output: `文件不存在：${p}` };
+      url = previewUrlFor(ws.rel(ws.resolve(p)));
+    } catch (e) {
+      return { ok: false, output: (e as Error).message };
+    }
+  }
+  if (!isAllowedPreviewUrl(url)) return { ok: false, output: `只允许预览工作区文件或本机 localhost 开发服务器：${url}` };
+  const waitMs = Math.min(10000, Math.max(0, Number(args.wait_ms) || 800));
+  const width = Math.min(2560, Math.max(320, Number(args.width) || 1280));
+  const height = Math.min(1600, Math.max(320, Number(args.height) || 800));
+  const r = await rt.opts.previewPage(url, { waitMs, width, height });
+  const shot = r.png && r.png.length ? rt.blobs.put(r.png) : undefined;
+  const res: PreviewResult = { ...r, screenshot: shot };
+  delete (res as { png?: Buffer }).png;
+  const errors = r.console.filter((c) => c.level === 'error');
+  const warns = r.console.filter((c) => c.level === 'warning' || c.level === 'warn');
+  rt.audit.record(agentId, 'preview_page', { url, ok: r.ok, errors: errors.length, failed: r.failed.length, blocked: r.blocked.length, screenshot: shot ?? null }, task?.id);
+  rt.activity('preview', `${r.ok && !errors.length ? '✅' : '⚠'} 预览 ${url.replace('preview://ws/', '')} · ${r.title || '（无标题）'} · 错误 ${errors.length}`, { taskId: task?.id, agentId, nodeId: ctx.node?.id, data: res as unknown as Record<string, unknown> });
+  const lines = [
+    `URL: ${url}`,
+    `加载：${r.ok ? '成功' : '失败'}（${r.loadMs}ms，视口 ${width}×${height}）`,
+    `标题：${r.title || '（无）'}`,
+    `控制台错误 ${errors.length} 条${errors.length ? '：\n' + errors.slice(0, 20).map((c) => `  - ${c.message}${c.source ? ` (${c.source.replace('preview://ws/', '')}:${c.line ?? ''})` : ''}`).join('\n') : ''}`,
+    warns.length ? `控制台警告 ${warns.length} 条：\n${warns.slice(0, 8).map((c) => `  - ${c.message}`).join('\n')}` : '',
+    r.failed.length ? `加载失败的资源：\n${r.failed.slice(0, 20).map((f) => `  - ${f}`).join('\n')}` : '',
+    r.blocked.length ? `已拦截的外部网络请求（预览默认仅允许本地资源；如需 CDN 请改用本地文件，或由皇上在预览中允许外部网络）：\n${r.blocked.slice(0, 12).map((f) => `  - ${f}`).join('\n')}` : '',
+    `可见文本（节选）：\n${truncate(r.text, 3000)}`,
+    shot ? '已截图（皇上可在活动流中查看）。' : '',
+  ].filter(Boolean);
+  return { ok: r.ok && errors.length === 0, output: lines.join('\n') };
+}
+
+/** MCP tool call, gated by the per-tool policy (read / write / high) and the global permission mode. */
+async function mcpTool(ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<{ ok: boolean; output: string }> {
+  const { rt, task, agentId } = ctx;
+  const r = rt.mcp.resolve(name);
+  if (!r) return { ok: false, output: `MCP 工具不可用：${name}（服务未连接或已停用）` };
+  const { server, tool } = r;
+  const st = rt.mcp.states.get(server)!;
+  if (st.policy.agents !== 'all' && !st.policy.agents.includes(agentId)) return { ok: false, output: `该官员未获授权使用 MCP 服务 ${server}` };
+  if (!tool.policy.enabled) return { ok: false, output: `MCP 工具已停用：${server}/${tool.name}` };
+  const risk = tool.policy.risk;
+  const mode = rt.settings.permissionMode;
+  const summary = `调用 MCP 工具 ${server} / ${tool.name}`;
+  if (mode === 'readonly' && risk !== 'read') {
+    rt.audit.record(agentId, 'tool_denied', { tool: name, reason: '只读模式' }, task?.id);
+    return { ok: false, output: '权限拒绝：只读模式下只能使用标记为「只读」的 MCP 工具' };
+  }
+  const needAsk = risk === 'high' || (risk === 'write' && !tool.policy.autoApprove && mode !== 'auto');
+  if (needAsk) {
+    const ok = await rt.requestApproval({ taskId: task?.id, agentId, nodeId: ctx.node?.id, tool: name, summary, detail: truncate(JSON.stringify(args, null, 2), 3000), risk: risk === 'high' ? 'high' : 'normal', reason: risk === 'high' ? 'MCP 工具标记为高风险（外部副作用）' : 'MCP 工具可能产生外部副作用' });
+    rt.setAgent(agentId, { status: 'tool', activity: ok ? `已获准：${summary}` : `被驳回：${summary}` });
+    if (!ok) return { ok: false, output: `皇上未批准此 MCP 调用（${server}/${tool.name}）。请调整方案或在结论中说明。` };
+  }
+  const started = Date.now();
+  try {
+    const res = await rt.mcp.call(server, tool.name, args, ctx.signal);
+    rt.audit.record(agentId, 'mcp_call', { server, tool: tool.name, risk, ok: res.ok, argKeys: Object.keys(args), durationMs: Date.now() - started, images: res.images.length }, task?.id);
+    return { ok: res.ok, output: res.ok ? res.output : `MCP 工具返回错误：${res.output}` };
+  } catch (e) {
+    rt.audit.record(agentId, 'mcp_call', { server, tool: tool.name, risk, ok: false, error: truncate((e as Error).message, 200), durationMs: Date.now() - started }, task?.id);
+    return { ok: false, output: `MCP 调用失败：${(e as Error).message}` };
+  }
+}

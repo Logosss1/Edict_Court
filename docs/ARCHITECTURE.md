@@ -16,6 +16,10 @@
 │  ├─ debate.ts         朝堂议政（插话 → 待回应队列）                                     │
 │  ├─ persist.ts        JSON/JSONL 持久化、SHA-256 哈希链审计、内容寻址快照               │
 │  └─ extras.ts         技能（SKILL.md）、天下要闻（RSS/Atom）                           │
+│ MCP（src/main/mcp）：client.ts（JSON-RPC：stdio / Streamable HTTP / 旧版 SSE）         │
+│                      manager.ts（mcp.json、信任、策略、密钥、工具暴露 mcp__服务__工具）  │
+│ 预览：services/preview.ts（preview://ws 只读文件服务）· previewHost.ts（分区、webview、│
+│       离屏截图 → Agent 工具 preview_page）                                             │
 │ LLM adapters（src/main/llm）：OpenAI Chat / Anthropic Messages / OpenAI Responses（SSE）│
 │ Services：workspace（边界）、exec、git、terminal（BSD/util-linux `script` PTY）        │
 └──────────────────────────────────────────────────────────────────────────────────────┘
@@ -75,3 +79,11 @@
 ## 像素渲染
 
 Phaser 3.90：`pixelArt: true`、`roundPixels`、640×360 世界、**整数倍缩放**（窗口变化时取 `floor(min(W/640, H/360))`）；官员精灵开启 `pixelPerfect` 命中检测；气泡防重叠布局；文字使用 12px 像素中文字体（Fusion Pixel，OFL）。
+
+## 思考程度（v1.1）
+
+`src/shared/reasoning.ts` 把一个滑块翻译成各家参数。每个模型有自己的档位阶梯（`ModelInfo.reasoning`，缺省按模型 id 自动识别），UI 滑块的刻度就是这条阶梯，最右端恒为该模型最高档；请求时按「官员单独设置 › 旨意滑块（强模型 / Solo）› 模型默认」取值，再按档位名的等级就近落到该模型的阶梯上（例如 max 落到 o3 的 high）。`agentLoop.effortRequest` 生成 `extraBody`（合并进请求体）、必要时提高 `max_tokens`（不超过模型上限）并去掉 temperature；OpenAI Chat 推理模型自动改用 `max_completion_tokens`。服务报参数不支持时，本会话内对该模型自动停止发送思考参数。
+
+## 模型错误分类（v1.1）
+
+`classifyLlmError`（`src/main/llm/types.ts`）：参数不支持 / 配置（模型或接入方式不支持、404、400/422、中转站「分组」「无可用渠道」）/ 鉴权 / 额度为**不可重试**；429 / 408 / 5xx / 网络 / 空闲超时为可重试（指数退避 3 次）。失败节点带 `errorInfo`，界面据此给出做法与「换模型重试」（`retryNodeWithModel`：在该旨意上为该官员指定模型并局部重试）。

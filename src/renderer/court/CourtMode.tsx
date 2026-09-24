@@ -1,5 +1,6 @@
 // 朝堂模式 — the pixel court. Same runtime, same data as the workbench; only the projection differs.
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { EffortSlider } from '../common/EffortSlider';
 import { useStore, setUI, getState, selectTask, toast, openTaskTab } from '../store';
 import { call } from '../api';
 import { createCourtGame, type CourtGame } from './game';
@@ -188,6 +189,10 @@ function EmperorBox({ debateId }: { debateId: string | null }) {
   const [tier, setTier] = useState<Tier>('lite');
   const [busy, setBusy] = useState(false);
   const providers = useStore((s) => s.providers);
+  const settings = useStore((s) => s.settings);
+  const [effort, setEffortState] = useState<string>(settings.composerEffort ?? 'default');
+  const setEffort = (v: string) => { setEffortState(v); void call('updateSettings', { composerEffort: v }); };
+  const strong = settings.routing?.strong ?? (providers[0]?.models[0] ? { providerId: providers[0].id, model: providers[0].models[0].id } : null);
   useEffect(() => setMode(debateId ? 'interject' : 'edict'), [debateId]);
   const send = async () => {
     const t = text.trim();
@@ -198,7 +203,7 @@ function EmperorBox({ debateId }: { debateId: string | null }) {
         await call('debateInterject', debateId, t);
       } else {
         if (!providers.length) throw new Error('尚未配置模型：请回工作台「模型配置」');
-        const r = await call('submit', { text: t, tier, multiAgent: tier !== 'solo' });
+        const r = await call('submit', { text: t, tier, multiAgent: tier !== 'solo', effort });
         if (r.kind === 'chat') toast(`太子：${r.reply}`, 'info');
         else {
           selectTask(r.taskId);
@@ -231,6 +236,7 @@ function EmperorBox({ debateId }: { debateId: string | null }) {
               ))}
             </span>
           )}
+          {mode === 'edict' && <EffortSlider model={strong} value={effort} onChange={setEffort} variant="pixel" />}
         </div>
         <div className="eb-input">
           <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && send()} placeholder={mode === 'interject' ? '朕以为……（回车插话，百官将针对皇上之言继续辩论）' : '传朕旨意……（回车下旨；闲聊由太子直答）'} data-testid="emperor-input" />

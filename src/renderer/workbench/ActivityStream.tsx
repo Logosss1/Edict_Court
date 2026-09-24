@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, memo } from 'react';
 import { useStore } from '../store';
-import type { Activity } from '../../shared/types';
+import type { Activity, PreviewResult } from '../../shared/types';
+import { call } from '../api';
+import { openPreview } from './PreviewView';
 import { AGENT_MAP } from '../../shared/court';
 import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
@@ -86,6 +88,8 @@ const ActivityItem = memo(function ActivityItem({ a, result, compact }: { a: Act
           <span className="act-who" style={{ color: '#e8b64c' }}>👑</span> {a.content} {time}
         </div>
       );
+    case 'preview':
+      return <PreviewAct a={a} who={who} time={time} />;
     case 'error':
       return (
         <div className="act act-error">
@@ -136,6 +140,33 @@ function ToolCall({ a, result, who, time }: { a: Activity; result?: Activity; wh
           {result && <pre className="tool-out">{result.content}</pre>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Result of the agent's preview_page run: screenshot, console errors, open-in-preview. */
+function PreviewAct({ a, who, time }: { a: Activity; who: React.ReactNode; time: React.ReactNode }) {
+  const d = (a.data ?? {}) as unknown as PreviewResult;
+  const [img, setImg] = useState<string | null>(null);
+  const [big, setBig] = useState(false);
+  useEffect(() => {
+    if (d.screenshot) void call<string | null>('blobImage', d.screenshot).then(setImg);
+  }, [d.screenshot]);
+  const errors = (d.console ?? []).filter((c) => c.level === 'error');
+  const rel = d.url?.startsWith('preview://ws/') ? decodeURIComponent(d.url.slice('preview://ws/'.length)) : d.url;
+  return (
+    <div className="act act-preview" data-testid="act-preview">
+      <div className="act-head">{who}{time}</div>
+      <div className="pv-act">
+        {img ? <img src={img} alt="预览截图" className={big ? 'big' : ''} onClick={() => setBig(!big)} title="点击放大/缩小" /> : <div className="pv-noimg muted small">（无截图）</div>}
+        <div className="pv-act-info">
+          <div><b>{errors.length ? '⚠' : '✅'} {d.title || '（无标题）'}</b></div>
+          <div className="muted small">{rel} · {d.width}×{d.height} · {d.loadMs}ms</div>
+          <div className="small">控制台错误 {errors.length}{d.failed?.length ? ` · 资源失败 ${d.failed.length}` : ''}{d.blocked?.length ? ` · 已拦截外部请求 ${d.blocked.length}` : ''}</div>
+          {errors.slice(0, 4).map((c, i) => <div key={i} className="small pv-err">✖ {c.message}</div>)}
+          {rel && <button className="btn sm" onClick={() => openPreview(rel)}><Icon name="globe" size={12} /> 打开预览</button>}
+        </div>
+      </div>
     </div>
   );
 }

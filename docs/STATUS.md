@@ -1,4 +1,16 @@
-# 现状盘点与交付清单（v1.0.0）
+# 现状盘点与交付清单（v1.1.0）
+
+## v1.1.0（本次）
+根据使用反馈新增，全部已实现并测试：
+
+| 需求 | 实现 | 验证 |
+|---|---|---|
+| 中转站 HTTP 503「当前分组暂不支持您请求的模型或接入方式」反复重试后阻塞、看不懂 | 错误分类（配置 / 参数 / 鉴权 / 额度 / 限流 / 5xx / 网络 / 超时）：**配置类错误不再盲目重试**；阻塞处显示**可读错误卡片**（原因 + 做法 + 原始信息折叠）与一键**换模型重试**（只重跑该节点，选择记在该旨意）；「模型配置」新增**协议探测**：同一 base_url / Key / 模型分别以 Chat / Responses / Messages、带与不带思考参数各试一次，结果矩阵可一键套用 | 单元 + 集成（mock）+ E2E |
+| 模型思考程度（low / medium / high / xhigh / max / ultra…） | 输入框（工作台与朝堂口谕框）新增**思考程度滑块**：档位 = 当前模型自己的档位，**最右 = 该模型最高档**（没有 ultra 就是它的最高档）；默认刻度 = 模型默认档。「模型配置」按模型设置思考方式（OpenAI `reasoning_effort` / `reasoning.effort`、Claude `output_config.effort`、Claude 旧版 `thinking.budget_tokens`、Qwen `enable_thinking`、GLM `thinking.type`、自定义 JSON——可自定义 ultra 等档位）、可用档位、默认档、思考预算、最大输出；按模型 id 自动识别，未知模型默认**不发送**思考参数。每位官员可单独设置思考程度。服务拒绝思考参数时自动去掉参数重试一次并提示 | 单元 + 集成（mock，校验真实请求体）+ E2E |
+| 生成的 HTML 无法在应用内运行 / 测试 | **HTML 预览**页签：内置浏览器（`<webview>`，独立会话分区、沙箱）打开工作区页面或本机 localhost 开发服务器；地址栏、刷新、磁盘改动**自动刷新**、手机 / 平板 / 桌面视口、**控制台**（错误计数、一键让 Agent 修复）、开发者工具、在默认浏览器打开；入口：编辑器「预览」按钮、文件树右键、改动列表、朝堂奏折批阅「预览」页。Agent 新工具 **`preview_page`**：在隐藏的无头浏览器中打开页面，返回标题、可见文本、控制台错误、失败资源并**截图**（活动流中可见）；官员产出网页后被要求用它自验 | 单元（文件服务 / 边界 / URL 策略）+ E2E（真实 Electron webview 与离屏截图） |
+| 专门的地方增加、修改 Skill 与 MCP | **技能与 MCP 中心**（活动栏插头图标 / 军机处 / 六部值房·吏部）：技能新建、编辑、改名、复制、启用 / 停用、授予官员、导入文件夹、远程链接；「官员视角」显示某位官员实际拿到的系统提示与工具。**MCP**：与 Cursor 相同格式的 `mcp.json`（`command/args/env/envFile/cwd` 或 `url/headers`，变量 `${env:…}` `${workspaceFolder}` `${userHome}`…），可从工作区 `.cursor/mcp.json` / `.vscode/mcp.json` 导入；自研 MCP 客户端支持 stdio、Streamable HTTP（JSON / SSE 回包、会话头）与旧版 HTTP+SSE（自动回退）；服务状态、日志、工具列表、每工具启用 / 风险（只读 / 有副作用 / 高风险）/ 自动批准、按官员授权；本地命令首次运行须原生对话框确认；形似密钥的值自动移入钥匙串 | 集成（真实子进程 + 真实本地 HTTP 服务，LLM 为 mock）+ E2E |
+
+说明：Cursor 客户端本身不开源，MCP 部分参照的是 Cursor 公开文档中的 `mcp.json` 格式与 MCP 公开规范，客户端代码为本项目自写。
 
 ## P0 盘点
 - 起点：构建环境中**没有既有 Edict for Mac 代码**（无 AI_HANDOFF / README / docs 可读），因此本版本全部为**新建**；无需保留的未提交修改，未执行任何 reset / checkout / 批量删除。
@@ -24,9 +36,12 @@
 
 ## 已知限制
 1. 终端不依赖原生模块：通过系统 `script` 获得 PTY，resize 通过 `stty -f <tty>` 下发；全屏 TUI 程序在极端 resize 下可能错位。
-2. Monaco 为 0.40（GitHub 可获取的最新构建版）；语言服务覆盖 TS/JS/JSON/CSS/HTML，其它语言仅高亮。未实现 VS Code 扩展 API——扩展能力通过「技能（SKILL.md）」与工具提供。
+2. Monaco 为 0.40（GitHub 可获取的最新构建版）；语言服务覆盖 TS/JS/JSON/CSS/HTML，其它语言仅高亮。未实现 VS Code 扩展 API——扩展能力通过「技能（SKILL.md）」、MCP 与工具提供。
 3. 渲染进程 TSX 未做 tsc 严格类型检查（离线环境无 `@types/react`）；主进程 / 运行时 / 测试已通过 `tsc --strict`。
 4. Linux 上生成的 DMG 内部是 ISO9660 + Rock Ridge（与 Bitcoin Core 的 macOS 发布流程相同），不是 HFS+/APFS；如遇挂载问题，使用同时交付的 zip，或在 Mac 上运行 `npm run package:mac`（改用 `hdiutil`）。
 5. 签名为 ad-hoc，无公证；首次打开需在「隐私与安全性」中允许。
 6. 仅 Apple Silicon；无自动更新。
 7. 正式美术尚未生成（见 P6）。
+8. 思考档位的自动识别基于模型 id 的经验规则；中转站 / 私有模型请在「模型配置 → 思考程度」确认，或用「协议探测」实测。
+9. MCP 只实现了 tools（含 roots / ping 回应、日志通知）；resources / prompts / sampling / elicitation 与 OAuth 登录流程未实现（远程服务可用 headers 携带令牌）。
+10. HTML 预览默认只允许本地资源（工作区与 localhost）；页面引用 CDN 时会提示并可由你临时放开。

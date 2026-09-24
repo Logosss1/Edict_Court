@@ -3,7 +3,8 @@
 import type { Activity, AgentId, ModelRef, RunNode, Session, Task } from '../../shared/types';
 import { agentName } from '../../shared/court';
 import type { LlmMessage, LlmResult, ToolSpec } from '../llm/types';
-import { LlmHttpError } from '../llm/types';
+import { classifyLlmError, LlmCallError } from '../llm/types';
+import { reasoningParams, levelLabel } from '../../shared/reasoning';
 import { streamLlm } from '../llm/adapters';
 import { SOULS } from './souls';
 import { executeTool, describeToolCall, TOOL_SPECS, type ToolName } from './tools';
@@ -37,7 +38,7 @@ export interface AgentRunResult {
 }
 
 export function systemPromptFor(rt: Runtime, agentId: AgentId): string {
-  const skills = rt.skills.filter((s) => s.agents === 'all' || s.agents.includes(agentId));
+  const skills = rt.skills.filter((s) => s.enabled !== false && (s.agents === 'all' || s.agents.includes(agentId)));
   const skillIdx = skills.length ? `\n\n可用技能（需要时用 load_skill 加载全文）：\n${skills.map((s) => `- ${s.name}：${s.description}`).join('\n')}` : '';
   return SOULS[agentId] + skillIdx;
 }
@@ -48,12 +49,31 @@ function isAbort(e: unknown, signal?: AbortSignal) {
   return signal?.aborted || (e as Error)?.name === 'AbortError' || e instanceof TaskAbortedError;
 }
 
-async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, messages: LlmMessage[], tools: ToolSpec[] | undefined, acts: { thinking?: Activity; text?: Activity }): Promise<LlmResult> {
+/** Request fragments for the effective 思考程度 (empty when the model has no reasoning ladder or it was disabled). */
+function effortRequest(o: AgentRunOptions, model: ModelRef, withEffort: boolean) {
+  const { rt, agentId, task } = o;
+  const info = rt.modelInfo(model);
+  let maxTokens = o.maxTokens;
+  const eff = withEffort ? rt.resolveEffort(agentId, model, task) : undefined;
+  const rp = eff?.level ? reasoningParams(eff.cfg, eff.level, eff.protocol) : { body: {} as Record<string, unknown> };
+  if (rp.minMaxTokens) maxTokens = Math.max(maxTokens ?? 0, rp.minMaxTokens);
+  if (info?.maxOutputTokens && maxTokens) maxTokens = Math.min(maxTokens, info.maxOutputTokens);
+  const thinking = rp.body.thinking as { budget_tokens?: number } | undefined;
+  if (thinking?.budget_tokens && maxTokens && thinking.budget_tokens >= maxTokens) {
+    rp.body = { ...rp.body, thinking: { ...thinking, budget_tokens: Math.max(1024, maxTokens - 2048) } };
+  }
+  return { level: eff?.level, maxTokens, extraBody: rp.body, dropTemperature: rp.dropTemperature };
+}
+
+async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, messages: LlmMessage[], tools: ToolSpec[] | undefined, acts: { thinking?: Activity; text?: Activity }, useEffort = true): Promise<LlmResult> {
   const { rt, agentId, task, node } = o;
   const provider = rt.providerRuntime(model.providerId);
   const signal = o.signal ?? (task ? rt.controller(task.id).signal : undefined);
   let lastErr: unknown;
+  let withEffort = useEffort;
+  let paramFallback = false;
   for (let attempt = 0; attempt < 3; attempt++) {
+    const er = effortRequest(o, model, withEffort);
     try {
       let reasoning = '';
       let text = '';
@@ -61,7 +81,8 @@ async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, mess
         provider,
         model.model,
         {
-          system, messages, tools, maxTokens: o.maxTokens, temperature: o.temperature, signal, idleTimeoutMs: 120_000,
+          system, messages, tools, maxTokens: er.maxTokens, temperature: o.temperature, signal, idleTimeoutMs: 120_000,
+          extraBody: er.extraBody, dropTemperature: er.dropTemperature,
           onDelta: (type, d) => {
             rt.heartbeat(agentId, task?.id);
             if (type === 'reasoning') {
@@ -99,14 +120,28 @@ async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, mess
       acts.text = undefined;
       if (isAbort(e, signal)) throw new TaskAbortedError();
       lastErr = e;
-      const retryable = e instanceof LlmHttpError ? e.retryable : true; // network / idle timeouts
-      if (!retryable || attempt === 2) break;
+      const info = classifyLlmError(e);
+      // The service rejected the reasoning parameters → drop them once, remember for this session, carry on.
+      if (info.kind === 'param' && er.level && !paramFallback) {
+        paramFallback = true;
+        withEffort = false;
+        rt.noReasoning.add(`${model.providerId}/${model.model}`);
+        rt.activity('log', `${model.model} 不接受思考程度参数（${levelLabel(er.level)}），已自动改为不发送思考参数重试；可在「模型配置」中调整该模型的思考方式。`, { taskId: task?.id, agentId, nodeId: node?.id });
+        rt.toast('warn', `${model.model} 不支持所选思考程度，已自动关闭思考参数`);
+        attempt--;
+        continue;
+      }
+      if (!info.retryable || attempt === 2) break;
       const wait = attempt === 0 ? 2000 : 6000;
-      rt.activity('log', `模型调用失败，${wait / 1000}s 后重试（第 ${attempt + 2} 次）：${redactSecrets(String((e as Error).message)).slice(0, 200)}`, { taskId: task?.id, agentId, nodeId: node?.id });
+      rt.activity('log', `模型调用失败，${wait / 1000}s 后重试（第 ${attempt + 2} 次）：${redactSecrets(info.hint)} ${redactSecrets(info.raw).slice(0, 160)}`, { taskId: task?.id, agentId, nodeId: node?.id });
       await sleep(wait);
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  const info = classifyLlmError(lastErr);
+  throw new LlmCallError({
+    kind: info.kind, status: info.status, hint: info.hint, raw: redactSecrets(info.raw).slice(0, 1500),
+    providerId: model.providerId, model: model.model, protocol: provider.config.protocol,
+  });
 }
 
 async function maybeCompress(o: AgentRunOptions, model: ModelRef, messages: LlmMessage[]): Promise<LlmMessage[]> {
@@ -137,6 +172,7 @@ async function maybeCompress(o: AgentRunOptions, model: ModelRef, messages: LlmM
     [{ role: 'user', content: truncate(serial, 24000) }],
     undefined,
     {},
+    false,
   );
   rt.activity('log', `上下文已滚动压缩：${middle.length} 条消息 → 摘要（约 ${estimateTokens(r.text)} tokens）`, { taskId: o.task?.id, agentId: o.agentId, nodeId: o.node?.id });
   rt.audit.record('system', 'context_compressed', { agentId: o.agentId, messages: middle.length }, o.task?.id);
@@ -153,10 +189,14 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
     node.model = model.model;
     node.providerId = model.providerId;
     node.protocol = provider.config.protocol;
+    node.effort = rt.resolveEffort(agentId, model, task).level;
+    node.errorInfo = undefined;
     if (task) rt.touch(task);
   }
+  const effort = rt.resolveEffort(agentId, model, task).level;
   const system = systemPromptFor(rt, agentId);
-  const tools = o.tools?.length ? o.tools.map((t) => TOOL_SPECS[t]) : undefined;
+  // built-in tools + MCP tools granted to this agent (read-only toolsets only see MCP tools marked read)
+  const tools = o.tools?.length ? [...o.tools.map((t) => TOOL_SPECS[t]), ...rt.mcp.toolSpecsFor(agentId, !o.tools.includes('write_file'))] : undefined;
   let messages: LlmMessage[] = [...(o.history ?? []), { role: 'user', content: o.prompt }];
   const maxSteps = o.maxSteps ?? (tools ? 24 : 1);
   const signal = o.signal ?? (task ? rt.controller(task.id).signal : undefined);
@@ -166,7 +206,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
   }
   const release = await rt.acquireAgent(agentId, signal);
   rt.setAgent(agentId, { status: 'thinking', taskId: task?.id, nodeId: node?.id, activity: o.label ?? '处理中' });
-  rt.audit.record(agentId, 'run_start', { runId, model: model.model, provider: provider.config.name, protocol: provider.config.protocol, node: node?.id }, task?.id);
+  rt.audit.record(agentId, 'run_start', { runId, model: model.model, provider: provider.config.name, protocol: provider.config.protocol, effort: effort ?? null, node: node?.id }, task?.id);
   let finalText = '';
   let steps = 0;
   let pendingResp: ReturnType<Runtime['pendingAnnotations']> | null = null;

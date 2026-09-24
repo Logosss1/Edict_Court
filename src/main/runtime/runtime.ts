@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
-  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode,
+  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENTS, AGENT_MAP, STATE_LABEL, agentName, TERMINAL } from '../../shared/court';
@@ -13,7 +13,10 @@ import { AuditLog, BlobStore, JsonFile, JsonlLog } from './persist';
 import { assertTransition, IllegalTransitionError } from './stateMachine';
 import { addUsage, estimateTokens, now, sha256, uid, ymd, redactSecrets } from './util';
 import { defaultSettings, TEMPLATES } from './defaults';
+import { clampLevel, effectiveConfig, reasoningParams } from '../../shared/reasoning';
+import { classifyLlmError } from '../llm/types';
 import { Workspace } from '../services/workspace';
+import { McpManager } from '../mcp/manager';
 import type { FetchLike, ProviderRuntime } from '../llm/types';
 import { listRemoteModels, streamLlm } from '../llm/adapters';
 import { PROVIDER_PRESETS } from '../llm/presets';
@@ -33,6 +36,8 @@ export interface RuntimeOptions {
   platform: string;
   resourcesDir: string; // for builtin skills
   notify?: (title: string, body: string) => void;
+  /** Render a page in a hidden sandboxed browser (desktop only; undefined in node tests). */
+  previewPage?: (url: string, o: { waitMs: number; width: number; height: number }) => Promise<Omit<PreviewResult, 'screenshot'> & { png?: Buffer }>;
 }
 
 interface PersistedState {
@@ -59,6 +64,18 @@ export class TaskAbortedError extends Error {
   }
 }
 
+const STYLES = ['none', 'openai', 'anthropic', 'anthropic-budget', 'qwen', 'glm', 'custom'];
+function sanitizeReasoning(r: unknown): ReasoningConfig | undefined {
+  if (!r || typeof r !== 'object') return undefined;
+  const x = r as ReasoningConfig;
+  if (!STYLES.includes(x.style)) return undefined;
+  const levels = Array.isArray(x.levels) ? x.levels.filter((l) => typeof l === 'string' && /^[a-z0-9_-]{1,24}$/i.test(l)).slice(0, 12) : [];
+  const out: ReasoningConfig = { style: x.style, levels, default: levels.includes(x.default) ? x.default : levels[Math.floor(levels.length / 2)] ?? '' };
+  if (x.budgets && typeof x.budgets === 'object') out.budgets = Object.fromEntries(Object.entries(x.budgets).filter(([k, v]) => levels.includes(k) && Number.isFinite(+v) && +v > 0).map(([k, v]) => [k, Math.round(+v)]));
+  if (x.style === 'custom' && x.custom && typeof x.custom === 'object') out.custom = JSON.parse(JSON.stringify(x.custom));
+  return out;
+}
+
 export class Runtime {
   readonly opts: RuntimeOptions;
   tasks = new Map<string, Task>();
@@ -72,6 +89,7 @@ export class Runtime {
   settings: Settings;
   providers: ProviderConfig[];
   skills: SkillInfo[] = [];
+  readonly mcp: McpManager = new McpManager(this);
   totals: Usage = emptyUsage();
   seqByDay: Record<string, number> = {};
   workspace: Workspace | null = null;
@@ -236,6 +254,7 @@ export class Runtime {
       settings: this.settings,
       providers: this.providers,
       skills: this.skills,
+      mcp: this.mcp.list(),
       templates: TEMPLATES,
       workspace: this.workspace?.root ?? null,
       dataDir: this.opts.dataDir,
@@ -362,6 +381,8 @@ export class Runtime {
 
   resolveModel(agentId: AgentId, task?: Task): ModelRef {
     const valid = (r?: ModelRef | null): r is ModelRef => !!r && !!r.model && this.providers.some((p) => p.id === r.providerId && p.enabled);
+    const taskOverride = task?.agentModels?.[agentId];
+    if (valid(taskOverride)) return taskOverride;
     const override = this.settings.agentModels[agentId];
     if (valid(override)) return override;
     const cls = AGENT_MAP[agentId]?.modelClass ?? 'economy';
@@ -374,6 +395,20 @@ export class Runtime {
     const p = this.providers.find((x) => x.enabled && x.models.length);
     if (p) return { providerId: p.id, model: p.models[0].id };
     throw new Error('尚未配置可用模型：请在「模型配置」中添加模型服务（base_url、API Key、模型 id）');
+  }
+
+  /** Models whose service rejected reasoning params during this session (param error → auto fallback). */
+  noReasoning = new Set<string>();
+
+  /** 思考程度 for one call: per-agent override › task slider (strong-class / solo) › model default, clamped to the model's ladder. */
+  resolveEffort(agentId: AgentId, model: ModelRef, task?: Task): { level?: string; cfg: ReasoningConfig; protocol: Protocol } {
+    const p = this.providers.find((x) => x.id === model.providerId);
+    const protocol = (p?.protocol ?? 'openai-chat') as Protocol;
+    const cfg = effectiveConfig(this.modelInfo(model)?.reasoning, model.model, protocol);
+    if (this.noReasoning.has(`${model.providerId}/${model.model}`)) return { cfg, protocol };
+    const cls = AGENT_MAP[agentId]?.modelClass ?? 'economy';
+    const want = this.settings.agentEffort?.[agentId] || ((cls === 'strong' || agentId === 'solo') ? task?.effort : undefined) || 'default';
+    return { level: clampLevel(cfg, want), cfg, protocol };
   }
 
   modelInfo(ref: ModelRef) {
@@ -771,7 +806,7 @@ export class Runtime {
     const id = cfg.id || uid('pv');
     const clean: ProviderConfig = {
       id, name: cfg.name || '未命名服务', preset: cfg.preset || 'custom', protocol: cfg.protocol, baseUrl: (cfg.baseUrl || '').trim(),
-      models: (cfg.models || []).filter((m) => m.id?.trim()).map((m) => ({ id: m.id.trim(), label: m.label, inputPrice: +m.inputPrice || 0, outputPrice: +m.outputPrice || 0, cachedInputPrice: m.cachedInputPrice === undefined || m.cachedInputPrice === null || (m.cachedInputPrice as unknown) === '' ? undefined : +m.cachedInputPrice, contextWindow: +m.contextWindow || 128000 })),
+      models: (cfg.models || []).filter((m) => m.id?.trim()).map((m) => ({ id: m.id.trim(), label: m.label, inputPrice: +m.inputPrice || 0, outputPrice: +m.outputPrice || 0, cachedInputPrice: m.cachedInputPrice === undefined || m.cachedInputPrice === null || (m.cachedInputPrice as unknown) === '' ? undefined : +m.cachedInputPrice, contextWindow: +m.contextWindow || 128000, maxOutputTokens: m.maxOutputTokens ? Math.max(256, +m.maxOutputTokens) : undefined, reasoning: sanitizeReasoning(m.reasoning) })),
       hasKey: false, extraHeaders: cfg.extraHeaders, replayReasoning: !!cfg.replayReasoning, enabled: cfg.enabled !== false,
     };
     if (apiKey !== undefined && apiKey !== null) {
@@ -805,15 +840,54 @@ export class Runtime {
     this.emit({ type: 'settings', settings: this.settings });
   }
 
-  async testProvider(id: string, model: string): Promise<{ ok: boolean; message: string; latencyMs: number }> {
+  async testProvider(id: string, model: string): Promise<{ ok: boolean; message: string; latencyMs: number; hint?: string }> {
     const started = now();
     try {
       const p = this.providerRuntime(id);
       const r = await streamLlm(p, model, { system: '你是连接测试助手。', messages: [{ role: 'user', content: '只回复两个字：在线' }], maxTokens: 20, idleTimeoutMs: 30000 }, this.opts.fetchImpl);
       return { ok: true, message: `连接成功：${(r.text || r.reasoning).slice(0, 60)}（输入 ${r.usage.input} / 输出 ${r.usage.output} tokens）`, latencyMs: now() - started };
     } catch (e) {
-      return { ok: false, message: redactSecrets(String((e as Error).message)), latencyMs: now() - started };
+      const info = classifyLlmError(e);
+      return { ok: false, message: redactSecrets(info.raw).slice(0, 600), hint: info.hint, latencyMs: now() - started };
     }
+  }
+
+  /**
+   * 协议探测：same base_url / key / model, tried as Chat Completions, Responses and Messages,
+   * each plain and with a reasoning level. Requests go only to the configured base_url.
+   */
+  async probeProvider(id: string, model: string, level?: string): Promise<ProbeRow[]> {
+    const base = this.providerRuntime(id);
+    const protocols: Protocol[] = ['openai-chat', 'openai-responses', 'anthropic-messages'];
+    const one = async (protocol: Protocol, withReasoning: boolean): Promise<ProbeCell> => {
+      const p: ProviderRuntime = { ...base, config: { ...base.config, protocol } };
+      const cfg = effectiveConfig(this.modelInfo({ providerId: id, model })?.reasoning, model, protocol);
+      let extraBody: Record<string, unknown> | undefined;
+      let dropTemperature = false;
+      let lv: string | undefined;
+      if (withReasoning) {
+        lv = clampLevel(cfg, level ?? 'low');
+        if (!lv) return { ok: false, skipped: true, message: '该模型未配置思考档位', latencyMs: 0 };
+        const rp = reasoningParams(cfg, lv, protocol);
+        extraBody = rp.body;
+        dropTemperature = !!rp.dropTemperature;
+      }
+      const started = now();
+      try {
+        const r = await streamLlm(p, model, { system: '你是连接测试助手。', messages: [{ role: 'user', content: '只回复两个字：在线' }], maxTokens: withReasoning ? 2048 : 20, idleTimeoutMs: 30000, extraBody, dropTemperature }, this.opts.fetchImpl);
+        return { ok: true, message: `${(r.text || r.reasoning || '（空回复）').slice(0, 40)}${r.reasoning ? ' · 有思考输出' : ''}`, latencyMs: now() - started, level: lv };
+      } catch (e) {
+        const info = classifyLlmError(e);
+        return { ok: false, kind: info.kind, status: info.status, message: redactSecrets(info.raw).slice(0, 300), hint: info.hint, latencyMs: now() - started, level: lv };
+      }
+    };
+    const rows = await Promise.all(protocols.map(async (protocol) => {
+      const plain = await one(protocol, false);
+      const reasoning = plain.ok ? await one(protocol, true) : { ok: false, skipped: true, message: '基础请求未通过，跳过', latencyMs: 0 };
+      return { protocol, plain, reasoning };
+    }));
+    this.audit.record('emperor', 'provider_probe', { providerId: id, model, result: rows.map((r) => `${r.protocol}:${r.plain.ok ? 'ok' : r.plain.status ?? r.plain.kind}/${r.reasoning.ok ? 'ok' : r.reasoning.skipped ? '-' : r.reasoning.status ?? r.reasoning.kind}`) });
+    return rows;
   }
 
   async fetchModels(id: string): Promise<string[]> {
@@ -851,6 +925,7 @@ export class Runtime {
   }
 
   dispose() {
+    this.mcp.dispose();
     if (this.healthTimer) clearInterval(this.healthTimer);
     for (const c of this.controllers.values()) c.abort();
     this.flushAll();

@@ -16,7 +16,7 @@ const PANELS: { id: PanelId; label: string; icon: string }[] = [
   { id: 'officials', label: '官员总览', icon: 'users' },
   { id: 'news', label: '天下要闻', icon: 'news' },
   { id: 'models', label: '模型配置', icon: 'cpu' },
-  { id: 'skills', label: '技能配置', icon: 'sparkles' },
+  { id: 'skills', label: '技能与 MCP', icon: 'plug' },
   { id: 'sessions', label: '小任务 Sessions', icon: 'message' },
   { id: 'ceremony', label: '上朝仪式', icon: 'flag' },
   { id: 'debate', label: '朝堂议政', icon: 'gavel' },
@@ -70,6 +70,7 @@ function ActivityBar() {
   const bottomOpen = useStore((s) => s.ui.bottomOpen);
   const git = useStore((s) => s.ui.fsVersion);
   void git;
+  const mcpBad = useStore((s) => s.mcp.filter((m) => m.status === 'error' || m.status === 'untrusted').length);
   const item = (id: 'explorer' | 'search' | 'git' | 'court', icon: string, label: string) => (
     <button className={`ab-item ${sideView === id ? 'on' : ''}`} title={label} onClick={() => setUI({ sideView: sideView === id ? null : id })}>
       <Icon name={icon} size={21} stroke={1.6} />
@@ -82,6 +83,10 @@ function ActivityBar() {
       {item('git', 'git', '源代码管理')}
       {item('court', 'court', '军机处')}
       <div className="ab-spacer" />
+      <button className="ab-item" title="技能与 MCP" onClick={() => openPanel('skills')} data-testid="ab-skills">
+        <Icon name="plug" size={20} stroke={1.6} />
+        {mcpBad > 0 && <span className="ab-badge" title={`${mcpBad} 个 MCP 服务异常或待信任`}>{mcpBad}</span>}
+      </button>
       <button className={`ab-item ${bottomOpen ? 'on' : ''}`} title="终端 / 问题 / 输出（⌃`）" onClick={() => setUI({ bottomOpen: !bottomOpen })}>
         <Icon name="terminal" size={20} stroke={1.6} />
       </button>

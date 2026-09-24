@@ -2,6 +2,7 @@
 // All three stream; all normalise to LlmResult. Keys are only placed in request headers
 // sent to the user-configured base URL — never logged.
 import { readSse } from './sse';
+import { deepMerge } from '../../shared/reasoning';
 import { LlmHttpError, type FetchLike, type LlmMessage, type LlmRequest, type LlmResult, type ProviderRuntime, type ToolCall } from './types';
 
 const trimSlash = (s: string) => s.replace(/\/+$/, '');
@@ -56,6 +57,16 @@ async function post(fetchImpl: FetchLike, url: string, headers: Record<string, s
   return res;
 }
 
+function applyExtra(body: Record<string, unknown>, req: LlmRequest) {
+  if (req.dropTemperature) delete body.temperature;
+  if (req.extraBody && Object.keys(req.extraBody).length) Object.assign(body, deepMerge(body, req.extraBody));
+  // OpenAI reasoning models on Chat Completions reject `max_tokens`; they take `max_completion_tokens`.
+  if ('reasoning_effort' in body && body.reasoning_effort !== 'none' && body.max_tokens !== undefined) {
+    body.max_completion_tokens = body.max_tokens;
+    delete body.max_tokens;
+  }
+}
+
 // ───────────────────────── OpenAI Chat Completions ─────────────────────────
 function toOpenAiChat(p: ProviderRuntime, req: LlmRequest) {
   const msgs: Record<string, unknown>[] = [{ role: 'system', content: req.system }];
@@ -82,6 +93,7 @@ export async function streamOpenAiChat(p: ProviderRuntime, model: string, req: L
   if (req.maxTokens) body.max_tokens = req.maxTokens;
   if (req.temperature !== undefined) body.temperature = req.temperature;
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
+  applyExtra(body, req);
   let res: Response;
   try {
     res = await post(fetchImpl, endpointFor(p), headersFor(p), body, req.signal);
@@ -171,6 +183,7 @@ export async function streamAnthropic(p: ProviderRuntime, model: string, req: Ll
   };
   if (req.temperature !== undefined) body.temperature = req.temperature;
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
+  applyExtra(body, req);
   const res = await post(fetchImpl, endpointFor(p), headersFor(p), body, req.signal);
   const result: LlmResult = { text: '', reasoning: '', toolCalls: [], usage: { input: 0, output: 0, cached: 0 }, usageReported: false, stopReason: '' };
   result.requestId = res.headers.get('request-id') ?? undefined;
@@ -244,6 +257,7 @@ export async function streamResponses(p: ProviderRuntime, model: string, req: Ll
   if (req.maxTokens) body.max_output_tokens = req.maxTokens;
   if (req.temperature !== undefined) body.temperature = req.temperature;
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters }));
+  applyExtra(body, req);
   const res = await post(fetchImpl, endpointFor(p), headersFor(p), body, req.signal);
   const result: LlmResult = { text: '', reasoning: '', toolCalls: [], usage: { input: 0, output: 0, cached: 0 }, usageReported: false, stopReason: '' };
   const fc: Record<string, { call_id: string; name: string; args: string }> = {};

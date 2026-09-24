@@ -1,9 +1,10 @@
 // Task widgets shared by the workbench and the court overlays (same actions, same data).
 import { useEffect, useState } from 'react';
-import type { MinistryId, Plan, Subtask, Task, TaskState } from '../../shared/types';
+import type { MinistryId, ModelRef, Plan, RunNode, Subtask, Task, TaskState } from '../../shared/types';
+import { levelLabel } from '../../shared/reasoning';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL } from '../../shared/court';
 import { call } from '../api';
-import { toast, useStore, openTab } from '../store';
+import { toast, useStore, openTab, openPanel } from '../store';
 import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
 import { fmtCost, fmtTokens, usageTokens } from '../common/format';
@@ -229,6 +230,11 @@ export function ChangesList({ task, onOpen }: { task: Task; onOpen?: (path: stri
             <span className="tree-name clickable" onClick={() => openDiff(p)}>{p}</span>
             <span className="muted small">{AGENT_MAP[last.agentId]?.name} · {list.length} 次</span>
             <code className="muted small">{last.afterHash?.slice(0, 8) ?? '—'}</code>
+            {!reverted && last.op !== 'delete' && /\.(html?|svg)$/i.test(p) && (
+              <button className="icon-btn" title="在内置浏览器预览" onClick={() => void import('../workbench/PreviewView').then((m) => m.openPreview(p))} data-testid="change-preview">
+                <Icon name="play" size={12} />
+              </button>
+            )}
             {!reverted && (
               <button className="icon-btn" title="撤回此文件的最近一次改动" onClick={async () => {
                 const c = [...list].reverse().find((x) => !x.reverted)!;
@@ -256,4 +262,58 @@ export function StateLabel({ task }: { task: Task }) {
 export function useSelectedTask() {
   const id = useStore((s) => s.ui.selectedTaskId);
   return useStore((s) => (id ? s.tasks.find((t) => t.id === id) : undefined));
+}
+
+const ERR_KIND: Record<string, string> = { auth: 'API Key / 权限问题', config: '模型或接入方式不被支持', param: '思考参数不被接受', billing: '余额或额度不足', rate: '触发限流', server: '模型服务错误', network: '网络不通', timeout: '请求超时', other: '模型调用失败' };
+const PROTO_SHORT: Record<string, string> = { 'openai-chat': 'Chat Completions', 'openai-responses': 'Responses', 'anthropic-messages': 'Messages' };
+
+/** Actionable card for a node that failed on a model call: what went wrong, what to do, one-click fixes. */
+export function ModelErrorCard({ task, node }: { task: Task; node: RunNode }) {
+  const providers = useStore((s) => s.providers);
+  const e = node.errorInfo!;
+  const [pick, setPick] = useState('');
+  const models = providers.filter((p) => p.enabled).flatMap((p) => p.models.map((m) => ({ key: `${p.id}::${m.id}`, label: `${m.label || m.id} · ${p.name}` })));
+  const alt = models.filter((m) => m.key !== `${e.providerId}::${e.model}`);
+  const retryWith = async () => {
+    const key = pick || alt[0]?.key;
+    if (!key) return toast('没有其他可用模型，请先在「模型配置」中添加', 'warn');
+    const [providerId, model] = key.split('::');
+    try {
+      await call('retryNodeWithModel', task.id, node.id, { providerId, model } as ModelRef);
+      toast(`已改用 ${model} 重试：${node.label}`, 'success');
+    } catch (err) {
+      toast((err as Error).message, 'error');
+    }
+  };
+  const provider = providers.find((p) => p.id === e.providerId);
+  const terminal = ['Done', 'Cancelled'].includes(task.state);
+  return (
+    <div className="err-card" data-testid="model-error-card">
+      <div className="err-h"><Icon name="alert" size={14} /> {node.label} · {ERR_KIND[e.kind] ?? '模型调用失败'}</div>
+      <div className="err-meta">
+        {e.model ?? node.model} · {provider?.name ?? e.providerId} · {PROTO_SHORT[e.protocol ?? ''] ?? e.protocol}{e.status ? ` · HTTP ${e.status}` : ''}{node.effort ? ` · 思考 ${levelLabel(node.effort)}` : ''}
+      </div>
+      <div className="err-hint">{e.hint}</div>
+      {!terminal && (
+        <div className="err-actions">
+          <button className="btn sm" onClick={() => openPanel('models')}><Icon name="cpu" size={12} /> 打开模型配置</button>
+          {alt.length > 0 && (
+            <>
+              <select className="input sm" value={pick || alt[0].key} onChange={(ev) => setPick(ev.target.value)} data-testid="err-model-pick">
+                {alt.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+              <button className="btn sm primary" onClick={retryWith} data-testid="retry-with-model"><Icon name="retry" size={12} /> 换模型重试</button>
+            </>
+          )}
+          <button className="btn sm" onClick={() => call('retryNode', task.id, node.id).then(() => toast(`局部重试：${node.label}`, 'success')).catch((err) => toast(err.message, 'error'))}>原模型重试</button>
+        </div>
+      )}
+      <details><summary>服务返回的原始信息</summary><pre>{e.raw}</pre></details>
+    </div>
+  );
+}
+
+/** The most recent failed node that carries model-error details (for pane / detail views). */
+export function failedModelNode(task: Task): RunNode | undefined {
+  return [...task.nodes].reverse().find((n) => n.status === 'failed' && n.errorInfo);
 }

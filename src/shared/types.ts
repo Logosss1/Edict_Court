@@ -121,6 +121,8 @@ export interface RunNode {
   endedAt?: number;
   exitStatus?: 'ok' | 'error' | 'cancelled' | 'interrupted' | 'rejected';
   error?: string;
+  errorInfo?: ErrorInfo;
+  effort?: string; // thinking level actually sent
   output?: string; // structured conclusion (JSON string or text)
   usage?: Usage;
 }
@@ -196,6 +198,8 @@ export interface Task {
   budget: { maxTokens: number; maxRejections: number; maxCostUsd: number };
   estimate?: { tokens: number; costUsd: number };
   strongModel?: ModelRef; // chosen in the composer
+  effort?: string; // 思考程度 chosen in the composer (applies to strong-class agents & Solo)
+  agentModels?: Partial<Record<AgentId, ModelRef>>; // task-scoped model overrides (e.g. 换模型重试)
   debateId?: string;
   withDebate?: boolean;
   progress?: TaskProgress;
@@ -234,7 +238,8 @@ export type ActivityKind =
   | 'gate'
   | 'human'
   | 'annotation'
-  | 'debate';
+  | 'debate'
+  | 'preview';
 
 export interface Activity {
   id: string;
@@ -360,6 +365,28 @@ export interface ModelInfo {
   outputPrice: number;
   cachedInputPrice?: number;
   contextWindow: number;
+  maxOutputTokens?: number; // hard output cap for this model (used when raising effort)
+  reasoning?: ReasoningConfig; // 思考程度配置（见 shared/reasoning.ts）
+}
+
+export type ReasoningStyle = 'none' | 'openai' | 'anthropic' | 'anthropic-budget' | 'qwen' | 'glm' | 'custom';
+
+export interface ReasoningConfig {
+  style: ReasoningStyle;
+  levels: string[]; // ordered low → high; the right end of the slider is the model's top level
+  default: string;
+  budgets?: Record<string, number>; // thinking token budgets (anthropic-budget / qwen)
+  custom?: Record<string, Record<string, unknown>>; // style=custom: JSON merged into the request body per level
+}
+
+export interface ErrorInfo {
+  kind: 'auth' | 'config' | 'param' | 'billing' | 'rate' | 'server' | 'network' | 'timeout' | 'other';
+  status?: number;
+  hint: string;
+  raw: string;
+  providerId?: string;
+  model?: string;
+  protocol?: string;
 }
 
 export interface ProviderConfig {
@@ -384,6 +411,7 @@ export interface SkillInfo {
   path: string;
   source: 'builtin' | 'local' | 'remote';
   sourceUrl?: string;
+  enabled: boolean;
 }
 
 export interface Template {
@@ -404,6 +432,7 @@ export interface Settings {
   multiAgent: boolean;
   routing: { strong: ModelRef | null; economy: ModelRef | null };
   agentModels: Partial<Record<AgentId, ModelRef>>; // per-agent hot-switch overrides
+  agentEffort: Partial<Record<AgentId, string>>; // per-agent 思考程度 overrides
   budgets: Record<Tier, number>; // default max tokens per task by tier
   maxCostUsd: number; // per task, 0 = unlimited
   maxRejections: { lite: number; full: number };
@@ -418,6 +447,8 @@ export interface Settings {
   lastWorkspace: string | null;
   ceremonyShownOn?: string; // yyyy-mm-dd
   composerHidden: boolean;
+  composerEffort?: string;
+  previewAllowNetwork?: boolean; // HTML 预览可加载外部网络资源（默认仅本地） // last 思考程度 slider value ('default' | 'top' | level)
   language: 'zh';
 }
 
@@ -433,6 +464,7 @@ export interface Snapshot {
   settings: Settings;
   providers: ProviderConfig[];
   skills: SkillInfo[];
+  mcp: McpServerState[];
   templates: Template[];
   workspace: string | null;
   dataDir: string;
@@ -462,6 +494,71 @@ export type RuntimeEvent =
   | { type: 'workspace'; workspace: string | null }
   | { type: 'fs_changed'; paths: string[] }
   | { type: 'toast'; level: 'info' | 'warn' | 'error'; message: string }
-  | { type: 'menu'; command: string; arg?: unknown };
+  | { type: 'menu'; command: string; arg?: unknown }
+  | { type: 'preview_blocked'; url: string }
+  | { type: 'mcp'; servers: McpServerState[] };
 
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 });
+
+export interface ProbeCell { ok: boolean; skipped?: boolean; kind?: ErrorInfo['kind']; status?: number; message: string; hint?: string; latencyMs: number; level?: string }
+export interface ProbeRow { protocol: Protocol; plain: ProbeCell; reasoning: ProbeCell }
+
+/** Result of rendering a page in the hidden preview browser (agent tool `preview_page`). */
+export interface PreviewResult {
+  url: string;
+  ok: boolean;
+  title: string;
+  text: string;
+  console: { level: string; message: string; source?: string; line?: number }[];
+  failed: string[];
+  blocked: string[];
+  screenshot?: string; // blob hash (PNG)
+  width: number;
+  height: number;
+  loadMs: number;
+}
+
+// ───────────────────────── MCP (Model Context Protocol) ─────────────────────────
+/** One server entry in Cursor-compatible `mcp.json` (`{ "mcpServers": { name: entry } }`). */
+export interface McpServerEntry {
+  type?: 'stdio' | 'http' | 'sse' | 'streamable-http';
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  envFile?: string;
+  cwd?: string;
+  url?: string;
+  headers?: Record<string, string>;
+  disabled?: boolean;
+}
+export interface McpConfig { mcpServers: Record<string, McpServerEntry> }
+
+export type McpRisk = 'read' | 'write' | 'high';
+export interface McpToolPolicy { enabled: boolean; risk: McpRisk; autoApprove: boolean }
+export interface McpServerPolicy { enabled: boolean; agents: AgentId[] | 'all'; tools: Record<string, McpToolPolicy> }
+export interface McpPolicy { servers: Record<string, McpServerPolicy>; trusted: string[] }
+
+export interface McpToolInfo {
+  name: string; // tool name on the server
+  exposed: string; // name the agents see: mcp__server__tool
+  title?: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean; title?: string };
+  policy: McpToolPolicy;
+}
+
+export interface McpServerState {
+  name: string;
+  transport: 'stdio' | 'http' | 'sse';
+  target: string; // command line or URL (secrets already masked)
+  status: 'disabled' | 'untrusted' | 'stopped' | 'starting' | 'ok' | 'error';
+  error?: string;
+  serverInfo?: { name: string; version?: string };
+  protocolVersion?: string;
+  instructions?: string;
+  tools: McpToolInfo[];
+  policy: McpServerPolicy;
+  logs: { at: number; level: 'info' | 'error' | 'stderr'; text: string }[];
+  startedAt?: number;
+}

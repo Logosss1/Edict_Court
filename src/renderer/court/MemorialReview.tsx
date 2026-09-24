@@ -9,8 +9,35 @@ import { loadMonaco, languageFor, monacoTheme } from '../common/loaders';
 import { AGENT_MAP, STATE_LABEL } from '../../shared/court';
 import { fmtTime } from '../common/format';
 import type { Task } from '../../shared/types';
+import { PreviewView } from '../workbench/PreviewView';
 
-type Tab = 'plan' | 'report' | 'diff' | 'timeline';
+function htmlFiles(task: Task): string[] {
+  const alive = new Map<string, boolean>();
+  for (const c of task.changes) if (!c.reverted) alive.set(c.path, c.op !== 'delete');
+  return [...alive.entries()].filter(([p, ok]) => ok && /\.html?$/i.test(p)).map(([p]) => p).sort((a, b) => (/index\.html?$/i.test(a) ? -1 : /index\.html?$/i.test(b) ? 1 : a.localeCompare(b)));
+}
+
+/** 御览成品：run the page the officials produced, right inside the review overlay. */
+function PreviewPane({ task }: { task: Task }) {
+  const files = htmlFiles(task);
+  const [sel, setSel] = useState(files[0]);
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (sel) void call<string>('previewUrl', sel).then(setUrl).catch(() => setUrl(null));
+  }, [sel]);
+  return (
+    <div className="mr-preview" data-testid="memorial-preview">
+      {files.length > 1 && (
+        <div className="mr-preview-files">
+          {files.map((f) => <button key={f} className={`px-btn sm ${f === sel ? 'on' : ''}`} onClick={() => setSel(f)}>{f}</button>)}
+        </div>
+      )}
+      {url ? <PreviewView key={url} tab={{ id: `mr:${url}`, kind: 'preview', title: sel, url }} /> : <div className="px-muted">工作区未打开或文件不可用</div>}
+    </div>
+  );
+}
+
+type Tab = 'plan' | 'report' | 'diff' | 'preview' | 'timeline';
 
 export function MemorialReview({ taskId, tab: initial }: { taskId: string; tab?: Tab }) {
   const task = useTask(taskId);
@@ -18,7 +45,7 @@ export function MemorialReview({ taskId, tab: initial }: { taskId: string; tab?:
   const others = useStore((s) => s.tasks.filter((t) => t.gate && t.id !== taskId));
   if (!task) return null;
   const close = () => setUI({ review: null });
-  const tabs: [Tab, string][] = [['plan', '中书方案'], ['report', '回奏'], ['diff', `改动 · ${new Set(task.changes.map((c) => c.path)).size}`], ['timeline', '流转']];
+  const tabs: [Tab, string][] = [['plan', '中书方案'], ['report', '回奏'], ['diff', `改动 · ${new Set(task.changes.map((c) => c.path)).size}`], ...(htmlFiles(task).length ? [['preview', `预览 · ${htmlFiles(task).length}`] as [Tab, string]] : []), ['timeline', '流转']];
   return (
     <div className="px-modal-backdrop" onMouseDown={close}>
       <div className="memorial-review pixel" onMouseDown={(e) => e.stopPropagation()} data-testid="memorial-review">
@@ -47,6 +74,7 @@ export function MemorialReview({ taskId, tab: initial }: { taskId: string; tab?:
               </>
             )}
             {tab === 'diff' && <DiffPane task={task} />}
+            {tab === 'preview' && <PreviewPane task={task} />}
             {tab === 'timeline' && <Timeline task={task} />}
           </div>
         </div>

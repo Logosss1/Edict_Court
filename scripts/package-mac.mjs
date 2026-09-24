@@ -15,7 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const ver = pkg.version;
 const ELECTRON_VERSION = pkg.devDependencies.electron;
-const zip = process.env.ELECTRON_DARWIN_ZIP ?? `/home/claude/deps/electron-v${ELECTRON_VERSION}-darwin-arm64.zip`;
+const zip = process.env.ELECTRON_DARWIN_ZIP ?? path.join(root, 'deps', `electron-v${ELECTRON_VERSION}-darwin-arm64.zip`);
 const EXPECTED_SHA = 'a212eee63ba2f45fd83bd28f77a3e3313a336ad17a4c25adf617942eef5e0e2c'; // electron v44.4.5 darwin-arm64 (SHASUMS256.txt)
 const release = path.join(root, 'release');
 const stage = path.join(release, 'stage');
@@ -23,6 +23,7 @@ const app = path.join(stage, 'Edict.app');
 const sh = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: 'inherit', ...opts });
 
 // 0. verify the electron archive
+if (!fs.existsSync(zip)) throw new Error(`Electron archive not found: ${zip}\nDownload electron-v${ELECTRON_VERSION}-darwin-arm64.zip from https://github.com/electron/electron/releases into ./deps/ or set ELECTRON_DARWIN_ZIP.`);
 const sha = crypto.createHash('sha256').update(fs.readFileSync(zip)).digest('hex');
 if (sha !== EXPECTED_SHA) throw new Error(`Electron zip checksum mismatch: ${sha}`);
 console.log('[package] electron zip sha256 OK');
@@ -78,7 +79,7 @@ sh('python3', ['-c', helperPy, ...fs.readdirSync(fw).filter((f) => f.endsWith('.
 if (process.platform === 'darwin') {
   sh('codesign', ['--force', '--deep', '--sign', '-', app]);
 } else {
-  const rc = process.env.RCODESIGN ?? '/home/claude/deps/apple-codesign-0.29.0-x86_64-unknown-linux-musl/rcodesign';
+  const rc = process.env.RCODESIGN ?? 'rcodesign';
   sh(rc, ['sign', app]);
   // `rcodesign verify` does not handle ad-hoc (CMS-less) signatures; inspect instead
   const bins = [
@@ -109,7 +110,7 @@ if (process.platform === 'darwin') {
 } else {
   const iso = path.join(release, 'edict.iso');
   sh('python3', [path.join(root, 'scripts/make-iso.py'), stage, iso, 'Edict']);
-  sh(process.env.DMG_TOOL ?? '/home/claude/deps/libdmg-hfsplus/build/dmg/dmg', [iso, dmgOut]);
+  sh(process.env.DMG_TOOL ?? 'dmg', [iso, dmgOut]);
   fs.rmSync(iso);
 }
 for (const f of [zipOut, dmgOut]) {

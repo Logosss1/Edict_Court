@@ -2,7 +2,8 @@
 // Drives the real Electron app: configure a provider through the UI, issue edicts in all three
 // tiers, approve/reject gates, edit a plan (L2), interject in a debate (L2), annotate an agent,
 // use editor/terminal, switch modes, and capture screenshots.
-import { _electron as electron } from '/home/claude/.npm-global/lib/node_modules/playwright/index.mjs';
+import { _electron as electron } from 'playwright';
+import electronBinary from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { startMockLlm } from '../tests/mockLlm';
@@ -21,7 +22,7 @@ const ok = (step: string, cond: boolean, note?: string) => {
   const ws = fs.mkdtempSync('/tmp/edict-e2e-ws-');
   fs.writeFileSync(path.join(ws, 'README.md'), '# demo project\n');
   fs.writeFileSync(path.join(ws, 'index.ts'), 'export function add(a: number, b: number) {\n  return a + b;\n}\nconst x: number = "oops";\n');
-  const app = await electron.launch({ executablePath: process.env.EDICT_ELECTRON ?? '/home/claude/electron-linux/electron', args: [path.resolve('dist'), '--no-sandbox', `--edict-data-dir=${dataDir}`], env: { ...process.env, EDICT_E2E: '1' } });
+  const app = await electron.launch({ executablePath: process.env.EDICT_ELECTRON ?? (electronBinary as unknown as string), args: [path.resolve('dist'), '--no-sandbox', `--edict-data-dir=${dataDir}`], env: { ...process.env, EDICT_E2E: '1' } });
   const win = await app.firstWindow();
   const errors: string[] = [];
   win.on('pageerror', (e) => errors.push(e.message));

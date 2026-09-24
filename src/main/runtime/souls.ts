@@ -15,6 +15,7 @@ const TOOL_RULES = `工具使用规范：
 - 先用 list_dir / search / outline 定位，再用 read_file 按需读取需要的片段，不要整仓读取。
 - 修改已有文件优先用 edit_file（精确替换），新文件用 write_file。
 - run_command 用于运行测试、构建与检查；命令在工作区根目录执行。
+- 产出网页（HTML/CSS/JS）后，用 preview_page 实际打开验证：确认无控制台错误、关键内容可见，再汇报完成。
 - 每完成关键步骤就推进，不要空转。`;
 
 export const SOULS: Record<AgentId, string> = {

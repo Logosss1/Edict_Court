@@ -1,8 +1,8 @@
 {
   "name": "edict-for-mac",
   "productName": "Edict",
-  "version": "1.0.0",
-  "description": "Edict for Mac · 三省六部像素朝堂桌面 AI 编程工作站",
+  "version": "1.1.0",
+  "description": "Edict for Mac — an Apple Silicon desktop AI coding workstation with a pixel court for EDICT's Three Departments and Six Ministries workflow (三省六部像素朝堂 AI 编程工作站)",
   "main": "dist/main.js",
   "license": "MIT",
   "private": true,
@@ -12,9 +12,9 @@
     "start": "npm run build && electron .",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "e2e": "node e2e/run-e2e.mjs",
+    "e2e": "tsx e2e/flow.ts",
     "package:mac": "node scripts/package-mac.mjs",
-    "dmg": "bash scripts/make-dmg.sh"
+    "e2e:features": "tsx e2e/features.ts"
   },
   "devDependencies": {
     "electron": "44.4.5",
@@ -32,5 +32,10 @@
       "xterm.js": "5.5.0 (MIT, bundled from source)",
       "fusion-pixel-font": "2026.09.01 (OFL-1.1)"
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Logosss1/Edict_Court.git"
+  },
+  "homepage": "https://github.com/Logosss1/Edict_Court"
 }

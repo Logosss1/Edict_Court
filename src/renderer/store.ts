@@ -9,7 +9,8 @@ export type CourtScene = 'taihe' | 'junjichu' | 'liubu' | 'chengtian';
 
 export interface Tab {
   id: string;
-  kind: 'file' | 'diff' | 'panel' | 'task';
+  kind: 'file' | 'diff' | 'panel' | 'task' | 'preview';
+  url?: string;
   title: string;
   path?: string;
   panel?: PanelId;
@@ -45,6 +46,7 @@ export interface UIState {
   lastChat: { sessionId: string; reply: string } | null;
   fsVersion: number;
   changedPaths: string[];
+  previewBlocked: { url: string; at: number } | null;
 }
 
 export interface AppState extends Snapshot {
@@ -56,12 +58,12 @@ export interface AppState extends Snapshot {
 const initialUI: UIState = {
   mode: 'workbench', selectedTaskId: null, tabs: [{ id: 'panel:kanban', kind: 'panel', title: '旨意看板', panel: 'kanban' }], activeTab: 'panel:kanban',
   sideView: 'explorer', bottomOpen: false, bottomTab: 'terminal', composerHidden: false, courtScene: 'taihe', courtDept: 'bingbu', review: null,
-  agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [],
+  agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [], previewBlocked: null,
 };
 
 let state: AppState = {
   ready: false, tasks: [], agents: [], debates: [], sessions: [], memorials: [], approvals: [], annotations: [], news: [], settings: {} as AppState['settings'],
-  providers: [], skills: [], templates: [], workspace: null, dataDir: '', version: '', platform: '', totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 },
+  providers: [], skills: [], mcp: [], templates: [], workspace: null, dataDir: '', version: '', platform: '', totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 },
   activities: {}, ui: initialUI,
 };
 
@@ -178,18 +180,24 @@ export function applyEvent(e: RuntimeEvent) {
     case 'skills':
       set({ skills: e.skills });
       break;
+    case 'mcp':
+      set({ mcp: e.servers });
+      break;
     case 'totals':
       set({ totals: e.totals });
       break;
     case 'workspace':
       set({ workspace: e.workspace });
-      setUI((ui) => ({ fsVersion: ui.fsVersion + 1, tabs: ui.tabs.filter((t) => t.kind !== 'file' && t.kind !== 'diff'), activeTab: ui.tabs.find((t) => t.kind === 'panel')?.id ?? null }));
+      setUI((ui) => ({ fsVersion: ui.fsVersion + 1, tabs: ui.tabs.filter((t) => t.kind !== 'file' && t.kind !== 'diff' && t.kind !== 'preview'), activeTab: ui.tabs.find((t) => t.kind === 'panel')?.id ?? null }));
       break;
     case 'fs_changed':
       setUI((ui) => ({ fsVersion: ui.fsVersion + 1, changedPaths: e.paths }));
       break;
     case 'toast':
       toast(e.message, e.level);
+      break;
+    case 'preview_blocked':
+      setUI({ previewBlocked: { url: e.url, at: Date.now() } });
       break;
     case 'menu':
       menuHandlers.forEach((h) => h(e.command, e.arg));
@@ -274,7 +282,7 @@ export function openTab(tab: Tab) {
 }
 
 export function openPanel(panel: PanelId) {
-  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', skills: '技能配置', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明' };
+  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', skills: '技能与 MCP', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明' };
   openTab({ id: `panel:${panel}`, kind: 'panel', title: titles[panel], panel });
 }
 

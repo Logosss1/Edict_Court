@@ -7,6 +7,7 @@ export function defaultSettings(): Settings {
     multiAgent: true,
     routing: { strong: null, economy: null },
     agentModels: {},
+    agentEffort: {},
     budgets: { solo: 300_000, lite: 600_000, full: 1_500_000 },
     maxCostUsd: 0,
     maxRejections: { lite: 1, full: 3 },

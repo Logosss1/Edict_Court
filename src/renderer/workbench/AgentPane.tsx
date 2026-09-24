@@ -8,7 +8,8 @@ import { StateChip, fmtCost, fmtTokens, fmtAgo } from '../common/format';
 import { TIER_LABEL, TIER_SHORT, TERMINAL } from '../../shared/court';
 import type { ModelRef, Tier } from '../../shared/types';
 import { ActivityStream } from './ActivityStream';
-import { GateCard, Pipeline, TaskControls, UsageLine, useSelectedTask } from '../panels/TaskWidgets';
+import { EffortSlider } from '../common/EffortSlider';
+import { GateCard, ModelErrorCard, Pipeline, TaskControls, UsageLine, failedModelNode, useSelectedTask } from '../panels/TaskWidgets';
 
 export function AgentPane() {
   const task = useSelectedTask();
@@ -64,14 +65,15 @@ export function AgentPane() {
             <UsageLine task={task} />
             <div className="ap-controls">
               <TaskControls task={task} />
-              {task.state === 'Blocked' && <span className="muted small ellipsis" title={task.blockedReason}>⚠ {task.blockedReason}</span>}
-              {task.nodes.some((n) => n.status === 'failed') && (
+              {task.state === 'Blocked' && !failedModelNode(task) && <span className="muted small ellipsis" title={task.blockedReason}>⚠ {task.blockedReason}</span>}
+              {task.nodes.some((n) => n.status === 'failed') && !failedModelNode(task) && (
                 <button className="btn sm" onClick={() => openTaskTab(task.id)}>
                   <Icon name="retry" size={12} /> 局部重试…
                 </button>
               )}
             </div>
           </div>
+          {task.state === 'Blocked' && failedModelNode(task) && <ModelErrorCard task={task} node={failedModelNode(task)!} />}
           {task.gate && <GateCard key={task.gate.since} task={task} />}
           <PendingApprovals taskId={task.id} />
           <div className="ap-stream">
@@ -158,6 +160,8 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   const [multi, setMulti] = useState(settings.multiAgent ?? true);
   const [model, setModel] = useState<string>(settings.routing?.strong ? `${settings.routing.strong.providerId}::${settings.routing.strong.model}` : '');
   const [debate, setDebate] = useState(!!settings.debateBeforePlan);
+  const [effort, setEffortState] = useState<string>(settings.composerEffort ?? 'default');
+  const setEffort = (v: string) => { setEffortState(v); void call('updateSettings', { composerEffort: v }); };
   const [force, setForce] = useState(false);
   const [cont, setCont] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -201,7 +205,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
     setBusy(true);
     try {
       const r = await call<{ kind: 'chat'; sessionId: string; reply: string } | { kind: 'task'; taskId: string }>('submit', {
-        text: t, tier, multiAgent: multi, model: parseModel(model), forceEdict: force, withDebate: tier === 'full' ? debate : false, sessionId: canContinue && cont ? selected!.sessionId : undefined,
+        text: t, tier, multiAgent: multi, model: parseModel(model), effort, forceEdict: force, withDebate: tier === 'full' ? debate : false, sessionId: canContinue && cont ? selected!.sessionId : undefined,
       });
       setText('');
       if (r.kind === 'chat') {
@@ -250,6 +254,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
             </button>
           ))}
         </div>
+        <EffortSlider model={parseModel(model || models[0]?.key || "")} value={effort} onChange={setEffort} />
         <label className="switch" title="多 Agent 协同（关闭 = Solo）">
           <input type="checkbox" checked={multi} onChange={(e) => { setMulti(e.target.checked); if (e.target.checked && tier === 'solo') setTier('lite'); }} />
           <span>协同</span>
@@ -288,7 +293,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   );
 }
 
-function parseModel(key: string): ModelRef | null {
+export function parseModel(key: string): ModelRef | null {
   if (!key) return null;
   const [providerId, model] = key.split('::');
   return providerId && model ? { providerId, model } : null;

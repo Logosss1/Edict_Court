@@ -7,6 +7,7 @@ import { takeReveal, onReveal, setProblems, registerSave, saveActiveEditor } fro
 import { PanelView } from '../panels/PanelView';
 import { askText } from '../common/Prompt';
 import { TaskDetail } from '../panels/TaskDetail';
+import { PreviewView, PREVIEWABLE, openPreview } from './PreviewView';
 
 const BINARY = /\.(png|jpe?g|gif|webp|ico|icns|pdf|zip|gz|tgz|dmg|woff2?|ttf|otf|mp3|mp4|mov|wasm|so|dylib|exe|bin|jar|class|o|a|sqlite|db)$/i;
 
@@ -57,7 +58,7 @@ export function EditorArea() {
       <div className="tabbar" role="tablist">
         {tabs.map((t) => (
           <div key={t.id} role="tab" aria-selected={t.id === active} className={`tab ${t.id === active ? 'on' : ''} ${t.preview ? 'preview' : ''}`} onClick={() => setUI({ activeTab: t.id })} onDoubleClick={() => setUI((ui) => ({ tabs: ui.tabs.map((x) => (x.id === t.id ? { ...x, preview: false } : x)) }))} onMouseDown={(e) => e.button === 1 && closeTab(t.id)} title={t.path ?? t.title}>
-            <Icon name={t.kind === 'file' ? 'file' : t.kind === 'diff' ? 'diff' : t.kind === 'task' ? 'scroll' : 'layers'} size={13} />
+            <Icon name={t.kind === 'file' ? 'file' : t.kind === 'diff' ? 'diff' : t.kind === 'task' ? 'scroll' : t.kind === 'preview' ? 'globe' : 'layers'} size={13} />
             <span className="tab-title">{t.title}</span>
             {t.dirty ? (
               <span className="tab-dirty">●</span>
@@ -74,6 +75,9 @@ export function EditorArea() {
         {tab?.kind === 'diff' && <DiffView key={tab.id} tab={tab} />}
         {tab?.kind === 'panel' && <div className="panel-host"><PanelView panel={tab.panel!} /></div>}
         {tab?.kind === 'task' && <div className="panel-host"><TaskDetail taskId={tab.taskId!} /></div>}
+        {tabs.filter((t) => t.kind === 'preview').map((t) => (
+          <div key={t.id} className="preview-host" style={{ display: t.id === active ? 'flex' : 'none' }}><PreviewView tab={t} /></div>
+        ))}
         {!tab && <Welcome />}
       </div>
     </div>
@@ -223,6 +227,11 @@ function FileEditor({ tab }: { tab?: Tab }) {
               {i < arr.length - 1 && <Icon name="chevronRight" size={10} />}
             </span>
           ))}
+          {tab.path && PREVIEWABLE.test(tab.path) && (
+            <button className="btn sm crumb-action" onClick={() => openPreview(tab.path!)} data-testid="editor-preview" title="在内置浏览器中预览并调试此页面">
+              <Icon name="play" size={11} /> 预览
+            </button>
+          )}
         </div>
       )}
       {err && <div className="editor-err">{err}</div>}

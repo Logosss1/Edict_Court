@@ -8,6 +8,7 @@ import { SafeStorageSecrets } from './secrets';
 import { installOrchestrator, resumeAll } from './runtime/orchestrator';
 import { loadSkills } from './runtime/extras';
 import { buildApi } from './api';
+import { installPreview, hardenContents, previewPage } from './previewHost';
 import { TerminalManager } from './services/terminal';
 import type { RuntimeEvent } from '../shared/types';
 
@@ -21,7 +22,11 @@ const smokeTest = process.argv.includes('--smoke-test');
 const dataArg = process.argv.find((a) => a.startsWith('--edict-data-dir='));
 if (dataArg) app.setPath('userData', dataArg.split('=')[1]);
 
-protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } }]);
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true, stream: true } },
+  // HTML 预览 of the open workspace (isolated partition; see previewHost.ts)
+  { scheme: 'preview', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true } },
+]);
 
 let win: BrowserWindow | null = null;
 let rt: Runtime;
@@ -125,7 +130,7 @@ function buildMenu() {
       { label: '官员总览', click: cmd('open-panel', 'officials') },
       { label: '天下要闻', click: cmd('open-panel', 'news') },
       { label: '模型配置', click: cmd('open-panel', 'models') },
-      { label: '技能配置', click: cmd('open-panel', 'skills') },
+      { label: '技能与 MCP', click: cmd('open-panel', 'skills') },
       { label: '小任务 Sessions', click: cmd('open-panel', 'sessions') },
       { label: '朝堂议政', click: cmd('open-panel', 'debate') },
       { label: '审计日志', click: cmd('open-panel', 'audit') },
@@ -173,6 +178,7 @@ function createWindow() {
       nodeIntegration: false,
       spellcheck: false,
       backgroundThrottling: false,
+      webviewTag: true, // only for the HTML 预览 tab; guests are forced into the sandboxed preview partition
     },
   });
   win.once('ready-to-show', () => win?.show());
@@ -224,14 +230,21 @@ app.whenReady().then(async () => {
     platform: process.platform,
     resourcesDir: DIST,
     notify,
+    previewPage,
   });
+  installPreview(rt, (url) => send({ type: 'preview_blocked', url }));
   installOrchestrator(rt);
   loadSkills(rt);
+  rt.mcp.load();
   nativeTheme.themeSource = rt.settings.theme;
   terminals = new TerminalManager((id, kind, payload) => win?.webContents.send('term:event', { id, kind, payload }));
   rt.on((e) => {
     send(e);
-    if (e.type === 'workspace') watchWorkspace(e.workspace);
+    if (e.type === 'workspace') {
+      watchWorkspace(e.workspace);
+      // servers whose config depends on the workspace are restarted for the new folder
+      for (const [n, entry] of Object.entries(rt.mcp.config.mcpServers)) if (JSON.stringify(entry).includes('workspaceFolder') || entry.command) rt.mcp.restart(n);
+    }
     if (e.type === 'settings') nativeTheme.themeSource = e.settings.theme;
   });
   const api = buildApi(rt, terminals, { openFolderDialog, getWindow: () => win });
@@ -257,6 +270,7 @@ app.whenReady().then(async () => {
 });
 
 app.on('web-contents-created', (_e, contents) => {
+  hardenContents(contents);
   contents.session.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'clipboard-sanitized-write' || permission === 'notifications'));
 });
 

@@ -1,0 +1,94 @@
+{
+  "host": "linux-xvfb (not macOS)",
+  "llm": "mock (scripted, real SSE wire formats)",
+  "mcp": "real stdio child process (test fixture server)",
+  "results": [
+    {
+      "step": "思考程度滑块按模型档位显示（mock-strong：低→超高，4 档）",
+      "ok": true,
+      "note": "max=3"
+    },
+    {
+      "step": "滑到最右 = 该模型最高档（超高 xhigh）",
+      "ok": true,
+      "note": "超高"
+    },
+    {
+      "step": "请求体携带 reasoning_effort=xhigh（真实 Electron → mock 服务）",
+      "ok": true,
+      "note": "{\"e\":\"xhigh\",\"mct\":8000}"
+    },
+    {
+      "step": "无思考档位的模型显示「不适用」",
+      "ok": true
+    },
+    {
+      "step": "中转站 503「分组不支持」→ 可读错误卡片，且不盲目重试",
+      "ok": true,
+      "note": "calls=1"
+    },
+    {
+      "step": "换模型重试：局部重试该节点后结案",
+      "ok": true
+    },
+    {
+      "step": "协议探测矩阵（Chat / Responses / Messages × 有无思考参数）",
+      "ok": true
+    },
+    {
+      "step": "预览页签：webview 加载工作区页面并捕获控制台错误",
+      "ok": true,
+      "note": "控制台 ✖1"
+    },
+    {
+      "step": "预览默认拦截外部网络请求（CDN）并提示",
+      "ok": true
+    },
+    {
+      "step": "控制台面板显示 undefinedFn 错误与 console.log",
+      "ok": true
+    },
+    {
+      "step": "磁盘改动后预览自动刷新（错误消失）",
+      "ok": true
+    },
+    {
+      "step": "无头预览：标题 / 文本 / 截图",
+      "ok": true,
+      "note": "{\"title\":\"凌烟阁\",\"blocked\":1}"
+    },
+    {
+      "step": "Agent 调用 preview_page：活动流展示截图与控制台错误",
+      "ok": true,
+      "note": "🧑‍💻 独相11:40:55⚠ 凌烟阁index.html · 1280×800 · 483ms控制台错误 1 · 已拦截外部请求 1✖ Uncaught ReferenceError: broken is not defined 打开"
+    },
+    {
+      "step": "技能中心：新建技能并保存",
+      "ok": true
+    },
+    {
+      "step": "保存本地 MCP 命令前弹出原生确认框（测试替身代点「信任并运行」）",
+      "ok": true,
+      "note": "允许 Edict 在本机运行以下 1 个 MCP 服务命令？"
+    },
+    {
+      "step": "MCP：Cursor 格式 mcp.json 保存后连接 stdio 服务并列出工具",
+      "ok": true,
+      "note": "demo本地进程已连接echo-fixture 0.1.0 · 协议 2025-06-18停止/opt/node22/bin/node /home/claude/edict-mac/tests/fixtures/mcp-echo-server.mjs工具 5/5 ▾echo · add · delete_everyth"
+    },
+    {
+      "step": "Agent 调用 MCP 工具 mcp__demo__echo 并拿到结果",
+      "ok": true,
+      "note": "Done · /root:朕知道了"
+    },
+    {
+      "step": "API Key 未出现在审计/状态/设置/mcp.json 中",
+      "ok": true
+    },
+    {
+      "step": "无前端运行时错误",
+      "ok": true,
+      "note": ""
+    }
+  ]
+}

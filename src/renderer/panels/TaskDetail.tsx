@@ -7,7 +7,8 @@ import { Markdown } from '../common/Markdown';
 import { AgentChip, StateChip, fmtCost, fmtDur, fmtTime, fmtTokens, usageTokens } from '../common/format';
 import { AGENTS, AGENT_MAP, TIER_LABEL } from '../../shared/court';
 import type { AgentId, Task } from '../../shared/types';
-import { ChangesList, GateCard, Pipeline, PlanEditor, TaskControls, UsageLine } from './TaskWidgets';
+import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode } from './TaskWidgets';
+import { levelLabel } from '../../shared/reasoning';
 import { ActivityStream } from '../workbench/ActivityStream';
 
 type TabKey = 'nodes' | 'plan' | 'changes' | 'flow' | 'notes' | 'report' | 'live';
@@ -33,7 +34,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           <button className="btn sm" onClick={() => setUI({ mode: 'court', review: { taskId: task.id }, courtScene: 'taihe' })}><Icon name="crown" size={12} /> 朝堂批阅</button>
           {['Done', 'Cancelled'].includes(task.state) && <button className="btn sm" onClick={async () => { await navigator.clipboard.writeText(await call<string>('memorialMarkdown', task.id)); toast('奏折已复制为 Markdown', 'success'); }}><Icon name="copy" size={12} /> 复制奏折</button>}
         </div>
-        {task.state === 'Blocked' && <div className="notice warn">⚠ 阻塞：{task.blockedReason}</div>}
+        {task.state === 'Blocked' && (failedModelNode(task) ? <ModelErrorCard task={task} node={failedModelNode(task)!} /> : <div className="notice warn">⚠ 阻塞：{task.blockedReason}</div>)}
       </div>
       <div className="edict-text"><span className="muted small">原旨</span><div>{task.edict}</div></div>
       {task.gate && <GateCard task={task} />}
@@ -66,10 +67,10 @@ function Nodes({ task }: { task: Task }) {
             <td><AgentChip id={n.agentId} small /></td>
             <td><span className={`node-status st-${n.status}`}>{({ pending: '待执行', running: '执行中', done: '完成', failed: '失败', skipped: '跳过', waiting: '等待', cancelled: '中断' } as Record<string, string>)[n.status]}</span>{n.exitStatus && <div className="muted small">exit={n.exitStatus}</div>}</td>
             <td>{n.attempts}</td>
-            <td className="small">{n.model ?? '—'}<div className="muted"><code>{n.runId ?? ''}</code></div></td>
+            <td className="small">{n.model ?? '—'}{n.effort && <span className="chip chip-sm" title="思考程度">{levelLabel(n.effort)}</span>}<div className="muted"><code>{n.runId ?? ''}</code></div></td>
             <td className="small">{fmtDur(n.startedAt, n.endedAt)}</td>
             <td className="small">{fmtTokens(usageTokens(n.usage))} · {fmtCost(n.usage?.costUsd ?? 0)}</td>
-            <td className="small node-out">{n.error ? <span style={{ color: '#d0453a' }}>{n.error}</span> : <NodeOutput text={n.output} />}</td>
+            <td className="small node-out">{n.error ? <span style={{ color: '#d0453a' }} title={n.errorInfo?.raw}>{n.errorInfo ? `${n.errorInfo.hint}${n.errorInfo.status ? `（HTTP ${n.errorInfo.status}）` : ''}` : n.error}</span> : <NodeOutput text={n.output} />}</td>
             <td>{(n.status === 'failed' || n.status === 'cancelled') && !['Done', 'Cancelled'].includes(task.state) && (
               <button className="btn sm" onClick={() => call('retryNode', task.id, n.id).then(() => toast(`局部重试：${n.label}`, 'success')).catch((e) => toast(e.message, 'error'))} data-testid="retry-node"><Icon name="retry" size={12} /> 局部重试</button>
             )}</td>

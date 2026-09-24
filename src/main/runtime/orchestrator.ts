@@ -6,6 +6,7 @@ import type { MinistryId, ModelRef, Plan, Review, RunNode, Session, Subtask, Tas
 import { emptyUsage } from '../../shared/types';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL, agentName } from '../../shared/court';
 import { runAgent } from './agentLoop';
+import { LlmCallError } from '../llm/types';
 import { EXEC_OUTPUT_RULE } from './souls';
 import { ALL_TOOLS, READ_TOOLS } from './tools';
 import { TaskAbortedError, type Runtime } from './runtime';
@@ -35,6 +36,7 @@ export interface SubmitInput {
   templateId?: string;
   withDebate?: boolean;
   sessionId?: string;
+  effort?: string; // 思考程度 slider: a level name, 'default' or 'top'
 }
 
 export type SubmitResult = { kind: 'chat'; sessionId: string; reply: string } | { kind: 'task'; taskId: string };
@@ -44,7 +46,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
   const text = input.text.trim();
   if (!text) throw new Error('旨意内容为空');
   const tier: Tier = input.multiAgent ? input.tier : 'solo';
-  rt.audit.record('emperor', 'edict_submitted', { tier, chars: text.length, templateId: input.templateId, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
+  rt.audit.record('emperor', 'edict_submitted', { tier, chars: text.length, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
 
   if (tier === 'solo') {
     let session = input.sessionId ? rt.sessions.get(input.sessionId) : undefined;
@@ -56,7 +58,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     }
     session.messages.push({ role: 'user', content: text, at: now() });
     session.updatedAt = now();
-    const task = createTask(rt, { text, tier, title: text.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId });
+    const task = createTask(rt, { text, tier, title: text.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort });
     session.taskId = task.id;
     rt.emit({ type: 'session', session });
     void drive(rt, task.id);
@@ -93,14 +95,14 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     session.status = 'done';
     rt.emit({ type: 'session', session });
   }
-  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan), templateId: input.templateId });
+  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan), templateId: input.templateId, effort: input.effort });
   task.nodes.push({ id: 'triage', kind: 'triage', agentId: 'taizi', label: '太子分拣', status: 'done', attempts: 1, startedAt: now(), endedAt: now(), exitStatus: 'ok', output: triageOutput, usage: session.usage });
   rt.transition(task, 'Taizi', 'taizi', '太子接旨分拣');
   void drive(rt, task.id);
   return { kind: 'task', taskId: task.id };
 }
 
-export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string }): Task {
+export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string }): Task {
   const s = rt.settings;
   const est = rt.estimate(o.text, o.tier, o.model);
   const t: Task = {
@@ -110,7 +112,7 @@ export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: st
     planHistory: [], reviews: [], nodes: [], paused: false, changes: [], usage: emptyUsage(),
     budget: { maxTokens: s.budgets[o.tier], maxRejections: o.tier === 'full' ? s.maxRejections.full : s.maxRejections.lite, maxCostUsd: s.maxCostUsd },
     estimate: { tokens: est.tokens, costUsd: est.costUsd },
-    strongModel: o.model ?? undefined, withDebate: o.withDebate, sessionId: o.sessionId, templateId: o.templateId, lastActivityAt: now(), execRound: 1,
+    strongModel: o.model ?? undefined, withDebate: o.withDebate, sessionId: o.sessionId, templateId: o.templateId, effort: o.effort && o.effort !== 'default' ? o.effort : undefined, lastActivityAt: now(), execRound: 1,
   };
   rt.tasks.set(t.id, t);
   rt.audit.record('emperor', 'edict_issued', { id: t.id, title: t.title, tier: t.tier, estimate: t.estimate, budget: t.budget, workspace: t.workspace }, t.id);
@@ -167,6 +169,7 @@ async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Promise<st
   node.startedAt = now();
   node.endedAt = undefined;
   node.error = undefined;
+  node.errorInfo = undefined;
   rt.touch(t);
   rt.activity('log', `▶ ${node.label}（${agentName(node.agentId)}）${node.attempts > 1 ? ` 第 ${node.attempts} 次` : ''}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
   try {
@@ -190,8 +193,9 @@ async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Promise<st
     node.status = 'failed';
     node.exitStatus = 'error';
     node.error = (e as Error).message;
+    if (e instanceof LlmCallError) node.errorInfo = e.info;
     rt.activity('error', `✖ ${node.label} 失败：${node.error}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
-    rt.audit.record(node.agentId, 'node_failed', { node: node.id, error: truncate(node.error, 300), runId: node.runId }, t.id);
+    rt.audit.record(node.agentId, 'node_failed', { node: node.id, error: truncate(node.error, 300), kind: node.errorInfo?.kind ?? null, runId: node.runId }, t.id);
     rt.touch(t);
     throw new NodeFailedError(`${node.label} 失败：${node.error}`);
   }
@@ -770,6 +774,19 @@ export function retryNode(rt: Runtime, taskId: string, nodeId: string) {
   }
   rt.touch(t);
   void drive(rt, taskId);
+}
+
+/** Local retry of one failed node on another model (the choice sticks to this task + agent). */
+export function retryNodeWithModel(rt: Runtime, taskId: string, nodeId: string, ref: ModelRef) {
+  const t = rt.getTask(taskId);
+  const n = t.nodes.find((x) => x.id === nodeId);
+  if (!n) throw new Error('节点不存在');
+  if (!rt.providers.some((p) => p.id === ref.providerId && p.enabled)) throw new Error('所选模型服务不可用');
+  t.agentModels = { ...(t.agentModels ?? {}), [n.agentId]: ref };
+  if (n.agentId === 'solo' || n.kind === 'plan') t.strongModel = ref;
+  rt.audit.record('emperor', 'node_model_switch', { nodeId, agentId: n.agentId, providerId: ref.providerId, model: ref.model }, taskId);
+  rt.activity('human', `皇上改用 ${ref.model} 重试：${n.label}`, { taskId, nodeId });
+  retryNode(rt, taskId, nodeId);
 }
 
 function inferState(n: RunNode) {

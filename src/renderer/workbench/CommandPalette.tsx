@@ -25,7 +25,7 @@ export function CommandPalette() {
     if (ws) call<string[]>('listFiles').then(setFiles).catch(() => setFiles([]));
   }, [open, ws]);
   const commands: Item[] = useMemo(() => {
-    const panels: [PanelId, string][] = [['kanban', '旨意看板'], ['monitor', '省部调度'], ['memorials', '奏折阁'], ['templates', '旨库'], ['officials', '官员总览'], ['news', '天下要闻'], ['models', '模型配置'], ['skills', '技能配置'], ['sessions', '小任务 Sessions'], ['ceremony', '上朝仪式'], ['debate', '朝堂议政'], ['audit', '审计日志'], ['help', '使用说明']];
+    const panels: [PanelId, string][] = [['kanban', '旨意看板'], ['monitor', '省部调度'], ['memorials', '奏折阁'], ['templates', '旨库'], ['officials', '官员总览'], ['news', '天下要闻'], ['models', '模型配置'], ['skills', '技能与 MCP'], ['sessions', '小任务 Sessions'], ['ceremony', '上朝仪式'], ['debate', '朝堂议政'], ['audit', '审计日志'], ['help', '使用说明']];
     return [
       { label: '> 切换 工作台 / 朝堂', hint: '⌘J', run: () => setUI((u) => ({ mode: u.mode === 'court' ? 'workbench' : 'court' })) },
       { label: '> 打开工作区文件夹', hint: '⌘O', run: () => void call('openFolder') },
