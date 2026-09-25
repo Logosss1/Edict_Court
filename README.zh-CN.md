@@ -4,7 +4,7 @@
 
 > 下载：[最新版本（Releases）](https://github.com/Logosss1/Edict_Court/releases/latest) · 旧的 0.x 桌面封装版本见 [历史 Releases](https://github.com/Logosss1/Edict_Court/releases) 与 `v0.3.2` 及更早的标签。
 
-> 以 [Edict](https://github.com/cft0808/edict) 的三省六部多 Agent 协作为核心，参考 [Yan-Agent](https://github.com/ViaTumLab/Yan-Agent) 与 VS Code 的成熟能力，
+> 以 [Edict](https://github.com/cft0808/edict) 的三省六部多 Agent 协作为核心
 > 构建的 macOS（**仅 Apple Silicon / arm64**）桌面 AI 编程工具。Web 技术构建界面（Electron + React + Monaco + xterm.js + Phaser 3），原生桌面应用形态交付。
 
 ```
