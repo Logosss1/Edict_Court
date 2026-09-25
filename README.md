@@ -9,7 +9,7 @@ English | [中文](README.zh-CN.md)
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22C55E" alt="MIT License"></a>
 </p>
 
-Edict for Mac is a desktop AI coding tool for **Apple Silicon Macs (arm64 only)**. Its core is the multi-agent workflow of [EDICT](https://github.com/cft0808/edict) — the Three Departments and Six Ministries — and it borrows proven ideas from [Yan-Agent](https://github.com/ViaTumLab/Yan-Agent) and VS Code. The UI is built with Electron, React, Monaco, xterm.js and Phaser 3 and ships as a native desktop app.
+Edict for Mac is a desktop AI coding tool for **Apple Silicon Macs (arm64 only)**. Its core is the multi-agent workflow of [EDICT](https://github.com/cft0808/edict) — the Three Departments and Six Ministries
 
 ```
 Emperor issues an edict → Crown Prince triages (small talk is answered directly) → Secretariat plans
