@@ -44,7 +44,7 @@
 - **思考程度滑块**（v1.1）：刻度就是所选模型自己的档位（如 低 / 中 / 高 / 超高 / 最高，自定义可加 ultra），**最右 = 该模型最高档**；按协议自动翻译为 `reasoning_effort`、`output_config.effort`、`thinking.budget_tokens`、`enable_thinking` 等；每位官员可单独设置。
 - **可读的模型错误**（v1.1）：中转站「分组不支持该模型或接入方式」等配置错误不再盲目重试，直接给出原因、做法和「换模型重试」；「协议探测」一键找出哪种协议可用。
 - **HTML 预览与自测**（v1.1）：内置浏览器运行 Agent 生成的网页（控制台、视口尺寸、自动刷新、外网拦截）；Agent 用 `preview_page` 截图自验。
-- **技能与 MCP 中心**（v1.1）：技能增删改、启停、授权；MCP 使用与 Cursor 相同的 `mcp.json` 格式，支持 stdio / Streamable HTTP / SSE，逐工具风险与审批。
+- **技能与 MCP 中心**（v1.1）：技能增删改、启停、授权；MCP 使用 `mcp.json` 格式，支持 stdio / Streamable HTTP / SSE，逐工具风险与审批。
 - **多协议 / 多供应商**：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses；DeepSeek / GLM / Qwen / Kimi / OpenAI / Anthropic / 本地 Ollama 预设（只预填 base_url，模型 id 由你填写或从服务拉取；**没有任何硬编码 Key**）。
 - **Token 经济性**：强 / 经济模型分级路由；仓库地图 + 符号大纲代替全量源码；文件按需读取；子 Agent 只回传结构化结论；稳定系统前缀（Anthropic `cache_control`，OpenAI/DeepSeek 前缀缓存）；长对话滚动压缩；封驳次数与预算上限（超限升级御批）；下旨前预估、每任务 / 每官员实时统计。
 
