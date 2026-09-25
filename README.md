@@ -32,7 +32,7 @@ Both modes are projections of the same main-process state: tasks, approvals, res
 
 | Tier | Flow | Use for |
 |---|---|---|
-| **Solo** | One agent talks to you directly, reads/writes files, runs commands | Simple tasks, fewest tokens |
+| **Solo** | One agent talks to you directly, reads/writes files, runs commands | Simple tasks |
 | **Court Lite** (default) | Triage → plan → review (1 rejection max, then escalates to you) → ministries → report | Everyday work |
 | **Full Court** | The full court; optional **court debate**; **plan review where you can edit the plan**; parallel ministries with a dependency graph; result review; rejection loop (max 3) | Complex, long tasks |
 
