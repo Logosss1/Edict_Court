@@ -75,7 +75,7 @@ npm run package:mac      # 组装 Edict.app（arm64）、ad-hoc 签名、生成 
 | 端到端 UI · v1.1（同上） | 思考滑块 → 请求体、503 错误卡与换模型重试、协议探测、HTML 预览（webview / 控制台 / 外网拦截 / 自动刷新）、离屏截图、Agent `preview_page`、技能中心、MCP 确认框 → stdio 连接 → 官员调用 MCP | 19/19 ✅ |
 | DMG 结构校验 | 解码 UDIF → 挂载 ISO → 可执行位、框架符号链接、Applications 链接、签名封印、二进制一致 | ✅ |
 | **真实模型** | `scripts/verify-real.ts`（需你的 Key） | ⏳ 未在本构建环境执行（无可用 Key / 无外网模型） |
-| **真实 Mac 宿主** | 安装、Gatekeeper、Retina 渲染、BSD `script` 终端 | ⏳ 未验证（构建环境为 Linux 容器） |
+| **真实 Mac 主机** | 安装、Gatekeeper、Retina 渲染、BSD `script` 终端 | ⏳ 未验证（构建环境为 Linux 容器） |
 
 截图全部来自 Linux + Xvfb，**不是 Mac 截图**。详见 [docs/STATUS.md](docs/STATUS.md)。
 
