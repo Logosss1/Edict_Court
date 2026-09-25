@@ -65,19 +65,6 @@ npm run package:mac      # 组装 Edict.app（arm64）、ad-hoc 签名、生成 
 
 `package:mac` 需要官方的 `electron-v44.4.5-darwin-arm64.zip`（放在 `deps/`，或设置 `ELECTRON_DARWIN_ZIP`）。在 macOS 上使用 `codesign` 与 `hdiutil`；在 Linux 上需要 `PATH` 中有 rcodesign 与 libdmg-hfsplus 的 `dmg`（或设置 `RCODESIGN` / `DMG_TOOL`），生成 ISO9660+RockRidge → UDIF。端到端测试：`npm run e2e` 与 `npm run e2e:features`（Playwright；Linux 下用 `xvfb-run`）。
 
-## 验证状态（诚实标注）
-
-| 类别 | 内容 | 结果 |
-|---|---|---|
-| 单元测试 | SSE、JSON 抽取、权限策略、工作区边界/搜索替换/大纲、RSS、方案校验、审计哈希链、端点解析、美术导入；思考档位与参数、错误分类、预览文件服务与 URL 策略、MCP 配置/变量/密钥抽取 | 18/18 ✅ |
-| 集成测试（**mock LLM**，真实 SSE 线协议；MCP 为**真实子进程 / 真实本地 HTTP 服务**） | 三种协议下的 Court Lite + 封驳循环、Full Court + 涂改方案 + 成果返工、失败节点局部重试、重启恢复、叫停/朱批/取消、路径越界与高风险审批、议政插话、Solo、预算门；思考参数进请求体与自动回退、503 不重试 + 换模型重试、协议探测、`preview_page`、MCP stdio / Streamable HTTP / SSE 与权限 | 23/23 ✅ |
-| 端到端 UI（**mock LLM**，Linux + Xvfb 上运行真实 Electron 应用） | 通过 UI 配置模型、下旨、审批、御批、Editor/终端/搜索/问题面板、朝堂四场景、奏折批阅浮层中涂改方案、议政插话、Solo、全部面板、审计校验、Key 不落盘 | 20/20 ✅ |
-| 端到端 UI · v1.1（同上） | 思考滑块 → 请求体、503 错误卡与换模型重试、协议探测、HTML 预览（webview / 控制台 / 外网拦截 / 自动刷新）、离屏截图、Agent `preview_page`、技能中心、MCP 确认框 → stdio 连接 → 官员调用 MCP | 19/19 ✅ |
-| DMG 结构校验 | 解码 UDIF → 挂载 ISO → 可执行位、框架符号链接、Applications 链接、签名封印、二进制一致 | ✅ |
-| **真实模型** | `scripts/verify-real.ts`（需你的 Key） | ⏳ 未在本构建环境执行（无可用 Key / 无外网模型） |
-| **真实 Mac 主机** | 安装、Gatekeeper、Retina 渲染、BSD `script` 终端 | ⏳ 未验证（构建环境为 Linux 容器） |
-
-截图全部来自 Linux + Xvfb，**不是 Mac 截图**。详见 [docs/STATUS.md](docs/STATUS.md)。
 
 ## 文档
 
