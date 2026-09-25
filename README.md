@@ -24,7 +24,7 @@ Emperor issues an edict → Crown Prince triages (small talk is answered directl
 | Workbench (default) | Court (pixel art) |
 |---|---|
 | ![Workbench](docs/screenshots/03-workbench-final-gate.png) | ![Hall of Supreme Harmony](docs/screenshots/08-court-taihe-presenter.png) |
-| Cursor-style edict box (⌘L to hide/show) · model / tier / multi-agent switch · live activity stream · approve / reject · editor | You sit on the throne; each official's animation is the agent's real state; click an official to see their work and leave a vermilion note; memorial review overlay |
+| Edict box (⌘L to hide/show) · model / tier / multi-agent switch · live activity stream · approve / reject · editor | You sit on the throne; each official's animation is the agent's real state; click an official to see their work and leave a vermilion note; memorial review overlay |
 
 Both modes are projections of the same main-process state: tasks, approvals, results and audit are identical and sync in both directions.
 
@@ -50,7 +50,7 @@ Both modes are projections of the same main-process state: tasks, approvals, res
 - **Thinking-level slider.** Its steps are the selected model's own levels; **the far right is always that model's highest level**. Translated per protocol (`reasoning_effort`, `reasoning.effort`, `output_config.effort`, `thinking.budget_tokens`, `enable_thinking`, …), configurable per model and per official, with custom levels such as `ultra`.
 - **Readable model errors.** Configuration errors such as a relay's "this group doesn't support the model or access method" are no longer retried blindly; an error card explains the cause and offers **retry with another model**. **Protocol probe** tests Chat / Responses / Messages with and without thinking parameters.
 - **HTML preview and self-testing.** A sandboxed built-in browser runs generated pages with a console, device sizes, auto-reload and outbound-network blocking; agents verify their pages with the `preview_page` tool, which returns errors and a screenshot.
-- **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the same `mcp.json` format Cursor uses (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
+- **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the  `mcp.json` format (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
 
 ## Install (Apple Silicon)
 
