@@ -1,4 +1,4 @@
-# Edict for Mac · A pixel-court AI coding workstation
+# Edict for Mac · A AI coding workstation
 
 English | [中文](README.zh-CN.md)
 
