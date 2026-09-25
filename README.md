@@ -1,4 +1,4 @@
-# Edict for Mac · A AI coding workstation
+# Edict for Mac · A Multi-Agent Collaborative Programming Workstation
 
 English | [中文](README.zh-CN.md)
 
