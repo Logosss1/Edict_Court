@@ -68,19 +68,6 @@ npm run package:mac      # assemble Edict.app (arm64), ad-hoc sign, create zip +
 
 `package:mac` needs the official `electron-v44.4.5-darwin-arm64.zip` in `deps/` (or `ELECTRON_DARWIN_ZIP`). On macOS it signs with `codesign` and builds the DMG with `hdiutil`; on Linux it needs `rcodesign` and libdmg-hfsplus `dmg` on `PATH` (or `RCODESIGN` / `DMG_TOOL`). End-to-end tests: `npm run e2e` and `npm run e2e:features` (Playwright; on Linux run under `xvfb-run`).
 
-## Verification status
-
-| Kind | Result |
-|---|---|
-| Unit tests | 18/18 ✅ |
-| Integration tests (**mock LLM** over real SSE wire formats; MCP against a real child process and real local HTTP servers) | 23/23 ✅ |
-| End-to-end UI (**mock LLM**, real Electron app on Linux + Xvfb) | 20/20 + 19/19 ✅ |
-| DMG structure check | ✅ |
-| **Real model service** | ⏳ not run in the build environment (`scripts/verify-real.ts` needs your key) |
-| **Real Mac host** | ⏳ not yet verified (built on Linux) |
-
-Screenshots come from Linux + Xvfb, **not from a Mac**. Details: [docs/STATUS.md](docs/STATUS.md) (Chinese).
-
 ## Documentation (Chinese)
 
 [STATUS](docs/STATUS.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TESTING](docs/TESTING.md) · [ART_PIPELINE](docs/ART_PIPELINE.md) · [INSTALL_MAC](docs/INSTALL_MAC.md) · [AI_HANDOFF](AI_HANDOFF.md) · [RELEASE_NOTES](RELEASE_NOTES.md)
