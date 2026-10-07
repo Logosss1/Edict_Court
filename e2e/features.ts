@@ -261,6 +261,32 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     ok('设计操作全程审计', ['design_saved', 'design_copied', 'design_activated'].every((a) => audit.some((e) => e.action === a)));
   }
 
+  if (want('sidebar')) {
+    // left activity bar: 网页预览 / 协同设计 / 进入朝堂, and the grouped 军机处 list
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: null }));
+    await win.click('[data-testid=ab-court]');
+    await win.waitForSelector('.court-nav-h');
+    const groups = await win.$$eval('.court-nav-h', (els) => els.map((e) => e.textContent));
+    ok('军机处侧栏按 政务 / 配置 / 记录 分组', groups.join(',') === '政务,配置,记录', groups.join(','));
+    await shot('42-sidebar-court-nav');
+    await win.click('[data-testid=ab-preview]');
+    await win.waitForSelector('[data-testid=preview-side]');
+    await win.waitForTimeout(400);
+    const htmlFiles = await win.$$eval('.ps-file .ps-name', (els) => els.map((e) => e.textContent));
+    ok('网页预览侧栏列出工作区 HTML 文件', htmlFiles.includes('index.html'), htmlFiles.join(','));
+    await shot('43-sidebar-preview');
+    await win.click('.ps-file >> text=index.html');
+    await win.waitForTimeout(800);
+    ok('点击即在预览标签页打开', (await win.locator('.tab >> text=预览 · index.html').count()) > 0 || (await win.locator('text=预览 · index.html').count()) > 0);
+    await win.click('[data-testid=ab-designs]');
+    await win.waitForSelector('[data-testid=designs-panel]');
+    ok('活动栏「协同设计」直达设计面板', true);
+    await win.click('[data-testid=ab-court-mode]');
+    await win.waitForTimeout(600);
+    ok('活动栏「进入朝堂」切换到朝堂', await win.locator('[data-testid=court]').isVisible());
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
+  }
+
   const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));
   ok('API Key 未出现在审计/状态/设置/mcp.json 中', !leak);
   ok('无前端运行时错误', errors.filter((e) => !/ResizeObserver|Autofocus|Electron Security|favicon|cdn\.example\.com|ERR_BLOCKED|undefinedFn|broken/.test(e)).length === 0, errors.slice(0, 3).join(' | '));

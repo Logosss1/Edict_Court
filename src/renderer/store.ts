@@ -31,7 +31,7 @@ export interface UIState {
   selectedTaskId: string | null;
   tabs: Tab[];
   activeTab: string | null;
-  sideView: 'explorer' | 'search' | 'git' | 'court' | null;
+  sideView: 'explorer' | 'search' | 'git' | 'court' | 'preview' | null;
   bottomOpen: boolean;
   bottomTab: 'terminal' | 'problems' | 'output' | 'audit';
   composerHidden: boolean;

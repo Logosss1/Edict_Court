@@ -200,6 +200,17 @@ const ok = (step: string, cond: boolean, note?: string) => {
   await shot('15-court-ceremony');
   await win.waitForTimeout(4500);
 
+  // 10b. 奏折回放: replay the finished Full Court edict in 太和殿, from its own records
+  await win.selectOption('[data-testid=court-replay]', t2.id);
+  await win.waitForTimeout(5200);
+  await shot('15b-court-replay');
+  let replayEnded = false;
+  for (let i = 0; i < 160 && !replayEnded; i++) {
+    await win.waitForTimeout(500);
+    replayEnded = (await win.inputValue('[data-testid=court-replay]')) === '';
+  }
+  ok('奏折回放：在太和殿重演已结案旨意并自动结束', replayEnded);
+
   // 11. back to workbench: panels
   await win.keyboard.press('Control+J').catch(() => {});
   await win.click('text=回工作台 ⌘J').catch(() => {});

@@ -1,0 +1,134 @@
+{
+ "zhezi_pending": [
+  28,
+  36
+ ],
+ "zhezi_taizi": [
+  28,
+  36
+ ],
+ "zhezi_zhongshu": [
+  28,
+  36
+ ],
+ "zhezi_menxia": [
+  28,
+  36
+ ],
+ "zhezi_assigned": [
+  28,
+  36
+ ],
+ "zhezi_doing": [
+  28,
+  36
+ ],
+ "zhezi_review": [
+  28,
+  36
+ ],
+ "zhezi_done": [
+  28,
+  36
+ ],
+ "zhezi_blocked": [
+  28,
+  36
+ ],
+ "zhezi_cancelled": [
+  28,
+  36
+ ],
+ "scroll": [
+  40,
+  20
+ ],
+ "fan": [
+  48,
+  120
+ ],
+ "seal": [
+  24,
+  24
+ ],
+ "desk": [
+  128,
+  52
+ ],
+ "cloud": [
+  112,
+  36
+ ],
+ "cloud2": [
+  160,
+  36
+ ],
+ "ring": [
+  56,
+  20
+ ],
+ "lantern": [
+  64,
+  72
+ ],
+ "glow": [
+  96,
+  96
+ ],
+ "flame": [
+  24,
+  12
+ ],
+ "smoke": [
+  144,
+  48
+ ],
+ "flag": [
+  160,
+  64
+ ],
+ "cat": [
+  256,
+  24
+ ],
+ "bird": [
+  48,
+  12
+ ],
+ "rain": [
+  2,
+  10
+ ],
+ "snow": [
+  4,
+  4
+ ],
+ "petal": [
+  6,
+  4
+ ],
+ "dept_hubu": [
+  220,
+  140
+ ],
+ "dept_libu": [
+  220,
+  140
+ ],
+ "dept_bingbu": [
+  220,
+  140
+ ],
+ "dept_xingbu": [
+  220,
+  140
+ ],
+ "dept_gongbu": [
+  220,
+  140
+ ],
+ "dept_libu_hr": [
+  220,
+  140
+ ]
+}

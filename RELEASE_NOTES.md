@@ -2,6 +2,25 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 1.2.1
+
+**What's new**
+- **Collaboration designs**: the Three Departments and Six Ministries flow is now a versioned design you can copy, edit, pin per edict and roll back. Running edicts keep the version they started with.
+- **A finer Tang court**: all four scenes redrawn at twice the detail in Tang style (hip roofs with 鸱尾, deep brackets, vermilion columns and white walls, lotus floor tiles, a 青绿山水 screen behind the throne, que towers at 承天门). Officials wear Tang rank robes and 幞头 and have 29 animations; what they do follows what the agent is doing (writing, reviewing, sealing, dispatching, abacus, scheming, weighing the law, measuring…). Still pixel art and 2D, so it stays light.
+- **Things to do in the court** (none of them change how edicts run):
+  - Hover an official for their current edict, model and token use.
+  - Click an official for 召见, past edicts, 赏赐 / 训诫 (animation only) or 催办 (adds a 朱批 note).
+  - Click scene objects to open panels: notice board → 天下要闻, throne table → 奏折阁, memorial wall → 旨意看板, ministry desk → that ministry's edicts.
+  - Walk between halls through the doors. The emperor can walk with the arrow keys or by clicking the floor; Space next to an official summons them.
+  - **奏折回放** re-enacts a finished edict's journey in 太和殿 from its records.
+  - Day and night follow the clock. Weather can be clear, rain, snow or falling petals. Bell, drum and birdsong are off by default.
+  - Small surprises: a cat on the wall, birds, lanterns you can light, incense you can add.
+- **Left sidebar**: new entries for 网页预览 (workspace HTML files or a dev-server URL), 协同设计 and 进入朝堂. The 军机处 list is grouped into 政务 / 配置 / 记录, and new items carry a 新 badge.
+
+**Install**: download `Edict-1.2.1-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data folder is kept when you install over 1.x.
+
+**Verified**: 48/48 unit + integration tests, 21/21 + 32/32 end-to-end UI checks and the court smoke test on Linux + Xvfb (mock LLM). Not yet verified with a real model service.
+
 ## 1.1.0
 
 **What's new**
