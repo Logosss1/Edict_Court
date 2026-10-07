@@ -2,6 +2,18 @@
 // Single source of truth: the runtime in the main process owns all state; the
 // workbench and the pixel court are two projections of the same data.
 
+import type { CollabDesign, DesignPin, DesignInfo } from './design';
+export type { CollabDesign, DesignPin, DesignInfo } from './design';
+
+/** Interpreter state of a non-native design run. */
+export interface FlowRun {
+  cursor: number; // index of the step (group) currently executing
+  iter: Record<string, number>; // per-step iteration (bumped when a review loops back)
+  rejections: Record<string, number>; // per review/gate step
+  skipped?: string[];
+  lastReview?: Record<string, string>; // review step id → node whose verdict was applied
+}
+
 export type TaskState =
   | 'Pending'
   | 'Taizi'
@@ -101,7 +113,8 @@ export type NodeKind =
   | 'exec'
   | 'summary'
   | 'result_review'
-  | 'solo';
+  | 'solo'
+  | 'step';
 
 export type NodeStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'waiting' | 'cancelled';
 
@@ -123,6 +136,10 @@ export interface RunNode {
   error?: string;
   errorInfo?: ErrorInfo;
   effort?: string; // thinking level actually sent
+  stepId?: string; // 协同设计 step this node runs (interpreter)
+  iter?: number; // loop iteration of that step
+  roleId?: string; // custom role id (agentId then holds the role's court avatar)
+  roleName?: string;
   output?: string; // structured conclusion (JSON string or text)
   usage?: Usage;
 }
@@ -200,6 +217,10 @@ export interface Task {
   strongModel?: ModelRef; // chosen in the composer
   effort?: string; // 思考程度 chosen in the composer (applies to strong-class agents & Solo)
   agentModels?: Partial<Record<AgentId, ModelRef>>; // task-scoped model overrides (e.g. 换模型重试)
+  roleModels?: Record<string, ModelRef>; // same, for custom collaboration-design roles
+  design?: DesignPin; // 协同设计 pinned at creation (absent = built-in 三省六部, native engine)
+  designSpec?: CollabDesign; // frozen snapshot of a non-native design (switch / rollback never affects this task)
+  flowRun?: FlowRun; // interpreter cursor for non-native designs
   debateId?: string;
   withDebate?: boolean;
   progress?: TaskProgress;
@@ -448,6 +469,7 @@ export interface Settings {
   ceremonyShownOn?: string; // yyyy-mm-dd
   composerHidden: boolean;
   composerEffort?: string;
+  defaultDesign?: string; // design id preselected in the composer
   previewAllowNetwork?: boolean; // HTML 预览可加载外部网络资源（默认仅本地） // last 思考程度 slider value ('default' | 'top' | level)
   language: 'zh';
 }
@@ -465,6 +487,7 @@ export interface Snapshot {
   providers: ProviderConfig[];
   skills: SkillInfo[];
   mcp: McpServerState[];
+  designs: DesignInfo[];
   templates: Template[];
   workspace: string | null;
   dataDir: string;
@@ -496,7 +519,8 @@ export type RuntimeEvent =
   | { type: 'toast'; level: 'info' | 'warn' | 'error'; message: string }
   | { type: 'menu'; command: string; arg?: unknown }
   | { type: 'preview_blocked'; url: string }
-  | { type: 'mcp'; servers: McpServerState[] };
+  | { type: 'mcp'; servers: McpServerState[] }
+  | { type: 'designs'; designs: DesignInfo[] };
 
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 });
 

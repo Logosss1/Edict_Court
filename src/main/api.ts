@@ -8,7 +8,8 @@ import { createDebate, runDebate, interject, pauseDebate, concludeDebate } from 
 import { readSkill, saveSkill, addRemoteSkill, removeSkill, refreshNews, setSkillEnabled, duplicateSkill, importSkillFolder } from './runtime/extras';
 import { systemPromptFor } from './runtime/agentLoop';
 import { parseMcpConfig } from './mcp/manager';
-import type { McpServerPolicy, McpToolPolicy } from '../shared/types';
+import type { McpServerPolicy, McpToolPolicy, CollabDesign } from '../shared/types';
+import { validateDesign } from '../shared/design';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gitStatus, gitShowHead, gitStage, gitUnstage, gitCommit, gitLog, gitInit } from './services/git';
@@ -83,6 +84,18 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFo
     },
     /** What an official actually sees: soul + skill index (full text is loaded on demand via load_skill). */
     skillAgentView: (agentId: AgentId) => ({ system: systemPromptFor(rt, agentId), mcpTools: rt.mcp.toolSpecsFor(agentId, false).map((t) => t.name) }),
+
+    // ── 协同设计
+    designList: () => rt.designs.list(),
+    designGet: (id: string, version?: number) => rt.designs.get(id, version),
+    designValidate: (d: unknown) => {
+      const v = validateDesign(d);
+      return { ok: v.ok, errors: v.errors, warnings: v.warnings };
+    },
+    designSave: (d: Omit<CollabDesign, 'version' | 'createdAt' | 'id'> & { id?: string }, note?: string) => rt.designs.save(d, note),
+    designCopy: (id: string, opts?: { tier?: 'lite' | 'full'; name?: string }) => rt.designs.copy(id, opts),
+    designActivate: (id: string, version: number) => rt.designs.activate(id, version),
+    designSetStatus: (id: string, status: 'active' | 'disabled') => rt.designs.setStatus(id, status),
 
     // ── MCP
     mcpList: () => rt.mcp.list(),

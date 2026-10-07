@@ -27,6 +27,16 @@ export interface AgentRunOptions {
   label?: string;
   onText?: (delta: string) => void;
   signal?: AbortSignal;
+  /** A custom 协同设计 role. `agentId` is then the role's court avatar (status / court display only). */
+  role?: RoleRun;
+}
+
+export interface RoleRun {
+  key: string; // unique runtime identity, e.g. r:<designId>:<roleId> — used for the agent lock
+  id: string;
+  name: string;
+  prompt: string;
+  modelClass: 'strong' | 'economy';
 }
 
 export interface AgentRunResult {
@@ -37,10 +47,10 @@ export interface AgentRunResult {
   steps: number;
 }
 
-export function systemPromptFor(rt: Runtime, agentId: AgentId): string {
+export function systemPromptFor(rt: Runtime, agentId: AgentId, role?: RoleRun): string {
   const skills = rt.skills.filter((s) => s.enabled !== false && (s.agents === 'all' || s.agents.includes(agentId)));
   const skillIdx = skills.length ? `\n\n可用技能（需要时用 load_skill 加载全文）：\n${skills.map((s) => `- ${s.name}：${s.description}`).join('\n')}` : '';
-  return SOULS[agentId] + skillIdx;
+  return (role ? role.prompt : SOULS[agentId]) + skillIdx;
 }
 
 const msgTokens = (ms: LlmMessage[]) => ms.reduce((n, m) => n + estimateTokens(m.content) + (m.toolCalls ? estimateTokens(JSON.stringify(m.toolCalls.map((t) => t.args))) : 0) + 4, 0);
@@ -54,7 +64,7 @@ function effortRequest(o: AgentRunOptions, model: ModelRef, withEffort: boolean)
   const { rt, agentId, task } = o;
   const info = rt.modelInfo(model);
   let maxTokens = o.maxTokens;
-  const eff = withEffort ? rt.resolveEffort(agentId, model, task) : undefined;
+  const eff = withEffort ? rt.resolveEffort(agentId, model, task, o.role?.modelClass) : undefined;
   const rp = eff?.level ? reasoningParams(eff.cfg, eff.level, eff.protocol) : { body: {} as Record<string, unknown> };
   if (rp.minMaxTokens) maxTokens = Math.max(maxTokens ?? 0, rp.minMaxTokens);
   if (info?.maxOutputTokens && maxTokens) maxTokens = Math.min(maxTokens, info.maxOutputTokens);
@@ -181,7 +191,8 @@ async function maybeCompress(o: AgentRunOptions, model: ModelRef, messages: LlmM
 
 export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
   const { rt, agentId, task, node } = o;
-  const model = o.model ?? rt.resolveModel(agentId, task);
+  const role = o.role;
+  const model = o.model ?? rt.resolveModel(agentId, task, role);
   const provider = rt.providerRuntime(model.providerId);
   const runId = uid('run-');
   if (node) {
@@ -189,12 +200,16 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
     node.model = model.model;
     node.providerId = model.providerId;
     node.protocol = provider.config.protocol;
-    node.effort = rt.resolveEffort(agentId, model, task).level;
+    node.effort = rt.resolveEffort(agentId, model, task, role?.modelClass).level;
+    if (role) {
+      node.roleId = role.id;
+      node.roleName = role.name;
+    }
     node.errorInfo = undefined;
     if (task) rt.touch(task);
   }
-  const effort = rt.resolveEffort(agentId, model, task).level;
-  const system = systemPromptFor(rt, agentId);
+  const effort = rt.resolveEffort(agentId, model, task, role?.modelClass).level;
+  const system = systemPromptFor(rt, agentId, role);
   // built-in tools + MCP tools granted to this agent (read-only toolsets only see MCP tools marked read)
   const tools = o.tools?.length ? [...o.tools.map((t) => TOOL_SPECS[t]), ...rt.mcp.toolSpecsFor(agentId, !o.tools.includes('write_file'))] : undefined;
   let messages: LlmMessage[] = [...(o.history ?? []), { role: 'user', content: o.prompt }];
@@ -202,11 +217,11 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
   const signal = o.signal ?? (task ? rt.controller(task.id).signal : undefined);
   const busy = rt.agents.get(agentId);
   if (busy && busy.status !== 'idle' && busy.taskId !== task?.id) {
-    rt.activity('log', `${agentName(agentId)} 正在处理其他事务，排队等候`, { taskId: task?.id, agentId, nodeId: node?.id });
+    if (!role) rt.activity('log', `${agentName(agentId)} 正在处理其他事务，排队等候`, { taskId: task?.id, agentId, nodeId: node?.id });
   }
-  const release = await rt.acquireAgent(agentId, signal);
+  const release = await rt.acquireAgent(role?.key ?? agentId, signal);
   rt.setAgent(agentId, { status: 'thinking', taskId: task?.id, nodeId: node?.id, activity: o.label ?? '处理中' });
-  rt.audit.record(agentId, 'run_start', { runId, model: model.model, provider: provider.config.name, protocol: provider.config.protocol, effort: effort ?? null, node: node?.id }, task?.id);
+  rt.audit.record(agentId, 'run_start', { runId, model: model.model, provider: provider.config.name, protocol: provider.config.protocol, effort: effort ?? null, node: node?.id, role: role?.key ?? null }, task?.id);
   let finalText = '';
   let steps = 0;
   let pendingResp: ReturnType<Runtime['pendingAnnotations']> | null = null;

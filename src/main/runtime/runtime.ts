@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
-  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult,
+  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult, ModelClass,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENTS, AGENT_MAP, STATE_LABEL, agentName, TERMINAL } from '../../shared/court';
@@ -17,6 +17,7 @@ import { clampLevel, effectiveConfig, reasoningParams } from '../../shared/reaso
 import { classifyLlmError } from '../llm/types';
 import { Workspace } from '../services/workspace';
 import { McpManager } from '../mcp/manager';
+import { DesignStore } from './designs';
 import type { FetchLike, ProviderRuntime } from '../llm/types';
 import { listRemoteModels, streamLlm } from '../llm/adapters';
 import { PROVIDER_PRESETS } from '../llm/presets';
@@ -90,6 +91,7 @@ export class Runtime {
   providers: ProviderConfig[];
   skills: SkillInfo[] = [];
   readonly mcp: McpManager = new McpManager(this);
+  readonly designs: DesignStore = new DesignStore(this);
   totals: Usage = emptyUsage();
   seqByDay: Record<string, number> = {};
   workspace: Workspace | null = null;
@@ -113,10 +115,10 @@ export class Runtime {
 
   // hooks wired by orchestrator module (avoid circular imports)
   driveHook: (taskId: string) => void = () => {};
-  private agentLocks = new Map<AgentId, Promise<void>>();
+  private agentLocks = new Map<string, Promise<void>>();
 
   /** One official handles one piece of work at a time (keeps per-agent observability truthful). */
-  async acquireAgent(id: AgentId, signal?: AbortSignal): Promise<() => void> {
+  async acquireAgent(id: string, signal?: AbortSignal): Promise<() => void> {
     const prev = this.agentLocks.get(id) ?? Promise.resolve();
     let release!: () => void;
     const mine = new Promise<void>((r) => (release = r));
@@ -163,6 +165,7 @@ export class Runtime {
         usage: stats?.usage ?? emptyUsage(), completed: stats?.completed ?? 0, sessions: stats?.sessions ?? 0, errors: stats?.errors ?? 0,
       });
     }
+    this.designs.load();
     this.recoverInterrupted();
     if (this.settings.lastWorkspace && fs.existsSync(this.settings.lastWorkspace)) {
       try {
@@ -255,6 +258,7 @@ export class Runtime {
       providers: this.providers,
       skills: this.skills,
       mcp: this.mcp.list(),
+      designs: this.designs.list(),
       templates: TEMPLATES,
       workspace: this.workspace?.root ?? null,
       dataDir: this.opts.dataDir,
@@ -379,14 +383,20 @@ export class Runtime {
     return { config: cfg, apiKey: this.opts.secrets.get(`provider:${cfg.id}`) ?? '' };
   }
 
-  resolveModel(agentId: AgentId, task?: Task): ModelRef {
+  /** Model for a call. `role` = a custom collaboration-design role (per-official overrides do not apply to it). */
+  resolveModel(agentId: AgentId, task?: Task, role?: { id: string; modelClass: ModelClass }): ModelRef {
     const valid = (r?: ModelRef | null): r is ModelRef => !!r && !!r.model && this.providers.some((p) => p.id === r.providerId && p.enabled);
-    const taskOverride = task?.agentModels?.[agentId];
-    if (valid(taskOverride)) return taskOverride;
-    const override = this.settings.agentModels[agentId];
-    if (valid(override)) return override;
-    const cls = AGENT_MAP[agentId]?.modelClass ?? 'economy';
-    if ((cls === 'strong' || agentId === 'solo') && valid(task?.strongModel)) return task!.strongModel!;
+    if (role) {
+      const tr = task?.roleModels?.[role.id];
+      if (valid(tr)) return tr;
+    } else {
+      const taskOverride = task?.agentModels?.[agentId];
+      if (valid(taskOverride)) return taskOverride;
+      const override = this.settings.agentModels[agentId];
+      if (valid(override)) return override;
+    }
+    const cls = role ? role.modelClass : (AGENT_MAP[agentId]?.modelClass ?? 'economy');
+    if ((cls === 'strong' || (!role && agentId === 'solo')) && valid(task?.strongModel)) return task!.strongModel!;
     const r = this.settings.routing;
     if (valid(r[cls])) return r[cls]!;
     if (valid(r.strong)) return r.strong!;
@@ -401,13 +411,13 @@ export class Runtime {
   noReasoning = new Set<string>();
 
   /** 思考程度 for one call: per-agent override › task slider (strong-class / solo) › model default, clamped to the model's ladder. */
-  resolveEffort(agentId: AgentId, model: ModelRef, task?: Task): { level?: string; cfg: ReasoningConfig; protocol: Protocol } {
+  resolveEffort(agentId: AgentId, model: ModelRef, task?: Task, roleClass?: ModelClass): { level?: string; cfg: ReasoningConfig; protocol: Protocol } {
     const p = this.providers.find((x) => x.id === model.providerId);
     const protocol = (p?.protocol ?? 'openai-chat') as Protocol;
     const cfg = effectiveConfig(this.modelInfo(model)?.reasoning, model.model, protocol);
     if (this.noReasoning.has(`${model.providerId}/${model.model}`)) return { cfg, protocol };
-    const cls = AGENT_MAP[agentId]?.modelClass ?? 'economy';
-    const want = this.settings.agentEffort?.[agentId] || ((cls === 'strong' || agentId === 'solo') ? task?.effort : undefined) || 'default';
+    const cls = roleClass ?? AGENT_MAP[agentId]?.modelClass ?? 'economy';
+    const want = (roleClass ? undefined : this.settings.agentEffort?.[agentId]) || ((cls === 'strong' || (!roleClass && agentId === 'solo')) ? task?.effort : undefined) || 'default';
     return { level: clampLevel(cfg, want), cfg, protocol };
   }
 
