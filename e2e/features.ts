@@ -218,6 +218,49 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     ok('Agent 调用 MCP 工具 mcp__demo__echo 并拿到结果', t.state === 'Done' && !!res && res.content.includes('朕知道了'), `${t.state} · ${res?.content?.slice(0, 80) ?? acts.filter((a) => a.kind === 'tool_result').map((a) => a.content.slice(0, 60)).join(' | ')}`);
   }
 
+  // ── 5. 协同设计（Phase 1）
+  if (want('designs')) {
+    await win.evaluate(() => (window as any).__openPanel('designs'));
+    await win.waitForSelector('[data-testid=designs-panel]');
+    ok('协同设计面板：内置三省六部只读并展示流程', (await win.textContent('[data-testid=design-flow]'))!.includes('门下审议'));
+    await win.click('[data-testid=design-copy-full]');
+    await win.waitForTimeout(500);
+    const list: any[] = await inv('designList');
+    const copy = list.find((d) => !d.native);
+    ok('复制 Full Court 为我的设计（v1）', !!copy && copy.activeVersion === 1, copy?.name);
+    await win.click('[data-testid=design-set-default]');
+    await win.waitForTimeout(300);
+    await shot('40-designs-panel');
+    await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
+    await win.waitForSelector('[data-testid=design-pick]');
+    const picked = await win.$eval('[data-testid=design-pick]', (e) => (e as HTMLSelectElement).value);
+    ok('下旨框出现协同设计选择，默认选中刚复制的设计', picked === copy.id);
+    ok('选择自定义设计时隐藏 Solo/Lite/Full 档位', !(await win.isVisible('[data-testid=composer] .tier-seg')));
+    await win.fill('#composer-input', 'DESIGNTEST 写一个 greet 函数并测试');
+    await win.check('text=直接下旨').catch(() => {});
+    await win.click('[data-testid=composer-send]');
+    const t1 = await waitTask((x) => x.edict.includes('DESIGNTEST') && (x.gate?.kind === 'plan' || x.state === 'Blocked'), 30000);
+    ok('按复制的设计下旨：钉住版本并走到方案御览', t1.design?.id === copy.id && t1.design?.version === 1 && t1.gate?.kind === 'plan', `${t1.state} ${t1.blockedReason ?? ''}`);
+    // a new version while the edict waits does not affect it
+    const spec: any = await inv('designGet', copy.id);
+    await inv('designSave', { ...spec, steps: spec.steps.filter((x: any) => x.id !== 'dispatch') }, 'E2E: 去掉派发');
+    await win.click('[data-testid=gate-approve]');
+    // (this E2E runs with finalGate off, which the copy inherited → the design ends without 御批)
+    const t2 = await waitTask((x) => x.id === t1.id && ['Done', 'Blocked'].includes(x.state), 40000);
+    ok('设计更新为 v2 后，进行中的旨意仍按 v1（含尚书派发、六部执行、门下审议成果）完成', t2.state === 'Done' && t2.design.version === 1 && t2.nodes.some((n: any) => n.kind === 'dispatch' && n.status === 'done') && t2.nodes.some((n: any) => n.kind === 'result_review' && n.status === 'done'), t2.blockedReason);
+    await shot('41-design-task');
+    // rollback through the UI
+    await win.evaluate(() => (window as any).__openPanel('designs'));
+    await win.click(`[data-testid=design-item-${copy.id}]`);
+    await win.click('.design-versions .ver >> text=v1');
+    await win.click('[data-testid=design-activate]');
+    await win.waitForTimeout(300);
+    const after: any[] = await inv('designList');
+    ok('版本回滚：v2 → v1', after.find((d) => d.id === copy.id).activeVersion === 1);
+    const audit: any[] = await inv('auditList', undefined, 400);
+    ok('设计操作全程审计', ['design_saved', 'design_copied', 'design_activated'].every((a) => audit.some((e) => e.action === a)));
+  }
+
   const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));
   ok('API Key 未出现在审计/状态/设置/mcp.json 中', !leak);
   ok('无前端运行时错误', errors.filter((e) => !/ResizeObserver|Autofocus|Electron Security|favicon|cdn\.example\.com|ERR_BLOCKED|undefinedFn|broken/.test(e)).length === 0, errors.slice(0, 3).join(' | '));

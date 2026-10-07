@@ -16,6 +16,7 @@ const PANELS: { id: PanelId; label: string; icon: string }[] = [
   { id: 'officials', label: '官员总览', icon: 'users' },
   { id: 'news', label: '天下要闻', icon: 'news' },
   { id: 'models', label: '模型配置', icon: 'cpu' },
+  { id: 'designs', label: '协同设计', icon: 'layers' },
   { id: 'skills', label: '技能与 MCP', icon: 'plug' },
   { id: 'sessions', label: '小任务 Sessions', icon: 'message' },
   { id: 'ceremony', label: '上朝仪式', icon: 'flag' },

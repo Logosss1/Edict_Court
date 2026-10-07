@@ -733,3 +733,24 @@ select.input { padding: 4px 6px; }
 .reasoning-card { margin: 8px 0; background: var(--bg2); }
 .reasoning-card .row-gap { flex-wrap: wrap; }
 .probe-table { display: block; overflow-x: auto; }
+
+/* ── 协同设计 ── */
+.design-pick { max-width: 140px; }
+.design-tag { background: color-mix(in srgb, var(--jade) 16%, transparent); color: var(--jade); }
+.designs-panel .split-detail { flex: 1; min-width: 0; padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.design-versions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 6px; }
+.design-versions .ver { cursor: pointer; }
+.design-versions .ver.on { border-color: var(--acc); color: var(--acc); }
+.design-flow { display: flex; gap: 10px; overflow-x: auto; padding: 6px 2px; }
+.df-phase { min-width: 170px; display: flex; flex-direction: column; gap: 8px; }
+.df-phase-h { font-size: 11.5px; font-weight: 600; color: var(--muted); border-bottom: 2px solid var(--line2); padding-bottom: 4px; }
+.df-step { border: 1px solid var(--line2); border-radius: 7px; padding: 8px; background: var(--bg); display: flex; flex-direction: column; gap: 3px; }
+.df-step.t-review { border-color: color-mix(in srgb, var(--acc) 50%, var(--line2)); }
+.df-step.t-gate { border-color: var(--gold); }
+.df-step.t-fanout { border-color: color-mix(in srgb, var(--blue) 50%, var(--line2)); }
+.df-loop { color: var(--acc); }
+.df-gate { color: var(--gold); }
+.px-select { height: 22px; border: 2px solid #1a1220; background: #2a1d18; color: #f4e6c4; font-family: 'FusionPixel', var(--font); font-size: 12px; max-width: 120px; }
+.designs-panel .split-detail > .card { flex: none; }
+.design-flow { flex-wrap: wrap; overflow: visible; }
+.df-phase { flex: 1 1 170px; }

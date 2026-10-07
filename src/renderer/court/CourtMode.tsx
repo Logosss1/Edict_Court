@@ -1,6 +1,7 @@
 // 朝堂模式 — the pixel court. Same runtime, same data as the workbench; only the projection differs.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EffortSlider } from '../common/EffortSlider';
+import { BUILTIN_DESIGN_ID } from '../../shared/design';
 import { useStore, setUI, getState, selectTask, toast, openTaskTab } from '../store';
 import { call } from '../api';
 import { createCourtGame, type CourtGame } from './game';
@@ -192,6 +193,9 @@ function EmperorBox({ debateId }: { debateId: string | null }) {
   const settings = useStore((s) => s.settings);
   const [effort, setEffortState] = useState<string>(settings.composerEffort ?? 'default');
   const setEffort = (v: string) => { setEffortState(v); void call('updateSettings', { composerEffort: v }); };
+  const designs = useStore((s) => s.designs).filter((d) => d.status === 'active');
+  const design = designs.find((d) => d.id === (settings.defaultDesign ?? BUILTIN_DESIGN_ID)) ?? designs.find((d) => d.native);
+  const custom = !!design && !design.native;
   const strong = settings.routing?.strong ?? (providers[0]?.models[0] ? { providerId: providers[0].id, model: providers[0].models[0].id } : null);
   useEffect(() => setMode(debateId ? 'interject' : 'edict'), [debateId]);
   const send = async () => {
@@ -203,7 +207,7 @@ function EmperorBox({ debateId }: { debateId: string | null }) {
         await call('debateInterject', debateId, t);
       } else {
         if (!providers.length) throw new Error('尚未配置模型：请回工作台「模型配置」');
-        const r = await call('submit', { text: t, tier, multiAgent: tier !== 'solo', effort });
+        const r = await call('submit', { text: t, tier, multiAgent: custom || tier !== 'solo', effort, designId: custom ? design!.id : undefined });
         if (r.kind === 'chat') toast(`太子：${r.reply}`, 'info');
         else {
           selectTask(r.taskId);
@@ -229,7 +233,12 @@ function EmperorBox({ debateId }: { debateId: string | null }) {
               <button className={`px-btn sm ${mode === 'edict' ? 'on' : ''}`} onClick={() => setMode('edict')}>下旨</button>
             </span>
           )}
-          {mode === 'edict' && (
+          {mode === 'edict' && designs.length > 1 && (
+            <select className="px-select" value={design?.id ?? BUILTIN_DESIGN_ID} onChange={(e) => call('updateSettings', { defaultDesign: e.target.value })} title="协同设计" data-testid="court-design-pick">
+              {designs.map((d) => <option key={d.id} value={d.id}>{d.native ? '三省六部' : d.name}</option>)}
+            </select>
+          )}
+          {mode === 'edict' && !custom && (
             <span className="px-sub">
               {(['solo', 'lite', 'full'] as Tier[]).map((t) => (
                 <button key={t} className={`px-btn sm ${tier === t ? 'on' : ''}`} onClick={() => setTier(t)}>{TIER_SHORT[t]}</button>

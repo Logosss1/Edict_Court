@@ -130,6 +130,7 @@ function buildMenu() {
       { label: '官员总览', click: cmd('open-panel', 'officials') },
       { label: '天下要闻', click: cmd('open-panel', 'news') },
       { label: '模型配置', click: cmd('open-panel', 'models') },
+      { label: '协同设计', click: cmd('open-panel', 'designs') },
       { label: '技能与 MCP', click: cmd('open-panel', 'skills') },
       { label: '小任务 Sessions', click: cmd('open-panel', 'sessions') },
       { label: '朝堂议政', click: cmd('open-panel', 'debate') },

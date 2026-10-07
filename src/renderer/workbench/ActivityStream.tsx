@@ -24,6 +24,12 @@ export function ActivityStream({ taskId, compact, includeGlobal, agentFilter, li
     const el = ref.current;
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   });
+  // custom 协同设计 roles: show the role's own name (the avatar official only lends its colour / emoji)
+  const roleByNode = useStore((st) => {
+    const t = taskId ? st.tasks.find((x) => x.id === taskId) : undefined;
+    if (!t?.designSpec) return null;
+    return Object.fromEntries(t.nodes.filter((n) => n.roleName).map((n) => [n.id, n.roleName!]));
+  });
   // pair tool results with calls
   const results = new Map<string, Activity>();
   for (const it of items) if (it.kind === 'tool_result' && it.data?.callId) results.set(String(it.data.callId), it);
@@ -38,16 +44,16 @@ export function ActivityStream({ taskId, compact, includeGlobal, agentFilter, li
       data-testid="activity-stream"
     >
       {!items.length && <div className="muted pad small">暂无活动。下旨后，这里实时显示每位官员的思考、工具调用、结果与状态流转。</div>}
-      {items.map((a) => (a.kind === 'tool_result' && a.data?.callId ? null : <ActivityItem key={a.id} a={a} result={results.get(a.id)} compact={compact} />))}
+      {items.map((a) => (a.kind === 'tool_result' && a.data?.callId ? null : <ActivityItem key={a.id} a={a} result={results.get(a.id)} compact={compact} roleName={a.nodeId ? roleByNode?.[a.nodeId] : undefined} />))}
     </div>
   );
 }
 
-const ActivityItem = memo(function ActivityItem({ a, result, compact }: { a: Activity; result?: Activity; compact?: boolean }) {
+const ActivityItem = memo(function ActivityItem({ a, result, compact, roleName }: { a: Activity; result?: Activity; compact?: boolean; roleName?: string }) {
   const meta = a.agentId ? AGENT_MAP[a.agentId] : undefined;
   const who = meta ? (
-    <span className="act-who" style={{ color: meta.color }}>
-      {meta.emoji} {meta.name}
+    <span className="act-who" style={{ color: meta.color }} title={roleName ? `协同设计角色（朝堂形象：${meta.name}）` : undefined}>
+      {meta.emoji} {roleName ?? meta.name}
     </span>
   ) : null;
   const time = <span className="act-time">{fmtTime(a.at)}</span>;

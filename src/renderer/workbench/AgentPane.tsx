@@ -6,6 +6,7 @@ import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
 import { StateChip, fmtCost, fmtTokens, fmtAgo } from '../common/format';
 import { TIER_LABEL, TIER_SHORT, TERMINAL } from '../../shared/court';
+import { BUILTIN_DESIGN_ID } from '../../shared/design';
 import type { ModelRef, Tier } from '../../shared/types';
 import { ActivityStream } from './ActivityStream';
 import { EffortSlider } from '../common/EffortSlider';
@@ -57,7 +58,7 @@ export function AgentPane() {
           <div className="ap-task-head">
             <div className="ap-title-row">
               <StateChip state={task.state} />
-              <span className="tier-tag">{TIER_SHORT[task.tier]}</span>
+              {task.design && !task.design.native ? <span className="tier-tag design-tag" title={`协同设计 ${task.design.name} v${task.design.version} · ${task.design.hash.slice(0, 12)}`}>{task.design.name} v{task.design.version}</span> : <span className="tier-tag">{TIER_SHORT[task.tier]}</span>}
               <code className="muted small">{task.id}</code>
               {task.paused && <span className="chip chip-sm warn">已叫停</span>}
             </div>
@@ -162,12 +163,17 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   const [debate, setDebate] = useState(!!settings.debateBeforePlan);
   const [effort, setEffortState] = useState<string>(settings.composerEffort ?? 'default');
   const setEffort = (v: string) => { setEffortState(v); void call('updateSettings', { composerEffort: v }); };
+  const designs = useStore((s) => s.designs).filter((d) => d.status === 'active');
+  const designId = settings.defaultDesign ?? BUILTIN_DESIGN_ID; // follows 「设为默认」 in the designs panel
+  const design = designs.find((d) => d.id === designId) ?? designs.find((d) => d.native);
+  const custom = !!design && !design.native;
+  const setDesignId = (v: string) => void call('updateSettings', { defaultDesign: v });
   const [force, setForce] = useState(false);
   const [cont, setCont] = useState(false);
   const [busy, setBusy] = useState(false);
   const [est, setEst] = useState<{ tokens: number; costUsd: number; breakdown: string } | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
-  const effTier: Tier = multi ? tier : 'solo';
+  const effTier: Tier = custom ? 'lite' : multi ? tier : 'solo';
   const canContinue = !!selected && selected.tier === 'solo' && !!selected.sessionId && effTier === 'solo';
 
   useEffect(() => {
@@ -205,7 +211,8 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
     setBusy(true);
     try {
       const r = await call<{ kind: 'chat'; sessionId: string; reply: string } | { kind: 'task'; taskId: string }>('submit', {
-        text: t, tier, multiAgent: multi, model: parseModel(model), effort, forceEdict: force, withDebate: tier === 'full' ? debate : false, sessionId: canContinue && cont ? selected!.sessionId : undefined,
+        text: t, tier, multiAgent: custom ? true : multi, model: parseModel(model), effort, forceEdict: force, withDebate: !custom && tier === 'full' ? debate : false, sessionId: canContinue && cont ? selected!.sessionId : undefined,
+        designId: custom ? design!.id : undefined,
       });
       setText('');
       if (r.kind === 'chat') {
@@ -231,7 +238,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
         ref={ta}
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder={multi ? '皇上请下旨…（⌘↵ 下旨；闲聊由太子直接回复）' : 'Solo：直接吩咐独相…（⌘↵ 发送）'}
+ placeholder={custom ? `按协同设计「${design!.name}」下旨…（⌘↵ 下旨）` : multi ? '皇上请下旨…（⌘↵ 下旨；闲聊由太子直接回复）' : 'Solo：直接吩咐独相…（⌘↵ 发送）'}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
@@ -247,21 +254,26 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
             <option key={m.key} value={m.key}>{m.label} · {m.provider}</option>
           ))}
         </select>
-        <div className="tier-seg" role="radiogroup" aria-label="协同档位">
+        {designs.length > 1 && (
+          <select className="mini-select design-pick" value={design?.id ?? BUILTIN_DESIGN_ID} onChange={(e) => setDesignId(e.target.value)} title="协同设计：本旨意由哪一套协作流程完成（下旨时锁定版本）" data-testid="design-pick">
+            {designs.map((d) => <option key={d.id} value={d.id}>{d.native ? '三省六部' : d.name}{d.native ? '' : ` v${d.activeVersion}`}</option>)}
+          </select>
+        )}
+        {!custom && <div className="tier-seg" role="radiogroup" aria-label="协同档位">
           {(['solo', 'lite', 'full'] as Tier[]).map((t) => (
             <button key={t} role="radio" aria-checked={effTier === t} className={effTier === t ? 'on' : ''} disabled={!multi && t !== 'solo'} title={TIER_LABEL[t]} onClick={() => { if (t === 'solo') setMulti(false); else { setMulti(true); setTier(t); } }}>
               {TIER_SHORT[t]}
             </button>
           ))}
-        </div>
+        </div>}
         <EffortSlider model={parseModel(model || models[0]?.key || "")} value={effort} onChange={setEffort} />
-        <label className="switch" title="多 Agent 协同（关闭 = Solo）">
+        {!custom && <label className="switch" title="多 Agent 协同（关闭 = Solo）">
           <input type="checkbox" checked={multi} onChange={(e) => { setMulti(e.target.checked); if (e.target.checked && tier === 'solo') setTier('lite'); }} />
           <span>协同</span>
-        </label>
+        </label>}
       </div>
       <div className="composer-row">
-        {effTier === 'full' && (
+        {effTier === 'full' && !custom && (
           <label className="chk small" title="规划前先召开朝堂议政（多官员辩论）">
             <input type="checkbox" checked={debate} onChange={(e) => setDebate(e.target.checked)} /> 朝堂议政
           </label>
@@ -286,7 +298,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
           </button>
         )}
         <button className="btn primary send" disabled={busy || !text.trim()} onClick={send} data-testid="composer-send">
-          <Icon name="send" size={13} /> {busy ? '分拣中…' : multi ? '下旨' : '发送'}
+          <Icon name="send" size={13} /> {busy ? '分拣中…' : multi || custom ? '下旨' : '发送'}
         </button>
       </div>
     </div>

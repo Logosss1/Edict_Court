@@ -4,7 +4,7 @@ import { useSyncExternalStore, useRef } from 'react';
 import type { Activity, AgentId, RuntimeEvent, Snapshot, Task, Debate, Session, Memorial, ApprovalRequest, Annotation } from '../shared/types';
 import { call } from './api';
 
-export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help';
+export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help';
 export type CourtScene = 'taihe' | 'junjichu' | 'liubu' | 'chengtian';
 
 export interface Tab {
@@ -63,7 +63,7 @@ const initialUI: UIState = {
 
 let state: AppState = {
   ready: false, tasks: [], agents: [], debates: [], sessions: [], memorials: [], approvals: [], annotations: [], news: [], settings: {} as AppState['settings'],
-  providers: [], skills: [], mcp: [], templates: [], workspace: null, dataDir: '', version: '', platform: '', totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 },
+  providers: [], skills: [], mcp: [], designs: [], templates: [], workspace: null, dataDir: '', version: '', platform: '', totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 },
   activities: {}, ui: initialUI,
 };
 
@@ -180,6 +180,9 @@ export function applyEvent(e: RuntimeEvent) {
     case 'skills':
       set({ skills: e.skills });
       break;
+    case 'designs':
+      set({ designs: e.designs });
+      break;
     case 'mcp':
       set({ mcp: e.servers });
       break;
@@ -282,7 +285,7 @@ export function openTab(tab: Tab) {
 }
 
 export function openPanel(panel: PanelId) {
-  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', skills: '技能与 MCP', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明' };
+  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', designs: '协同设计', skills: '技能与 MCP', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明' };
   openTab({ id: `panel:${panel}`, kind: 'panel', title: titles[panel], panel });
 }
 

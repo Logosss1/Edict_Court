@@ -6,6 +6,7 @@ import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL } from '../../shared/court
 import { call } from '../api';
 import { toast, useStore, openTab, openPanel } from '../store';
 import { Icon } from '../common/Icon';
+import { deptOptions, roleInfo } from '../common/roles';
 import { Markdown } from '../common/Markdown';
 import { fmtCost, fmtTokens, usageTokens } from '../common/format';
 
@@ -90,7 +91,8 @@ export function UsageLine({ task }: { task: Task }) {
 }
 
 // ───────── Plan editor (L2: 皇上朱笔涂改中书省方案) ─────────
-export function PlanEditor({ plan, onChange, readOnly }: { plan: Plan; onChange?: (p: Plan) => void; readOnly?: boolean }) {
+export function PlanEditor({ plan, onChange, readOnly, task }: { plan: Plan; onChange?: (p: Plan) => void; readOnly?: boolean; task?: Task }) {
+  const depts = deptOptions(task);
   const set = (patch: Partial<Plan>) => onChange?.({ ...plan, ...patch });
   const setSub = (i: number, patch: Partial<Subtask>) => set({ subtasks: plan.subtasks.map((s, k) => (k === i ? { ...s, ...patch } : s)) });
   const nextId = () => {
@@ -104,14 +106,15 @@ export function PlanEditor({ plan, onChange, readOnly }: { plan: Plan; onChange?
       <textarea className="input" rows={2} value={plan.summary} readOnly={readOnly} onChange={(e) => set({ summary: e.target.value })} />
       <label className="pe-label">子任务（{plan.subtasks.length}）</label>
       {plan.subtasks.map((s, i) => (
-        <div key={i} className="pe-sub" style={{ borderLeftColor: AGENT_MAP[s.dept]?.color }}>
+        <div key={i} className="pe-sub" style={{ borderLeftColor: roleInfo(task, s.dept).color }}>
           <div className="pe-row">
             <span className="pe-id">{s.id}</span>
             <input className="input" value={s.title} readOnly={readOnly} onChange={(e) => setSub(i, { title: e.target.value })} placeholder="标题" />
             <select className="input" value={s.dept} disabled={readOnly} onChange={(e) => setSub(i, { dept: e.target.value as MinistryId })}>
-              {MINISTRIES.map((m) => (
-                <option key={m} value={m}>{AGENT_MAP[m].name}</option>
+              {depts.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
               ))}
+              {!depts.some((m) => m.id === s.dept) && <option value={s.dept}>{roleInfo(task, s.dept).name}</option>}
             </select>
             {!readOnly && (
               <button className="icon-btn" title="删去此子任务" onClick={() => set({ subtasks: plan.subtasks.filter((_, k) => k !== i).map((x) => ({ ...x, dependsOn: x.dependsOn.filter((d) => d !== s.id) })) })}>
@@ -129,7 +132,7 @@ export function PlanEditor({ plan, onChange, readOnly }: { plan: Plan; onChange?
         </div>
       ))}
       {!readOnly && (
-        <button className="btn sm" onClick={() => set({ subtasks: [...plan.subtasks, { id: nextId(), title: '', dept: 'bingbu', detail: '', acceptance: '', dependsOn: [] }] })}>
+        <button className="btn sm" onClick={() => set({ subtasks: [...plan.subtasks, { id: nextId(), title: '', dept: (depts[0]?.id ?? 'bingbu') as MinistryId, detail: '', acceptance: '', dependsOn: [] }] })}>
           <Icon name="plus" size={12} /> 增补子任务
         </button>
       )}
@@ -175,7 +178,7 @@ export function GateCard({ task, variant = 'pane', onDecided }: { task: Task; va
           {lastMenxia.issues.length > 0 && <ul>{lastMenxia.issues.map((x, i) => <li key={i}>{x}</li>)}</ul>}
         </div>
       )}
-      {planGate && plan && <PlanEditor plan={plan} onChange={setPlan} />}
+      {planGate && plan && <PlanEditor plan={plan} onChange={setPlan} task={task} />}
       {g.kind === 'final' && (
         <div className="gate-report">
           <Markdown text={task.result?.summary || '（无回奏正文）'} />
@@ -185,7 +188,7 @@ export function GateCard({ task, variant = 'pane', onDecided }: { task: Task; va
               <span className="muted small">若封驳，发回返工的子任务：</span>
               {task.plan.subtasks.map((s) => (
                 <label key={s.id} className="chk">
-                  <input type="checkbox" checked={targets.includes(s.id)} onChange={(e) => setTargets(e.target.checked ? [...targets, s.id] : targets.filter((x) => x !== s.id))} /> {s.id} {AGENT_MAP[s.dept].name}
+                  <input type="checkbox" checked={targets.includes(s.id)} onChange={(e) => setTargets(e.target.checked ? [...targets, s.id] : targets.filter((x) => x !== s.id))} /> {s.id} {roleInfo(task, s.dept).name}
                 </label>
               ))}
               <span className="muted small">（不选则全部返工）</span>
