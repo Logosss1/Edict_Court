@@ -81,7 +81,6 @@ npm run package:mac      # 组装 Edict.app（arm64）、ad-hoc 签名、生成 
 - [docs/SECURITY.md](docs/SECURITY.md) — 权限、路径边界、数据位置、外发范围
 - [docs/ART_PIPELINE.md](docs/ART_PIPELINE.md) — 像素美术规格锁、AI 生图 prompt 包、Aseprite 规整与导入
 - [docs/TESTING.md](docs/TESTING.md) — 测试与验证方法
-- [AI_HANDOFF.md](AI_HANDOFF.md) — 交接文档
 
 ## 许可证
 
