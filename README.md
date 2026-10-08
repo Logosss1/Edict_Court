@@ -24,9 +24,8 @@ Emperor issues an edict → Crown Prince triages (small talk is answered directl
 | Workbench (default) | Court (pixel art) |
 |---|---|
 | ![Workbench](docs/screenshots/03-workbench-final-gate.png) | ![Hall of Supreme Harmony](docs/screenshots/08-court-taihe-presenter.png) |
-| Edict box (⌘L to hide/show) · model / tier / multi-agent switch · live activity stream · approve / reject · editor | You sit on the throne; each official's animation is the agent's real state; click an official to see their work and leave a vermilion note; memorial review overlay |
 
-Both modes are projections of the same main-process state: tasks, approvals, results and audit are identical and sync in both directions.
+Both modes show the same live state: approve in the court and the workbench closes the case, and the other way round.
 
 ## Three collaboration tiers
 
