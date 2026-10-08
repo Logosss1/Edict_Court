@@ -13,6 +13,7 @@ import { blankDesign, type Draft } from './designs/edit';
 import { clearStash, readStash, type StashedDraft } from './designs/draftState';
 import { askConfirm } from '../common/Prompt';
 import { tip } from '../common/Tip';
+import { useRoleModelText } from '../common/ModelPick';
 
 const TIER_LABEL = { lite: '精简版', full: '完整版' } as const;
 
@@ -30,6 +31,7 @@ export function Designs() {
   const [editing, setEditing] = useState<{ draft: Draft; court?: boolean; resume?: { draft: Draft; note: string } } | null>(null);
   const [stash, setStash] = useState<StashedDraft | null>(() => readStash());
   const [more, setMore] = useState(false);
+  const roleModel = useRoleModelText();
   const info = designs.find((d) => d.id === sel) ?? designs[0];
   useEffect(() => {
     if (!info) return;
@@ -217,13 +219,13 @@ export function Designs() {
             <div className="card">
               <h4>角色（{spec.roles.length}）</h4>
               <table className="table small">
-                <thead><tr><th>角色</th><th>职责</th><th>模型档</th><th>工具权限</th><th>朝堂形象</th></tr></thead>
+                <thead><tr><th>角色</th><th>职责</th><th>模型</th><th>工具权限</th><th>朝堂形象</th></tr></thead>
                 <tbody>
                   {spec.roles.map((r) => (
                     <tr key={r.id}>
                       <td><b>{r.name}</b> <code className="muted">{r.id}</code></td>
                       <td>{r.duty}</td>
-                      <td>{r.modelClass === 'strong' ? '强' : '经济'}</td>
+                      <td data-testid={`role-model-cell-${r.id}`} className={roleModel(r).missing ? 'warn-text' : ''}>{roleModel(r).full}</td>
                       <td>{{ none: '无', read: '只读', write: '读写（受权限模式约束）' }[r.toolAccess]}</td>
                       <td>{AGENT_MAP[r.avatar]?.emoji} {AGENT_MAP[r.avatar]?.name}</td>
                     </tr>

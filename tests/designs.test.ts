@@ -315,3 +315,49 @@ test('editor helpers: canvas placement, reference-safe removal, auto seating, bl
   assert.equal(lay.seats.length, d.roles.length);
   assert.ok(ok({ ...d, court: lay }).ok);
 });
+
+test('per-role model and 思考程度: chosen model and level are used; a removed model falls back to routing with one notice', async () => {
+  const bad = customDesign();
+  bad.roles[0] = { ...bad.roles[0], model: { providerId: 'mock' } as never };
+  bad.roles[1] = { ...bad.roles[1], effort: 'turbo' };
+  const errs = validateDesign({ ...bad, id: 'x', version: 1, createdAt: 0 }).errors;
+  assert.ok(errs.some((e) => e.includes('模型格式')), errs.join('; '));
+  assert.ok(errs.some((e) => e.includes('思考程度')), errs.join('; '));
+
+  const mock = await startMockLlm({
+    brain: (c) => {
+      const role = /【角色:(\w+)】/.exec(c.system)?.[1];
+      if (role === 'ARCHITECT') return { text: JSON.stringify({ summary: '一个子任务', subtasks: [{ id: 'S1', title: '写 a.txt', dept: 'coder', detail: '写文件', acceptance: '文件存在', dependsOn: [] }], risks: [] }) };
+      if (role === 'CODER') {
+        if (c.tools.includes('write_file') && c.toolResults === 0) return { toolCalls: [{ name: 'write_file', args: { path: 'a.txt', content: 'a\n' } }] };
+        return { text: '```json\n{"status":"done","summary":"写了 a.txt","artifacts":["a.txt"],"verification":"已写入","issues":[]}\n```' };
+      }
+      if (role === 'CRITIC') return { text: '{"verdict":"approve","issues":[],"comment":"可以","rework":[]}' };
+      return { text: '## 总结\n完成' };
+    },
+  });
+  const rt = makeRuntime(mock.url);
+  const p = rt.providers[0];
+  rt.upsertProvider({ ...p, models: [...p.models, { id: 'mock-special', inputPrice: 1, outputPrice: 2, contextWindow: 128000, reasoning: { style: 'openai', levels: ['low', 'medium', 'high'], default: 'medium' } }] });
+  rt.updateSettings({ routing: { strong: { providerId: 'mock', model: 'mock-strong' }, economy: { providerId: 'mock', model: 'mock-economy' } } });
+  rt.setWorkspace(tmpDir('edict-ws-'));
+  const spec = customDesign();
+  spec.roles[2] = { ...spec.roles[2], model: { providerId: 'mock', model: 'mock-special' }, effort: 'high' }; // critic
+  spec.roles[1] = { ...spec.roles[1], model: { providerId: 'mock', model: 'gone-model' } }; // coder: model no longer configured
+  const d = rt.designs.save(spec);
+  assert.equal(rt.designs.get(d.id)!.roles[2].model?.model, 'mock-special', 'role model is saved with the design');
+  const r = (await submit(rt, { text: '写 a.txt', tier: 'lite', multiAgent: true, designId: d.id, forceEdict: true })) as { taskId: string };
+  await waitFor(() => ['Done', 'Blocked'].includes(stateOf(rt, r.taskId)), 25000, 'done');
+  assert.equal(rt.tasks.get(r.taskId)!.state, 'Done', rt.tasks.get(r.taskId)!.blockedReason);
+  const byRole = (tag: string) => mock.bodies.filter((b) => JSON.stringify(b.messages ?? b.input ?? b.system ?? '').includes(`【角色:${tag}】`));
+  const critic = byRole('CRITIC');
+  assert.ok(critic.length && critic.every((b) => b.model === 'mock-special'), 'critic ran on its chosen model');
+  assert.ok(critic.every((b) => b.reasoning_effort === 'high'), `critic used its own 思考程度: ${critic.map((b) => b.reasoning_effort)}`);
+  const coder = byRole('CODER');
+  assert.ok(coder.length && coder.every((b) => b.model === 'mock-economy'), 'coder fell back to economy routing');
+  assert.ok(byRole('ARCHITECT').every((b) => b.model === 'mock-strong'), 'roles without a model follow routing');
+  const notices = rt.activities(r.taskId, 500).filter((a) => a.content.includes('gone-model'));
+  assert.equal(notices.length, 1, 'one notice per edict, not per call');
+  rt.dispose();
+  await mock.close();
+});

@@ -384,11 +384,12 @@ export class Runtime {
   }
 
   /** Model for a call. `role` = a custom collaboration-design role (per-official overrides do not apply to it). */
-  resolveModel(agentId: AgentId, task?: Task, role?: { id: string; modelClass: ModelClass }): ModelRef {
+  resolveModel(agentId: AgentId, task?: Task, role?: { id: string; modelClass: ModelClass; model?: ModelRef }): ModelRef {
     const valid = (r?: ModelRef | null): r is ModelRef => !!r && !!r.model && this.providers.some((p) => p.id === r.providerId && p.enabled) && !this.badModels.has(`${r.providerId}/${r.model}`);
     if (role) {
       const tr = task?.roleModels?.[role.id];
       if (valid(tr)) return tr;
+      if (valid(role.model) && this.modelInfo(role.model)) return role.model;
     } else {
       const taskOverride = task?.agentModels?.[agentId];
       if (valid(taskOverride)) return taskOverride;
@@ -407,6 +408,9 @@ export class Runtime {
     throw new Error('尚未配置可用模型：请在「模型配置」中添加模型服务（base_url、API Key、模型 id）');
   }
 
+  /** task/role pairs already told that their chosen model is unavailable (one notice per edict, not per call) */
+  roleModelWarned = new Set<string>();
+
   /** Models the service said it does not offer (wrong id, relay group, protocol) during this session: routing skips them. */
   badModels = new Set<string>();
 
@@ -422,13 +426,13 @@ export class Runtime {
   noReasoning = new Set<string>();
 
   /** 思考程度 for one call: per-agent override › task slider (strong-class / solo) › model default, clamped to the model's ladder. */
-  resolveEffort(agentId: AgentId, model: ModelRef, task?: Task, roleClass?: ModelClass): { level?: string; cfg: ReasoningConfig; protocol: Protocol } {
+  resolveEffort(agentId: AgentId, model: ModelRef, task?: Task, roleClass?: ModelClass, roleEffort?: string): { level?: string; cfg: ReasoningConfig; protocol: Protocol } {
     const p = this.providers.find((x) => x.id === model.providerId);
     const protocol = (p?.protocol ?? 'openai-chat') as Protocol;
     const cfg = effectiveConfig(this.modelInfo(model)?.reasoning, model.model, protocol);
     if (this.noReasoning.has(`${model.providerId}/${model.model}`)) return { cfg, protocol };
     const cls = roleClass ?? AGENT_MAP[agentId]?.modelClass ?? 'economy';
-    const want = (roleClass ? undefined : this.settings.agentEffort?.[agentId]) || ((cls === 'strong' || (!roleClass && agentId === 'solo')) ? task?.effort : undefined) || 'default';
+    const want = (roleClass ? roleEffort : this.settings.agentEffort?.[agentId]) || ((cls === 'strong' || (!roleClass && agentId === 'solo')) ? task?.effort : undefined) || 'default';
     return { level: clampLevel(cfg, want), cfg, protocol };
   }
 

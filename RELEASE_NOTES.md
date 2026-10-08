@@ -2,6 +2,22 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 1.2.6
+
+**What's new**
+- **Per-official models are easier to read**: 模型配置 → 官员独立模型与思考程度 now lists the officials one per row instead of a cramped three-column grid. Each row shows the official and their duty, 强 / 经济, a wide model dropdown and a thinking-level dropdown. The default option names the model it follows, e.g. 跟随经济路由（gpt-5.6-luna）.
+- **Choose a model and thinking level for each role in your own collaboration designs**:
+  - The built-in 三省六部 stays read-only. Copy it, or create a new design, and each role's form has two new fields:
+    - **模型**: 跟随强/经济路由 (default) or any model from 模型配置.
+    - **思考程度**: 跟随旨意 / 模型默认, a specific level, or 该模型最高档.
+  - Saving creates a new version as usual. Running edicts keep the version they started with.
+  - If a role's model is later removed from 模型配置 (or the service rejects it), that role falls back to its 强/经济 routing and the task log says so once.
+  - The canvas role chips and the role table on the design's detail page show each role's model and thinking level.
+
+**Install**: download `Edict-1.2.6-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data folder is kept when you install over 1.x.
+
+**Verified**: 53/53 unit + integration tests (including a design whose roles pick their own model and level, and one whose model was removed), 21/21 + 65/65 end-to-end UI checks and the court smoke test on Linux + Xvfb (mock LLM). Not yet verified with a real model service.
+
 ## 1.2.5
 
 **Fixes**

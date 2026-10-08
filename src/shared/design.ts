@@ -30,6 +30,10 @@ export interface RoleSpec {
   duty: string;
   prompt: string; // persona / system prompt — text only
   modelClass: 'strong' | 'economy';
+  /** a specific model for this role; unset = follow the strong / economy routing of modelClass */
+  model?: { providerId: string; model: string };
+  /** 思考程度 for this role (a level, or 'top'); unset = follow the edict / model default */
+  effort?: string;
   toolAccess: ToolAccess; // ceiling; the global permission mode still applies on top
   avatar: AgentId; // which pixel official represents this role in the court
 }
@@ -158,6 +162,7 @@ export function designBody(d: CollabDesign) {
 
 // ───────────────────────── validation ─────────────────────────
 const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+export const ROLE_EFFORTS = ['off', 'low', 'medium', 'high', 'xhigh', 'max', 'top'];
 export const AVATARS: AgentId[] = ['taizi', 'zhongshu', 'menxia', 'shangshu', 'hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'zaochao', 'solo'];
 
 /** Shortest legal path between two states over the protected state machine (no terminal / Blocked hops). */
@@ -221,6 +226,8 @@ export function validateDesign(input: unknown): ValidationResult & { design?: Co
     if (!r.name) errors.push(`角色 ${r.id} 缺少名称`);
     if (typeof r.prompt !== 'string' || r.prompt.length > 20000) errors.push(`角色 ${r.id} 的提示词缺失或过长（≤20000 字）`);
     if (!['strong', 'economy'].includes(r.modelClass)) errors.push(`角色 ${r.id} 的模型档位无效`);
+    if (r.model !== undefined && (!r.model || typeof r.model.providerId !== 'string' || typeof r.model.model !== 'string' || !r.model.providerId || !r.model.model || r.model.model.length > 200)) errors.push(`角色 ${r.id} 指定的模型格式错误`);
+    if (r.effort !== undefined && !ROLE_EFFORTS.includes(r.effort)) errors.push(`角色 ${r.id} 的思考程度无效：${r.effort}`);
     if (!['none', 'read', 'write'].includes(r.toolAccess)) errors.push(`角色 ${r.id} 的工具权限无效`);
     if (!AVATARS.includes(r.avatar)) errors.push(`角色 ${r.id} 的朝堂形象无效：${r.avatar}`);
   }

@@ -9,6 +9,7 @@ import { onMenu, toast, useStore } from '../../store';
 import { askConfirm } from '../../common/Prompt';
 import { tip } from '../../common/Tip';
 import { Icon } from '../../common/Icon';
+import { EffortSelect, ModelSelect, effortDefaultLabel, useModelExists, useModelShort } from '../../common/ModelPick';
 import { FlowCanvas } from './FlowCanvas';
 import { CourtLayoutEditor } from './CourtLayoutEditor';
 import { clearStash, useDraftHistory, writeStash } from './draftState';
@@ -277,7 +278,13 @@ function IdInput({ value, onCommit, testid }: { value: string; onCommit: (v: str
 }
 
 function RoleForm({ draft, role, onChange, onRenamed }: { draft: Draft; role: RoleSpec; onChange: (d: Draft) => void; onRenamed: (id: string) => void }) {
-  const patch = (p: Partial<RoleSpec>) => onChange({ ...clone(draft), roles: draft.roles.map((r) => (r.id === role.id ? { ...r, ...p } : r)) });
+  // undefined fields are dropped so "跟随路由 / 跟随旨意" leaves no key behind in the saved design
+  const patch = (p: Partial<RoleSpec>) => onChange({ ...clone(draft), roles: draft.roles.map((r) => (r.id === role.id ? JSON.parse(JSON.stringify({ ...r, ...p })) : r)) });
+  const routing = useStore((s) => s.settings.routing);
+  const short = useModelShort();
+  const exists = useModelExists();
+  const route = role.modelClass === 'strong' ? routing?.strong : routing?.economy;
+  const tier = role.modelClass === 'strong' ? '强' : '经济';
   const used = draft.steps.filter((s) => s.role === role.id || s.executors?.includes(role.id)).map((s) => s.label);
   return (
     <div className="de-fields" data-testid={`role-form-${role.id}`}>
@@ -297,6 +304,13 @@ function RoleForm({ draft, role, onChange, onRenamed }: { draft: Draft; role: Ro
         <select className="input" value={role.modelClass} onChange={(e) => patch({ modelClass: e.target.value as RoleSpec['modelClass'] })}>
           <option value="strong">强模型</option><option value="economy">经济模型</option>
         </select>
+      </div>
+      <div className="field span2"><label>模型</label>
+        <ModelSelect className="input" testid="role-model" value={role.model} allowDefault={`跟随${tier}路由（${short(route)}）`} onChange={(r) => patch({ model: r ?? undefined })} />
+        {role.model && !exists(role.model) && <span className="small warn-text" data-testid="role-model-missing">这个模型已不在模型配置里，运行时会改用{tier}模型路由。</span>}
+      </div>
+      <div className="field"><label>思考程度</label>
+        <EffortSelect className="input" testid="role-effort" defaultLabel={effortDefaultLabel(role.modelClass)} value={role.effort} onChange={(v) => patch({ effort: v })} />
       </div>
       <div className="field"><label>工具权限（上限）</label>
         <select className="input" value={role.toolAccess} onChange={(e) => patch({ toolAccess: e.target.value as RoleSpec['toolAccess'] })}>

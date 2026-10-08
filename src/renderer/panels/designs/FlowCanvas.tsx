@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEven
 import { AGENT_MAP } from '../../../shared/court';
 import { PHASE_LABEL, type DesignPhase, type StepType } from '../../../shared/design';
 import { Icon } from '../../common/Icon';
+import { useRoleModelText } from '../../common/ModelPick';
 import { PHASES, STEP_TYPES, STEP_TYPE_HINT, STEP_TYPE_LABEL, groupsOf, newStep, placeStep, type Draft, type Drop } from './edit';
 
 const LABEL_W = 62;
@@ -170,6 +171,7 @@ export function FlowCanvas({ draft, onChange, selected, onSelect, errors }: Prop
   };
 
   const roleName = (id?: string) => draft.roles.find((r) => r.id === id);
+  const roleModel = useRoleModelText();
   const indicator = drag && pt && (drag.kind === 'move' || drag.kind === 'new') ? { drop: dropAt(pt.x), lane: laneAt(pt.y) } : null;
   const hoverCard = drag && pt && (drag.kind === 'reject' || drag.kind === 'role') ? cardAt(pt.x, pt.y) : -1;
 
@@ -233,11 +235,11 @@ export function FlowCanvas({ draft, onChange, selected, onSelect, errors }: Prop
         ))}
         <span className="fc-sep" />
         <span className="muted small">拖角色到步骤上指派：</span>
-        {draft.roles.map((r) => (
-          <button key={r.id} className="fc-chip role" onPointerDown={(e) => press(e, { kind: 'role', role: r.id })} title={`${r.name}：${r.duty}`} data-testid={`fc-role-${r.id}`}>
-            {AGENT_MAP[r.avatar]?.emoji} {r.name}
+        {draft.roles.map((r) => { const mt = roleModel(r); return (
+          <button key={r.id} className="fc-chip role" onPointerDown={(e) => press(e, { kind: 'role', role: r.id })} title={`${r.name}：${r.duty}\n模型：${mt.full}`} data-testid={`fc-role-${r.id}`}>
+            {AGENT_MAP[r.avatar]?.emoji} {r.name} <span className={`fc-chip-model ${mt.missing ? 'missing' : ''}`} data-testid={`fcrm-${r.id}`}>{mt.short}</span>
           </button>
-        ))}
+        ); })}
       </div>
       <div className="fc-scroll" ref={scroller}>
         <div className="fc-content" ref={content} style={{ width: layout.width, height: layout.height + 30 }} onPointerDown={(e) => { if (e.target === e.currentTarget) onSelect(null); }}>

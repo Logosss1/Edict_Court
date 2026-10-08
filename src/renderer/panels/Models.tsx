@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useStore, toast } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
+import { EffortSelect, ModelSelect, effortDefaultLabel, useModelShort } from '../common/ModelPick';
 import { AGENTS } from '../../shared/court';
 import type { ModelInfo, ModelRef, PermissionMode, ProbeRow, ProviderConfig, Protocol, ReasoningConfig, ReasoningStyle, Settings } from '../../shared/types';
 import { STYLE_LABEL, STYLE_LEVELS, levelLabel, presetFor } from '../../shared/reasoning';
@@ -327,21 +328,6 @@ function safeJson(t: string): Record<string, Record<string, unknown>> | null {
   }
 }
 
-function ModelSelect({ value, onChange, allowDefault }: { value: ModelRef | null | undefined; onChange: (r: ModelRef | null) => void; allowDefault?: string }) {
-  const providers = useStore((s) => s.providers);
-  const v = value ? `${value.providerId}::${value.model}` : '';
-  return (
-    <select className="input sm" value={v} onChange={(e) => { const [providerId, model] = e.target.value.split('::'); onChange(e.target.value ? { providerId, model } : null); }}>
-      <option value="">{allowDefault ?? '（未设置）'}</option>
-      {providers.map((p) => (
-        <optgroup key={p.id} label={p.name}>
-          {p.models.map((m) => <option key={m.id} value={`${p.id}::${m.id}`}>{m.label || m.id}</option>)}
-        </optgroup>
-      ))}
-    </select>
-  );
-}
-
 function Routing() {
   const s = useStore((st) => st.settings);
   const up = (routing: Settings['routing']) => call('updateSettings', { routing });
@@ -361,22 +347,25 @@ function Routing() {
 
 function AgentModels() {
   const s = useStore((st) => st.settings);
+  const short = useModelShort();
+
   return (
     <section className="card">
-      <h3>官员独立模型与思考程度（热切换，下一次调用生效）</h3>
-      <div className="agent-model-grid">
-        {AGENTS.map((a) => (
-          <div key={a.id} className="agent-model-row">
-            <span>{a.emoji} {a.name}</span>
-            <span className="muted small">{a.modelClass === 'strong' ? '强' : '经济'}</span>
-            <ModelSelect value={s.agentModels?.[a.id]} allowDefault="默认路由" onChange={(r) => call('setAgentModel', a.id, r)} />
-            <select className="input sm" value={s.agentEffort?.[a.id] ?? ''} title="该官员的思考程度（按其模型的档位就近取值）" onChange={(e) => call('updateSettings', { agentEffort: { ...(s.agentEffort ?? {}), [a.id]: e.target.value || undefined } })}>
-              <option value="">思考：跟随旨意/默认</option>
-              {['off', 'low', 'medium', 'high', 'xhigh', 'max'].map((l) => <option key={l} value={l}>思考：{levelLabel(l)}</option>)}
-              <option value="top">思考：该模型最高档</option>
-            </select>
-          </div>
-        ))}
+      <h3>官员独立模型与思考程度</h3>
+      <p className="muted small">只影响内置的三省六部（改完下一次调用生效）。自己的协同设计在「协同设计」里给每个角色选模型。</p>
+      <div className="agent-model-list" data-testid="agent-model-list">
+        <div className="agent-model-row head muted small"><span>官员</span><span>档位</span><span>模型</span><span>思考程度</span></div>
+        {AGENTS.map((a) => {
+          const route = a.modelClass === 'strong' ? s.routing?.strong : s.routing?.economy;
+          return (
+            <div key={a.id} className="agent-model-row" data-testid={`agent-model-${a.id}`}>
+              <span className="amr-who"><b>{a.emoji} {a.name}</b><span className="muted small ellipsis">{a.duty}</span></span>
+              <span className={`chip chip-sm ${a.modelClass === 'strong' ? 'on' : ''}`}>{a.modelClass === 'strong' ? '强' : '经济'}</span>
+              <ModelSelect value={s.agentModels?.[a.id]} allowDefault={`跟随${a.modelClass === 'strong' ? '强' : '经济'}路由（${short(route)}）`} onChange={(r) => call('setAgentModel', a.id, r)} />
+              <EffortSelect defaultLabel={effortDefaultLabel(a.modelClass)} value={s.agentEffort?.[a.id]} onChange={(v) => call('updateSettings', { agentEffort: { ...(s.agentEffort ?? {}), [a.id]: v } })} />
+            </div>
+          );
+        })}
       </div>
     </section>
   );

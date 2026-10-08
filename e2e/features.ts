@@ -120,6 +120,12 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.click('[data-testid=reasoning-btn] >> nth=0');
     await win.waitForSelector('[data-testid=reasoning-editor]');
     await shot('32-models-reasoning-probe');
+    // per-official models: one row each, model dropdown wide enough to read "model · service"
+    const rows = win.locator('[data-testid=agent-model-list] [data-testid^=agent-model-]');
+    await rows.first().scrollIntoViewIfNeeded();
+    const boxes = await rows.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); const sel = e.querySelector('select')!.getBoundingClientRect(); return { y: r.y, w: sel.width }; }));
+    ok('官员模型竖排：每位官员一行，模型下拉足够宽', boxes.length >= 10 && boxes.every((b, i) => i === 0 || b.y > boxes[i - 1].y) && boxes.every((b) => b.w >= 230), JSON.stringify(boxes.slice(0, 3)));
+    await shot('33-models-agent-list');
   }
 
   // ── 3. HTML 预览
@@ -317,6 +323,11 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const roleForm = win.locator('[data-testid^=role-form-]').last();
     await roleForm.locator('input.input').first().fill('史官');
     ok('表单：添加并改名角色', (await win.locator('.de-item-h b >> text=史官').count()) === 1);
+    const modelSel = roleForm.locator('[data-testid=role-model]');
+    const firstDefault = (await modelSel.locator('option').first().textContent()) ?? '';
+    await modelSel.selectOption({ label: 'mock-strong' });
+    await roleForm.locator('[data-testid=role-effort]').selectOption('high');
+    ok('表单：角色默认跟随路由，可指定模型和思考程度', firstDefault.startsWith('跟随经济路由') && (await modelSel.inputValue()).endsWith('::mock-strong'), firstDefault);
     await shot('45-designer-form');
     // court layout: auto seating, then drag a seat and make it sit at a desk
     await win.click('[data-testid=de-court]');
@@ -339,7 +350,10 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const review = spec?.steps.find((s: any) => s.id === 'review');
     const seat = spec?.court?.seats.find((s: any) => s.role === firstSeat);
     ok('保存：流程、并行、封驳、角色与朝堂布局都写入新设计', !!spec && review?.onReject?.goto === 'step' && review.role === roleId && spec.steps.find((s: any) => s.id === 'step2')?.parallel === true
-      && spec.roles.some((r: any) => r.name === '史官') && seat?.pose === 'sit' && seat.idle === 'write' && Math.abs(seat.x - 330) <= 2 && spec.court.hideBuiltin === true, JSON.stringify({ review, step2: spec?.steps.find((s: any) => s.id === 'step2'), roles: spec?.roles.map((r: any) => r.name), seat }));
+      && spec.roles.some((r: any) => r.name === '史官' && r.model?.model === 'mock-strong' && r.effort === 'high') && seat?.pose === 'sit' && seat.idle === 'write' && Math.abs(seat.x - 330) <= 2 && spec.court.hideBuiltin === true, JSON.stringify({ review, step2: spec?.steps.find((s: any) => s.id === 'step2'), roles: spec?.roles.map((r: any) => r.name), seat }));
+    const shiguan = spec?.roles.find((r: any) => r.name === '史官');
+    const cell = (await win.textContent(`[data-testid=role-model-cell-${shiguan?.id}]`).catch(() => '')) ?? '';
+    ok('详情页角色表显示每个角色用的模型', cell.includes('mock-strong') && cell.includes('高'), cell);
     // the court follows the chosen design's layout
     await win.click('[data-testid=design-set-default]');
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'court', courtScene: 'taihe' }));

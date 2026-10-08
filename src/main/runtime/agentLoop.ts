@@ -37,6 +37,8 @@ export interface RoleRun {
   name: string;
   prompt: string;
   modelClass: 'strong' | 'economy';
+  model?: ModelRef;
+  effort?: string;
 }
 
 export interface AgentRunResult {
@@ -64,7 +66,7 @@ function effortRequest(o: AgentRunOptions, model: ModelRef, withEffort: boolean)
   const { rt, agentId, task } = o;
   const info = rt.modelInfo(model);
   let maxTokens = o.maxTokens;
-  const eff = withEffort ? rt.resolveEffort(agentId, model, task, o.role?.modelClass) : undefined;
+  const eff = withEffort ? rt.resolveEffort(agentId, model, task, o.role?.modelClass, o.role?.effort) : undefined;
   const rp = eff?.level ? reasoningParams(eff.cfg, eff.level, eff.protocol) : { body: {} as Record<string, unknown> };
   if (rp.minMaxTokens) maxTokens = Math.max(maxTokens ?? 0, rp.minMaxTokens);
   if (info?.maxOutputTokens && maxTokens) maxTokens = Math.min(maxTokens, info.maxOutputTokens);
@@ -190,13 +192,18 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
   const role = o.role;
   let model = o.model ?? rt.resolveModel(agentId, task, role);
   let provider = rt.providerRuntime(model.providerId);
+  const warnKey = `${task?.id ?? ''}/${role?.id ?? ''}`;
+  if (role?.model && !o.model && (role.model.providerId !== model.providerId || role.model.model !== model.model) && !task?.roleModels?.[role.id] && !rt.roleModelWarned.has(warnKey)) {
+    rt.roleModelWarned.add(warnKey);
+    rt.activity('log', `${role.name} 指定的模型 ${role.model.model} 当前不可用（服务已删除、停用或本次运行中报错），改用 ${model.model}。可在「协同设计」里修改这个角色的模型。`, { taskId: task?.id, agentId, nodeId: node?.id });
+  }
   const runId = uid('run-');
   const stamp = () => {
     if (!node) return;
     node.model = model.model;
     node.providerId = model.providerId;
     node.protocol = provider.config.protocol;
-    node.effort = rt.resolveEffort(agentId, model, task, role?.modelClass).level;
+    node.effort = rt.resolveEffort(agentId, model, task, role?.modelClass, role?.effort).level;
   };
   if (node) {
     node.runId = runId;
@@ -208,7 +215,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
     node.errorInfo = undefined;
     if (task) rt.touch(task);
   }
-  const effort = rt.resolveEffort(agentId, model, task, role?.modelClass).level;
+  const effort = rt.resolveEffort(agentId, model, task, role?.modelClass, role?.effort).level;
   const system = systemPromptFor(rt, agentId, role);
   /** one model call; if the service says it does not offer this (routed) model, switch once to a working one */
   let switched = false;

@@ -21,7 +21,7 @@ const spec = (t: Task) => t.designSpec!;
 const run = (t: Task) => (t.flowRun ??= { cursor: 0, iter: {}, rejections: {} });
 const iterOf = (t: Task, stepId: string) => run(t).iter[stepId] ?? 1;
 const roleOf = (d: CollabDesign, id?: string) => d.roles.find((r) => r.id === id);
-export const roleRun = (t: Task, r: RoleSpec): RoleRun => ({ key: `r:${t.design?.id ?? 'x'}:${r.id}`, id: r.id, name: r.name, prompt: r.prompt, modelClass: r.modelClass });
+export const roleRun = (t: Task, r: RoleSpec): RoleRun => ({ key: `r:${t.design?.id ?? 'x'}:${r.id}`, id: r.id, name: r.name, prompt: r.prompt, modelClass: r.modelClass, model: r.model, effort: r.effort });
 
 /** Steps that run together starting at `i` (a step plus following `parallel` steps). */
 function groupAt(d: CollabDesign, i: number): StepSpec[] {
