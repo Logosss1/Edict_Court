@@ -94,6 +94,12 @@ export class Official {
   private nextIdleVariant = Date.now() + 4000 + Math.random() * 9000;
   private lastCompleted = -1;
   frozen = false; // replay / scripted motion owns this official
+  /** 朝堂布局: the loop this official plays when idle ('' = tea / stretch / look variants) */
+  idleAnim = '';
+  /** 朝堂布局: facing to return to after scripted motion */
+  homeFacing: Facing | null = null;
+  /** placed by a design's court layout (not one of the built-in officials) */
+  seat = false;
 
   constructor(scene: any, key: string, x: number, y: number, o: OfficialOpts = {}) {
     this.scene = scene;
@@ -349,6 +355,7 @@ export class Official {
   /** idle officials sip tea, stretch or look around now and then */
   idle(now = Date.now()) {
     if (this.frozen) return;
+    if (this.idleAnim) return this.play(this.idleAnim);
     if (this.seated || this.facing !== 'front') return this.play('idle');
     if (this.idleVariant && now < this.idleVariant.until) return this.play(this.idleVariant.anim);
     if (this.idleVariant) {

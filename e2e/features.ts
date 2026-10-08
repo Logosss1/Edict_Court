@@ -228,6 +228,10 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const list: any[] = await inv('designList');
     const copy = list.find((d) => !d.native);
     ok('复制 Full Court 为我的设计（v1）', !!copy && copy.activeVersion === 1, copy?.name);
+    await win.waitForSelector('[data-testid=design-editor]');
+    ok('复制后直接进入编辑器', true);
+    await win.click('[data-testid=design-editor] .de-head button.btn >> text=返回');
+    await win.waitForSelector('[data-testid=design-set-default]');
     await win.click('[data-testid=design-set-default]');
     await win.waitForTimeout(300);
     await shot('40-designs-panel');
@@ -259,6 +263,111 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     ok('版本回滚：v2 → v1', after.find((d) => d.id === copy.id).activeVersion === 1);
     const audit: any[] = await inv('auditList', undefined, 400);
     ok('设计操作全程审计', ['design_saved', 'design_copied', 'design_activated'].every((a) => audit.some((e) => e.action === a)));
+  }
+
+  if (want('designer')) {
+    // 协同设计编辑器: blank design → canvas drag & drop → form → court layout → save → court follows it
+    const center = async (sel: string) => { await win.locator(sel).scrollIntoViewIfNeeded(); const b = (await win.locator(sel).boundingBox())!; return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    await win.evaluate(() => (window as any).__edictUI.setUI({ sideView: null }));
+    await win.evaluate(() => (window as any).__openPanel('designs'));
+    await win.click('[data-testid=design-new]');
+    await win.waitForSelector('[data-testid=flow-canvas]');
+    ok('新建空白设计：校验通过', (await win.textContent('[data-testid=de-issues]'))!.includes('校验通过'));
+    await win.fill('[data-testid=de-name]', 'E2E 自定义协作');
+    const drag = async (from: string, dest: { x: number; y: number } | string) => {
+      await win.locator(from).scrollIntoViewIfNeeded();
+      const b = (await win.locator(from).boundingBox())!;
+      const to = typeof dest === 'string' ? await center(dest) : dest;
+      await win.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+      await win.mouse.down();
+      await win.mouse.move(b.x + b.width / 2 + 10, b.y + b.height / 2 + 10, { steps: 3 });
+      await win.mouse.move(to.x, to.y, { steps: 8 });
+      await win.mouse.up();
+      await win.waitForTimeout(150);
+    };
+    const lane = async (name: string) => (await win.locator(`.fc-lane:has(.fc-lane-h:text-is("${name}"))`).boundingBox())!;
+    // drag a review in from the palette into the 汇总 lane after the last column
+    const report = await lane('汇总');
+    const last = (await win.locator('.fc-card:not(.fixed)').last().boundingBox())!;
+    await drag('[data-testid=fc-new-review]', { x: last.x + last.width + 110, y: report.y + report.height / 2 });
+    const cards = await win.$$eval('.fc-card:not(.fixed)', (els) => els.map((e) => e.getAttribute('data-testid')));
+    ok('画布：从工具条拖入一个审议步骤', cards.length === 3 && cards[2] === 'fc-card-review', cards.join(','));
+    // point its rejection back at the first step with the ↺ knob
+    await drag('[data-testid=fc-knob-review]', '[data-testid=fc-card-step]');
+    await win.click('[data-testid=fc-card-review]');
+    ok('画布：拖 ↺ 设定封驳退回到第一步', (await win.locator('.fc-reject-t').count()) === 1 && (await win.$eval('[data-testid=sf-reject]', (e) => (e as HTMLSelectElement).value)) === 'step');
+    // assign a role by dropping its chip on the review
+    const roleChip = win.locator('[data-testid^=fc-role-]').nth(1);
+    const roleId = (await roleChip.getAttribute('data-testid'))!.replace('fc-role-', '');
+    await drag(`[data-testid=fc-role-${roleId}]`, '[data-testid=fc-card-review]');
+    // drop a new single step on top of the first column → runs in parallel with it
+    await drag('[data-testid=fc-new-agent]', '[data-testid=fc-card-step]');
+    const parTags = await win.locator('.fc-card .fc-tag >> text=并行').count();
+    ok('画布：拖到卡片正上方即与它并行', parTags === 1);
+    await win.click('[data-testid=fc-card-step2]');
+    await win.waitForSelector('[data-testid=step-form-step2]');
+    await win.fill('[data-testid=step-form-step2] [data-testid=sf-label]', '并行查资料');
+    await shot('44-designer-canvas');
+    // form view: add a role and rename it
+    await win.click('[data-testid=de-tab-form]');
+    await win.click('[data-testid=de-add-role]');
+    const roleForm = win.locator('[data-testid^=role-form-]').last();
+    await roleForm.locator('input.input').first().fill('史官');
+    ok('表单：添加并改名角色', (await win.locator('.de-item-h b >> text=史官').count()) === 1);
+    await shot('45-designer-form');
+    // court layout: auto seating, then drag a seat and make it sit at a desk
+    await win.click('[data-testid=de-tab-court]');
+    await win.click('[data-testid=court-layout-auto]');
+    await win.waitForSelector('[data-testid=cl-stage]');
+    const seats = await win.locator('[data-testid^=cl-seat-]').count();
+    ok('朝堂布局：按角色自动排班', seats === 3, String(seats));
+    const stage = (await win.locator('[data-testid=cl-stage]').boundingBox())!;
+    const firstSeat = (await win.locator('[data-testid^=cl-seat-]').first().getAttribute('data-testid'))!.replace('cl-seat-', '');
+    await drag(`[data-testid=cl-seat-${firstSeat}]`, { x: stage.x + 330, y: stage.y + 220 });
+    await win.click(`[data-testid=cl-pose-sit]`);
+    await win.selectOption('[data-testid=cl-idle]', 'write');
+    await shot('46-designer-court-layout');
+    await win.click('[data-testid=de-save]');
+    await win.waitForSelector('[data-testid=design-set-default]');
+    const mine = ((await inv('designList')) as any[]).find((d) => d.name === 'E2E 自定义协作');
+    const spec: any = mine && (await inv('designGet', mine.id));
+    const review = spec?.steps.find((s: any) => s.id === 'review');
+    const seat = spec?.court?.seats.find((s: any) => s.role === firstSeat);
+    ok('保存：流程、并行、封驳、角色与朝堂布局都写入新设计', !!spec && review?.onReject?.goto === 'step' && review.role === roleId && spec.steps.find((s: any) => s.id === 'step2')?.parallel === true
+      && spec.roles.some((r: any) => r.name === '史官') && seat?.pose === 'sit' && seat.idle === 'write' && Math.abs(seat.x - 330) <= 2 && spec.court.hideBuiltin === true, JSON.stringify({ review, step2: spec?.steps.find((s: any) => s.id === 'step2'), roles: spec?.roles.map((r: any) => r.name), seat }));
+    // the court follows the chosen design's layout
+    await win.click('[data-testid=design-set-default]');
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'court', courtScene: 'taihe' }));
+    await win.waitForFunction(() => (window as any).__court?.officials?.().some((o: any) => o.seat), null, { timeout: 15000 });
+    const offs: any[] = await win.evaluate(() => (window as any).__court.officials());
+    const names = spec.court.seats.filter((s: any) => s.scene === 'taihe').map((s: any) => spec.roles.find((r: any) => r.id === s.role).name);
+    const sat = offs.find((o) => o.label === spec.roles.find((r: any) => r.id === firstSeat).name);
+    ok('朝堂按设计布局：只站本设计的角色，位置与姿态一致', offs.every((o) => o.seat) && names.every((n: string) => offs.some((o) => o.label === n)) && !!sat && sat.seated && Math.abs(sat.x - seat.x) <= 1, offs.map((o) => `${o.label}@${o.x},${o.y}`).join(' '));
+    await win.waitForTimeout(900);
+    await shot('47-court-custom-layout');
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
+    await inv('updateSettings', { defaultDesign: 'edict-court' });
+  }
+
+  if (want('tips')) {
+    // hover descriptions on the activity bar and the 军机处 list
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: 'court' }));
+    await win.mouse.move(700, 450);
+    await win.hover('[data-testid=ab-designs]');
+    await win.waitForSelector('[data-testid=tip]', { timeout: 3000 });
+    const t1 = await win.textContent('[data-testid=tip]');
+    ok('活动栏悬停显示名称与一行说明', !!t1 && t1.includes('协同设计') && t1.includes('分工协作'), t1 ?? '');
+    await shot('48-tip-activitybar');
+    await win.hover('[data-testid=ab-court-mode]');
+    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('⌘J'), null, { timeout: 3000 });
+    ok('带快捷键的入口在提示里显示快捷键', true);
+    await win.hover('.court-nav-item >> text=奏折阁');
+    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('回奏存档'), null, { timeout: 3000 });
+    ok('军机处侧栏各项也有悬停说明', true);
+    await shot('49-tip-court-nav');
+    await win.mouse.move(700, 450);
+    await win.waitForTimeout(200);
+    ok('移开鼠标提示消失', (await win.locator('[data-testid=tip]').count()) === 0);
   }
 
   if (want('sidebar')) {

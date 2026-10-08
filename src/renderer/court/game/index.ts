@@ -23,6 +23,8 @@ export interface CourtGame {
   stopReplay(): void;
   /** for tests: pin the clock to an hour (null = real time) */
   setHour(h: number | null): void;
+  /** for tests: the officials standing in the current scene */
+  officials(): { key: string; label: string; x: number; y: number; seat: boolean; seated: boolean; anim: string }[];
 }
 
 export async function createCourtGame(parent: HTMLElement, model: CourtModel, events: CourtEvents, initial: SceneKey, opts: { weather?: Weather } = {}): Promise<CourtGame> {
@@ -59,7 +61,7 @@ export async function createCourtGame(parent: HTMLElement, model: CourtModel, ev
     setModel(m) {
       bridge.model = m;
       try {
-        cur()?.sync(m);
+        cur()?.syncAll(m);
       } catch (e) {
         console.error('[court] sync failed', e);
       }
@@ -116,6 +118,11 @@ export async function createCourtGame(parent: HTMLElement, model: CourtModel, ev
     setHour(h) {
       bridge.hourOverride = h;
       cur()?.applyTime?.();
+    },
+    officials() {
+      const c = cur();
+      if (!c) return [];
+      return [...c.officials.entries()].map(([key, o]: [string, any]) => ({ key, label: o.tag?.text ?? '', x: o.x, y: o.y, seat: !!o.seat, seated: !!o.seated, anim: o.current }));
     },
   };
 }

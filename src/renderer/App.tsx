@@ -2,6 +2,7 @@ import { useEffect, useState, lazy, Suspense, Component, type ReactNode } from '
 import { useStore, setUI, onMenu, getState, openPanel, toast } from './store';
 import { call, isMac } from './api';
 import { Icon } from './common/Icon';
+import { TipLayer } from './common/Tip';
 import { fmtCost, fmtTokens, usageTokens } from './common/format';
 import { Workbench } from './workbench/Workbench';
 import { ApprovalsDock } from './workbench/Approvals';
@@ -87,6 +88,7 @@ export function App() {
       </div>
       <ApprovalsDock />
       <Toasts />
+      <TipLayer />
       <CommandPalette />
       <CeremonyOverlay />
       <PromptHost />

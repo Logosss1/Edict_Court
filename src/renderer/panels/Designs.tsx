@@ -1,5 +1,6 @@
 // 协同设计 — the collaboration designs library: built-in 三省六部 (read-only) and user designs with
-// versions, rollback, enable/disable, copy and "default for new edicts". (Editing UI: Phase 2.)
+// versions, rollback, enable/disable, copy, "default for new edicts", and the editor (flow canvas,
+// forms, court layout) for user designs.
 import { useEffect, useState } from 'react';
 import { useStore, toast } from '../store';
 import { call } from '../api';
@@ -7,6 +8,8 @@ import { Icon } from '../common/Icon';
 import { AGENT_MAP } from '../../shared/court';
 import { BUILTIN_DESIGN_ID, PHASE_LABEL, type CollabDesign, type DesignPhase } from '../../shared/design';
 import { fmtTime } from '../common/format';
+import { DesignEditor } from './designs/DesignEditor';
+import { blankDesign, type Draft } from './designs/edit';
 
 const ORIGIN: Record<string, string> = { builtin: '内置', user: '自建', copy: '复制', github: 'GitHub 导入' };
 const STEP_TYPE: Record<string, string> = { agent: '单人执行', plan: '规划拆解', review: '审议（可封驳）', fanout: '分派执行', summary: '汇总', gate: '皇上关卡' };
@@ -19,6 +22,7 @@ export function Designs() {
   const [version, setVersion] = useState<number | null>(null);
   const [spec, setSpec] = useState<CollabDesign | null>(null);
   const [json, setJson] = useState(false);
+  const [editing, setEditing] = useState<Draft | null>(null);
   const info = designs.find((d) => d.id === sel) ?? designs[0];
   useEffect(() => {
     if (!info) return;
@@ -28,19 +32,27 @@ export function Designs() {
   const copy = async (tier?: 'lite' | 'full') => {
     try {
       const d = await call<CollabDesign>('designCopy', info!.id, tier ? { tier } : {});
-      toast(`已复制为「${d.name}」`, 'success');
+      toast(`已复制为「${d.name}」，可以开始编辑`, 'success');
       setSel(d.id);
       setVersion(null);
+      setEditing(d);
     } catch (e) {
       toast((e as Error).message, 'error');
     }
   };
+  if (editing) {
+    return (
+      <div className="panel designs-panel editing" data-testid="designs-panel">
+        <DesignEditor key={editing.id || 'new'} initial={editing} onClose={() => setEditing(null)} onSaved={(id) => { setEditing(null); setSel(id); setVersion(null); }} />
+      </div>
+    );
+  }
   if (!info) return <div className="panel muted pad">加载中…</div>;
   const viewing = version ?? info.activeVersion;
   return (
     <div className="panel split-panel designs-panel" data-testid="designs-panel">
       <div className="split-list">
-        <div className="panel-head"><h2><Icon name="layers" size={18} /> 协同设计</h2></div>
+        <div className="panel-head"><h2><Icon name="layers" size={18} /> 协同设计</h2><span style={{ flex: 1 }} /><button className="btn sm primary" onClick={() => setEditing(blankDesign() as Draft)} data-testid="design-new"><Icon name="plus" size={12} /> 新建</button></div>
         <p className="muted small pad">一套「谁参与、按什么步骤、怎么评审与返工」的协作逻辑。下旨时选择使用哪一套；切换或回滚不影响已经在跑的旨意。</p>
         {designs.map((d) => (
           <div key={d.id} className={`list-item ${sel === d.id ? 'on' : ''} ${d.status === 'disabled' ? 'off' : ''}`} onClick={() => { setSel(d.id); setVersion(null); }} data-testid={`design-item-${d.id}`}>
@@ -68,6 +80,7 @@ export function Designs() {
               </>
             ) : (
               <>
+                <button className="btn sm primary" disabled={!spec || spec.id !== info.id} onClick={() => spec && setEditing(spec)} data-testid="design-edit"><Icon name="edit" size={12} /> {viewing === info.activeVersion ? '编辑' : `基于 v${viewing} 编辑`}</button>
                 <button className="btn sm" onClick={() => copy()}><Icon name="copy" size={12} /> 复制</button>
                 <button className="btn sm" onClick={() => call('designSetStatus', info.id, info.status === 'active' ? 'disabled' : 'active').catch((e) => toast(e.message, 'error'))} data-testid="design-toggle">{info.status === 'active' ? '停用' : '启用'}</button>
               </>
@@ -90,7 +103,7 @@ export function Designs() {
               )}
             </div>
           )}
-          {info.native && <div className="notice small">内置三省六部按 Solo / Court Lite / Full Court 三档运行（在下旨框选择）。下方展示的是 Full Court 的声明式描述；复制后即可在自己的设计里增删角色与步骤。</div>}
+          {info.native && <div className="notice small">内置三省六部按 Solo / Court Lite / Full Court 三档运行（在下旨框选择），不能直接修改。点上方「复制」得到一份自己的设计，就可以用流程画布或表单增删角色、调整步骤，并安排朝堂里谁站在哪。也可以点左上角「新建」从空白开始。</div>}
         </div>
         {spec && (
           <>

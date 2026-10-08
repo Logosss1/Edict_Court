@@ -67,6 +67,34 @@ export interface DesignPolicies {
   resilience: ResiliencePolicy;
 }
 
+// ───────────────────────── 朝堂布局 (display only) ─────────────────────────
+// Where each role stands in the pixel court and what it does when idle. Purely visual: never part of
+// the behaviour hash, never read by the runtime.
+export type CourtScene = 'taihe' | 'junjichu' | 'liubu' | 'chengtian';
+export type CourtPose = 'stand' | 'sit' | 'kneel';
+export type CourtFacing = 'front' | 'back' | 'left' | 'right';
+export const COURT_SCENES: CourtScene[] = ['taihe', 'junjichu', 'liubu', 'chengtian'];
+export const COURT_SCENE_LABEL: Record<CourtScene, string> = { taihe: '太和殿', junjichu: '军机处', liubu: '六部值房', chengtian: '承天门' };
+/** idle actions a seat may loop when its role has nothing to do ('' = the usual tea / stretch / look) */
+export const COURT_IDLE: Record<string, string> = {
+  '': '随意（喝茶、伸腰、张望）', read: '读书', write: '书写', abacus: '打算盘', scheme: '谋划', law: '查律', measure: '丈量',
+  seal: '用印', dispatch: '派发', search: '翻查', view: '远望', think: '沉思', tea: '喝茶', talk: '交谈', bow: '作揖',
+};
+export interface CourtSeat {
+  role: string;
+  scene: CourtScene;
+  x: number; // world units, 0..640
+  y: number; // feet, 40..360
+  facing: CourtFacing;
+  pose: CourtPose;
+  idle?: string; // key of COURT_IDLE
+  desk?: boolean; // draw a writing desk in front (seated poses)
+}
+export interface CourtLayout {
+  seats: CourtSeat[];
+  hideBuiltin: boolean; // true: only this design's roles stand in the court
+}
+
 export interface CollabDesign {
   schema: typeof DESIGN_SCHEMA;
   id: string;
@@ -78,6 +106,7 @@ export interface CollabDesign {
   roles: RoleSpec[];
   steps: StepSpec[];
   policies: DesignPolicies;
+  court?: CourtLayout;
   createdAt: number;
   note?: string; // change note for this version
 }
@@ -127,7 +156,7 @@ export function designBody(d: CollabDesign) {
 
 // ───────────────────────── validation ─────────────────────────
 const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
-const AVATARS: AgentId[] = ['taizi', 'zhongshu', 'menxia', 'shangshu', 'hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'zaochao', 'solo'];
+export const AVATARS: AgentId[] = ['taizi', 'zhongshu', 'menxia', 'shangshu', 'hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'zaochao', 'solo'];
 
 /** Shortest legal path between two states over the protected state machine (no terminal / Blocked hops). */
 export function statePath(from: TaskState, to: TaskState): TaskState[] | null {
@@ -265,7 +294,31 @@ export function validateDesign(input: unknown): ValidationResult & { design?: Co
     if (s?.role) used.add(s.role);
     for (const e of s?.executors ?? []) used.add(e);
   }
+  if (d.court !== undefined) validateCourt(d.court, roleIds, errors);
   for (const r of roles) if (r && !used.has(r.id)) warnings.push(`角色「${r.name}」没有被任何步骤使用`);
   if (!steps.some((s) => s?.type === 'review' || s?.type === 'gate')) warnings.push('流程中没有任何审议或关卡：产出不经复核直接结案');
   return errors.length ? { ok: false, errors, warnings } : { ok: true, errors, warnings, design: d as CollabDesign };
+}
+
+function validateCourt(c: unknown, roleIds: Set<string>, errors: string[]) {
+  const l = c as Partial<CourtLayout> | null;
+  if (!l || typeof l !== 'object' || !Array.isArray(l.seats) || typeof l.hideBuiltin !== 'boolean') return void errors.push('朝堂布局格式错误');
+  if (l.seats.length > 24) errors.push('朝堂布局最多 24 个站位');
+  const seen = new Set<string>();
+  for (const s of l.seats) {
+    if (!s || typeof s !== 'object') {
+      errors.push('朝堂站位格式错误');
+      continue;
+    }
+    const who = `朝堂站位「${s.role}」`;
+    if (!roleIds.has(s.role)) errors.push(`${who} 对应的角色不存在`);
+    if (seen.has(s.role)) errors.push(`${who} 重复：每个角色只能站一个位置`);
+    seen.add(s.role);
+    if (!COURT_SCENES.includes(s.scene)) errors.push(`${who} 的场景无效`);
+    if (!(typeof s.x === 'number' && s.x >= 0 && s.x <= 640 && typeof s.y === 'number' && s.y >= 40 && s.y <= 360)) errors.push(`${who} 的位置超出场景`);
+    if (!['front', 'back', 'left', 'right'].includes(s.facing)) errors.push(`${who} 的朝向无效`);
+    if (!['stand', 'sit', 'kneel'].includes(s.pose)) errors.push(`${who} 的姿态无效`);
+    if (s.idle !== undefined && !(s.idle in COURT_IDLE)) errors.push(`${who} 的空闲动作无效`);
+    if (s.desk !== undefined && typeof s.desk !== 'boolean') errors.push(`${who} 的案几设置无效`);
+  }
 }

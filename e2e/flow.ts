@@ -99,7 +99,7 @@ const ok = (step: string, cond: boolean, note?: string) => {
   ok('磁盘改动实时刷新到 Editor', refreshed.includes('edited on disk'));
   await win.click('.tree-row:has-text("index.ts")');
   await win.waitForTimeout(2500);
-  await win.click('button[title^="终端"]');
+  await win.click('button[data-tip^="终端"]');
   await win.click('.bp-tab:has-text("问题")');
   await win.waitForTimeout(500);
   const probs = await win.$$eval('.problem', (els) => els.length);
@@ -115,7 +115,7 @@ const ok = (step: string, cond: boolean, note?: string) => {
   await shot('06-terminal');
 
   // 5. global search & replace
-  await win.click('.ab-item[title^="全局搜索"]');
+  await win.click('.ab-item[data-tip^="全局搜索"]');
   await win.fill('#search-input', 'greet');
   await win.press('#search-input', 'Enter');
   await win.waitForSelector('.sr-hit', { timeout: 5000 });
@@ -124,7 +124,7 @@ const ok = (step: string, cond: boolean, note?: string) => {
 
   // 6. Full Court: plan gate → emperor edits the plan in the COURT review overlay (L2)
   await inv('updateSettings', { permissionMode: 'auto' });
-  await win.click('.ab-item[title="资源管理器"]');
+  await win.click('.ab-item[data-tip="资源管理器"]');
   await win.click('[title="新旨意"]').catch(() => {});
   await win.fill('#composer-input', '写一个 greet 函数并测试（完整流程）');
   await win.click('.tier-seg button:has-text("Full Court")');

@@ -2,6 +2,7 @@
 // store as the workbench, so both modes always show identical progress.
 import type { AgentId, AgentRuntime, ApprovalRequest, Debate, NewsItem, Task, Memorial, Activity } from '../../../shared/types';
 import type { PanelId } from '../../store';
+import type { CourtLayout } from '../../../shared/design';
 
 export type SceneKey = 'taihe' | 'junjichu' | 'liubu' | 'chengtian';
 export type Weather = 'clear' | 'rain' | 'snow' | 'petals';
@@ -25,7 +26,16 @@ export interface CourtModel {
   lastActivity: Record<string, Activity | undefined>; // per agent latest activity
   emperorSaid: { text: string; at: number } | null;
   totalsText: string;
+  /** the chosen 协同设计's own court layout (null = built-in seating) */
+  court: CourtView | null;
 }
+
+export interface CourtView {
+  layout: CourtLayout;
+  roles: Record<string, { name: string; avatar: AgentId }>;
+}
+
+export const courtSig = (c: CourtView | null | undefined) => (c ? JSON.stringify(c) : '');
 
 export interface CourtEvents {
   clickAgent: (id: AgentId) => void;

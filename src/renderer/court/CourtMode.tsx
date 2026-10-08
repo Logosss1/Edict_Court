@@ -1,11 +1,11 @@
 // 朝堂模式 — the pixel court. Same runtime, same data as the workbench; only the projection differs.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { EffortSlider } from '../common/EffortSlider';
-import { BUILTIN_DESIGN_ID } from '../../shared/design';
+import { BUILTIN_DESIGN_ID, type CollabDesign } from '../../shared/design';
 import { useStore, setUI, getState, selectTask, toast, openTaskTab, openPanel } from '../store';
 import { call } from '../api';
 import { createCourtGame, type CourtGame } from './game';
-import type { CourtModel, SceneKey, Weather } from './game/model';
+import type { CourtModel, CourtView, SceneKey, Weather } from './game/model';
 import type { Activity, AgentId, Task, Tier } from '../../shared/types';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL, TIER_SHORT } from '../../shared/court';
 import { statusLabel } from '../panels/Monitor';
@@ -16,6 +16,7 @@ import { LiubuScreen } from './LiubuScreen';
 import { DebateView } from '../panels/Debate';
 import { useTodayStats } from '../panels/Ceremony';
 import { fmtTokens, fmtTime } from '../common/format';
+import { tip } from '../common/Tip';
 
 const WEATHERS: { key: Weather; label: string }[] = [
   { key: 'clear', label: '晴' },
@@ -67,11 +68,11 @@ export function tasksHandledBy(tasks: Task[], id: AgentId): Task[] {
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-const SCENES: { key: SceneKey; label: string; kbd: string }[] = [
-  { key: 'taihe', label: '太和殿', kbd: '⌘1' },
-  { key: 'junjichu', label: '军机处值房', kbd: '⌘2' },
-  { key: 'liubu', label: '六部值房', kbd: '⌘3' },
-  { key: 'chengtian', label: '承天门', kbd: '⌘4' },
+const SCENES: { key: SceneKey; label: string; kbd: string; desc: string }[] = [
+  { key: 'taihe', label: '太和殿', kbd: '⌘1', desc: '百官上朝，奏折在这里呈给皇上御批' },
+  { key: 'junjichu', label: '军机处值房', kbd: '⌘2', desc: '旨意折子墙和流转链' },
+  { key: 'liubu', label: '六部值房', kbd: '⌘3', desc: '各部办差现场与办过的旨意' },
+  { key: 'chengtian', label: '承天门', kbd: '⌘4', desc: '告示榜，击鼓上朝' },
 ];
 
 function latestPerAgent(acts: Record<string, Activity[]>): Record<string, Activity | undefined> {
@@ -85,6 +86,25 @@ function latestPerAgent(acts: Record<string, Activity[]>): Record<string, Activi
     }
   }
   return out;
+}
+
+/** the 朝堂布局 of the 协同设计 chosen for new edicts (null: built-in seating) */
+function useCourtLayout(): CourtView | null {
+  const designs = useStore((s) => s.designs);
+  const id = useStore((s) => s.settings.defaultDesign) ?? BUILTIN_DESIGN_ID;
+  const info = designs.find((d) => d.id === id && d.status === 'active' && !d.native);
+  const [view, setView] = useState<CourtView | null>(null);
+  useEffect(() => {
+    if (!info) return setView(null);
+    let live = true;
+    call<CollabDesign | null>('designGet', info.id)
+      .then((d) => live && setView(d?.court ? { layout: d.court, roles: Object.fromEntries(d.roles.map((r) => [r.id, { name: r.name, avatar: r.avatar }])) } : null))
+      .catch(() => live && setView(null));
+    return () => {
+      live = false;
+    };
+  }, [info?.id, info?.activeVersion, info?.latestVersion]); // eslint-disable-line react-hooks/exhaustive-deps
+  return view;
 }
 
 export function CourtMode({ active }: { active: boolean }) {
@@ -113,6 +133,7 @@ export function CourtMode({ active }: { active: boolean }) {
   const selectedTaskId = useStore((s) => s.ui.selectedTaskId);
   const ceremony = useStore((s) => s.ui.ceremony);
   const stats = useTodayStats();
+  const court = useCourtLayout();
 
   const debate = useMemo(() => {
     const live = debates.filter((d) => d.status === 'running' || d.status === 'idle' || d.status === 'paused').sort((a, b) => b.updatedAt - a.updatedAt);
@@ -127,8 +148,9 @@ export function CourtMode({ active }: { active: boolean }) {
       lastActivity: latestPerAgent(activities),
       emperorSaid: human ? { text: human.content.replace(/^皇上/, '').replace(/^(下旨（\w+）：|于朝堂插话：)/, ''), at: human.at } : null,
       totalsText: `今日下旨 ${stats.issued} · 结案 ${stats.done} · 待批 ${stats.gates} · ${fmtTokens(stats.tokens)} tok`,
+      court,
     };
-  }, [tasks, agents, approvals, debate, news, memorials, activities, selectedTaskId, dept, ceremony, stats.issued, stats.done, stats.gates, stats.tokens]);
+  }, [tasks, agents, approvals, debate, news, memorials, activities, selectedTaskId, dept, ceremony, stats.issued, stats.done, stats.gates, stats.tokens, court]);
 
   // boot Phaser once
   useEffect(() => {
@@ -272,7 +294,7 @@ export function CourtMode({ active }: { active: boolean }) {
     <div className="court" data-testid="court">
       <div className="court-hud pixel">
         {SCENES.map((s) => (
-          <button key={s.key} className={`px-btn ${scene === s.key ? 'on' : ''}`} onClick={() => setUI({ courtScene: s.key })} title={s.kbd}>
+          <button key={s.key} className={`px-btn ${scene === s.key ? 'on' : ''}`} onClick={() => setUI({ courtScene: s.key })} {...tip(s.label, s.desc, s.kbd, 'below')}>
             {s.label}
           </button>
         ))}
@@ -286,17 +308,17 @@ export function CourtMode({ active }: { active: boolean }) {
           </span>
         )}
         <span style={{ flex: 1 }} />
-        <span className="px-hint" title="方向键 / WASD 或点击地面：皇上漫步；走到门口进入下一殿；靠近官员按空格召见；Esc 回御座">✦ 漫步</span>
-        <select className="px-select" value={replaying ?? ''} onChange={(e) => startReplay(e.target.value)} title="奏折回放：把一道已结案旨意的流转重演一遍" data-testid="court-replay">
+        <span className="px-hint" {...tip('皇上漫步', '方向键或点地面走动，走到门口换殿；靠近官员按空格召见，Esc 回御座', undefined, 'below')}>✦ 漫步</span>
+        <select className="px-select" value={replaying ?? ''} onChange={(e) => startReplay(e.target.value)} {...tip('奏折回放', '把一道已结案旨意的流转在太和殿重演一遍', undefined, 'below')} data-testid="court-replay">
           <option value="">奏折回放…</option>
           {finished.map((t) => <option key={t.id} value={t.id}>{t.title.slice(0, 16)}</option>)}
         </select>
-        <span className="px-seg" title="天气（仅外观）" data-testid="court-weather">
+        <span className="px-seg" {...tip('天气', '只改变画面，不影响办差', undefined, 'below')} data-testid="court-weather">
           {WEATHERS.map((w) => (
             <button key={w.key} className={`px-btn sm ${weather === w.key ? 'on' : ''}`} onClick={() => changeWeather(w.key)}>{w.label}</button>
           ))}
         </span>
-        <button className={`px-btn sm ${sound ? 'on' : ''}`} onClick={toggleSound} title="钟鼓与鸟鸣（默认关闭）" data-testid="court-sound">{sound ? '声 开' : '声 关'}</button>
+        <button className={`px-btn sm ${sound ? 'on' : ''}`} onClick={toggleSound} {...tip('声音', '钟鼓、鸟鸣和猫叫，默认关闭', undefined, 'below')} data-testid="court-sound">{sound ? '声 开' : '声 关'}</button>
         {gates.length > 0 && (
           <button className="px-btn warn" onClick={() => setUI({ review: { taskId: gates[0].id } })} data-testid="court-gates">
             奏折待批 ×{gates.length}
@@ -480,7 +502,7 @@ function EmperorBox({ debateId }: { debateId: string | null }) {
             </span>
           )}
           {mode === 'edict' && designs.length > 1 && (
-            <select className="px-select" value={design?.id ?? BUILTIN_DESIGN_ID} onChange={(e) => call('updateSettings', { defaultDesign: e.target.value })} title="协同设计" data-testid="court-design-pick">
+            <select className="px-select" value={design?.id ?? BUILTIN_DESIGN_ID} onChange={(e) => call('updateSettings', { defaultDesign: e.target.value })} {...tip('协同设计', '新下的旨意按哪套协作流程办；朝堂也按它的布局摆', undefined, 'below')} data-testid="court-design-pick">
               {designs.map((d) => <option key={d.id} value={d.id}>{d.native ? '三省六部' : d.name}</option>)}
             </select>
           )}

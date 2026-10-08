@@ -5,7 +5,7 @@
 import type { AgentId, RunNode, Task } from '../../../shared/types';
 import { AGENT_MAP, AGENTS, KANBAN_COLUMNS, STATE_LABEL, TERMINAL } from '../../../shared/court';
 import { Official, ensureAnims, nativeText, resolveBubbles, toolAnim } from './official';
-import { FONT, WORLD_W, WORLD_H, DETAIL, type CourtEvents, type CourtModel, type SceneKey, type Weather } from './model';
+import { FONT, WORLD_W, WORLD_H, DETAIL, courtSig, type CourtEvents, type CourtModel, type SceneKey, type Weather } from './model';
 
 export interface Bridge {
   model: CourtModel;
@@ -187,6 +187,7 @@ export function makeScenes(P: any, bridge: Bridge) {
     walking = 0; // token for click-to-walk
     idleTick = 0;
     lanterns: { spr: any; glow: any; id: string }[] = [];
+    seatSig = '';
     constructor(key: SceneKey) {
       super(key);
       this.key = key;
@@ -203,6 +204,7 @@ export function makeScenes(P: any, bridge: Bridge) {
       this.spots = this.cache.json.get(`spots_${this.key}`)?.spots ?? {};
       img(this, 0, 0, `bg_${this.key}`).setOrigin(0, 0).setDepth(-10);
       this.build();
+      this.applyLayout();
       this.doors();
       this.ambient();
       this.spawnEmperor();
@@ -211,7 +213,7 @@ export function makeScenes(P: any, bridge: Bridge) {
       bridge.current = this;
       bridge.events.sceneChanged(this.key);
       this.cameras.main.fadeIn(220, 20, 12, 10);
-      this.sync(bridge.model);
+      this.syncAll(bridge.model);
       this.events.once('shutdown', () => {
         if (bridge.current === this) bridge.current = null;
         this.officials.forEach((o) => o.destroy());
@@ -222,6 +224,58 @@ export function makeScenes(P: any, bridge: Bridge) {
     }
     build() {}
     sync(_m: CourtModel) {}
+    /** model update: rebuild when the 朝堂布局 changed, else let the scene sync, then the layout's seats */
+    syncAll(m: CourtModel) {
+      if (courtSig(m.court) !== this.seatSig) {
+        if (!(this as any).busy) this.scene.restart();
+        return;
+      }
+      this.sync(m);
+      if (this.key === 'taihe') return; // 太和殿 already drives every official
+      for (const [key, o] of this.officials) {
+        if (!o.seat) continue;
+        const id = key.split('#')[0];
+        o.applyStatus(m.agents[id], snippetFor(m, id), toolFor(m, id));
+      }
+    }
+
+    /** place the chosen design's roles where its 朝堂布局 says (replacing the built-in seating if asked) */
+    applyLayout() {
+      const c = bridge.model.court;
+      this.seatSig = courtSig(c);
+      if (!c) return;
+      if (c.layout.hideBuiltin) {
+        this.officials.forEach((o) => o.destroy());
+        this.officials.clear();
+      }
+      for (const s of c.layout.seats) {
+        if (s.scene !== this.key) continue;
+        const r = c.roles[s.role];
+        if (!r) continue;
+        // a role takes over its avatar's built-in spot; a second role with the same avatar gets its own key
+        let key: string = r.avatar;
+        if (this.officials.get(key)?.seat) key = `${r.avatar}#${s.role}`;
+        this.officials.get(key)?.destroy();
+        const av = r.avatar;
+        const o = new Official(this, av, s.x, s.y, {
+          facing: s.facing, seated: s.pose === 'sit', role: av, label: r.name, color: '#f4e6c4',
+          onClick: (me) => bridge.events.agentMenu(av, me.x, me.y - 48),
+          onHover: (me, over) => bridge.events.hoverAgent(over ? { id: av, x: me.x, y: me.y - 48 } : null),
+        });
+        o.seat = true;
+        o.homeFacing = s.facing;
+        o.idleAnim = s.pose === 'kneel' ? 'kneel' : s.idle ?? '';
+        o.current = '';
+        o.idle();
+        if (s.pose === 'sit' && s.desk) img(this, s.x, s.y + 4, 'desk').setOrigin(0.5, 1).setDepth(s.y + 2);
+        this.officials.set(key, o);
+      }
+      const home = (this as any).home as Map<string, [number, number]> | undefined;
+      if (home) {
+        home.clear();
+        for (const [id, o] of this.officials) home.set(id, [o.x, o.y]);
+      }
+    }
     ambient() {}
 
     addOfficial(id: string, x: number, y: number, facing: 'front' | 'left' | 'right' | 'back', label?: string, key?: string) {
@@ -657,8 +711,9 @@ export function makeScenes(P: any, bridge: Bridge) {
     sync(m: CourtModel) {
       const d = m.debate;
       const speaking = d?.speaking;
-      for (const [id, o] of this.officials) {
+      for (const [key, o] of this.officials) {
         if (o.frozen) continue;
+        const id = key.split('#')[0];
         const a = m.agents[id];
         if (d && d.participants.includes(id as AgentId) && d.status !== 'concluded') {
           if (speaking === id) {
@@ -800,8 +855,8 @@ export function makeScenes(P: any, bridge: Bridge) {
         o.clearBubble(true);
         if (st.actor !== 'emperor') {
           await o.walkTo(hx, hy, st.anim === 'kneel' ? 800 : 380);
-          o.facing = (this.home.get(st.actor)?.[0] ?? 320) < 320 ? 'right' : 'left';
-          if (st.actor === 'taizi') o.facing = 'front';
+          o.facing = o.homeFacing ?? ((this.home.get(st.actor)?.[0] ?? 320) < 320 ? 'right' : 'left');
+          if (st.actor === 'taizi' && !o.homeFacing) o.facing = 'front';
           o.current = '';
           o.play('idle');
         } else {
@@ -836,12 +891,12 @@ export function makeScenes(P: any, bridge: Bridge) {
         this.tweens.killTweensOf(o.sprite);
         const h = this.home.get(id);
         if (h) o.setPos(h[0], h[1]);
-        o.facing = id === 'taizi' ? 'front' : (h?.[0] ?? 320) < 320 ? 'right' : 'left';
+        o.facing = o.homeFacing ?? (id === 'taizi' ? 'front' : (h?.[0] ?? 320) < 320 ? 'right' : 'left');
         o.frozen = false;
         o.current = '';
         o.clearBubble(true);
       }
-      this.sync(bridge.model);
+      this.syncAll(bridge.model);
       if (!silent) bridge.events.replayDone();
     }
   }
@@ -984,17 +1039,28 @@ export function makeScenes(P: any, bridge: Bridge) {
       txt(this, 405, 352, '六 部 值 房', { color: '#f2d27a', stroke: '#1a1220', strokeThickness: 3 }).setOrigin(0.5, 1).setDepth(9000);
     }
     sync(m: CourtModel) {
-      if (m.dept !== this.dept) {
-        this.officials.get(this.dept)?.destroy();
-        this.officials.delete(this.dept);
+      if (m.dept !== this.dept && m.court?.layout.hideBuiltin) {
         this.dept = m.dept;
         this.plaqueText.setText(`${AGENT_MAP[this.dept].name}值房`);
         this.prop?.setTexture(`dept_${this.dept}`);
+        return;
+      }
+      if (m.dept !== this.dept) {
+        const old = this.officials.get(this.dept);
+        if (old && !old.seat) {
+          old.destroy();
+          this.officials.delete(this.dept);
+        }
+        this.dept = m.dept;
+        this.plaqueText.setText(`${AGENT_MAP[this.dept].name}值房`);
+        this.prop?.setTexture(`dept_${this.dept}`);
+        if (this.officials.get(this.dept)?.seat) return;
         const o = this.addOfficial(this.dept, 130, 360, 'front');
         o.frozen = true;
         void o.walkTo(130, 292, 700).then(() => { o.facing = 'front'; o.current = ''; o.frozen = false; o.playFor('bow', 1200); });
       }
-      this.officials.get(this.dept)?.applyStatus(m.agents[this.dept], snippetFor(m, this.dept), toolFor(m, this.dept));
+      const own = this.officials.get(this.dept);
+      if (own && !own.seat) own.applyStatus(m.agents[this.dept], snippetFor(m, this.dept), toolFor(m, this.dept));
     }
   }
 

@@ -2,6 +2,20 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 1.2.2
+
+**What's new**
+- **Design your own collaboration**: user designs can now be edited, not just copied and rolled back.
+  - **Flow canvas**: phases are rows and steps run left to right. Drag a step to reorder it or change its phase; drop it on another step to run them in parallel; drag new steps in from the toolbar; drop a role on a step to assign it; drag a review's ↺ knob onto an earlier step to choose where a rejection sends the work.
+  - **Form editor**: every field of roles (name, duty, prompt, model tier, tool access, court figure), steps (type, phase, performer, executors, instruction, rejection target and limit, gates, inputs, parallel, optional, timeout) and rules (budget, rejection limit, parallelism, final 御批, self-healing). A JSON view is there for advanced edits.
+  - Each save is checked first and becomes a new version you can roll back. Edicts already running keep their version. **新建** starts from a blank design; copying 三省六部 opens the copy in the editor. The built-in 三省六部 itself stays read-only.
+- **Court layout per design**: place each role anywhere in 太和殿, 军机处, 六部值房 or 承天门, and choose facing, pose (standing, seated at a desk, kneeling) and what they do while idle (reading, writing, abacus, tea…). When an agent is working, its animation still follows the work. You can show only your design's roles or keep the built-in officials. The court uses the layout of the design chosen for new edicts. The layout is display-only and never changes how an edict runs.
+- **Hover descriptions**: every icon in the left activity bar, every item in the 军机处 list and the court toolbar shows its name, a one-line description and its shortcut after a short pause.
+
+**Install**: download `Edict-1.2.2-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data folder is kept when you install over 1.x.
+
+**Verified**: 50/50 unit + integration tests, 21/21 + 45/45 end-to-end UI checks (including dragging on the canvas and in the court layout, saving, and the court following the layout) and the court smoke test on Linux + Xvfb (mock LLM). Not yet verified with a real model service.
+
 ## 1.2.1
 
 **What's new**

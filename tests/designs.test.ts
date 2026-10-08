@@ -231,3 +231,61 @@ test('interpreter: restart mid-step → interrupted node → local retry resumes
   rt2.dispose();
   await mock.close();
 });
+
+test('court layout: validated, saved as its own version, never part of the behaviour hash', async () => {
+  const base = { ...customDesign(), id: 'x', version: 1, createdAt: 0 };
+  const seat = { role: 'coder', scene: 'taihe' as const, x: 300, y: 260, facing: 'front' as const, pose: 'sit' as const, idle: 'write', desk: true };
+  assert.ok(validateDesign({ ...base, court: { seats: [seat], hideBuiltin: true } }).ok);
+  const bad = (court: unknown) => validateDesign({ ...base, court } as never).errors.join('; ');
+  assert.match(bad({ seats: [{ ...seat, role: 'ghost' }], hideBuiltin: true }), /角色不存在/);
+  assert.match(bad({ seats: [seat, seat], hideBuiltin: true }), /重复/);
+  assert.match(bad({ seats: [{ ...seat, x: 900 }], hideBuiltin: true }), /超出场景/);
+  assert.match(bad({ seats: [{ ...seat, scene: 'moon' }], hideBuiltin: true }), /场景无效/);
+  assert.match(bad({ seats: [{ ...seat, idle: 'dance' }], hideBuiltin: true }), /空闲动作/);
+  assert.match(bad({ seats: [] }), /格式错误/);
+
+  const mock = await startMockLlm();
+  const rt = makeRuntime(mock.url);
+  const v1 = rt.designs.save(customDesign());
+  const v2 = rt.designs.save({ ...v1, court: { seats: [seat], hideBuiltin: true } }, '安排朝堂站位');
+  assert.equal(v2.version, 2, 'a layout change is a new version');
+  assert.equal(designHash(v1), designHash(v2), 'layout is display-only: behaviour hash unchanged');
+  assert.equal(rt.designs.save({ ...v2 }).version, 2, 'identical layout is a no-op save');
+  const v3 = rt.designs.save({ ...v2, court: { seats: [{ ...seat, x: 320 }], hideBuiltin: true } });
+  assert.equal(v3.version, 3);
+  assert.equal(rt.designs.get(v1.id)!.court!.seats[0].x, 320);
+  assert.equal(rt.designs.pin(v1.id).spec!.court!.seats[0].x, 320, 'pinned snapshot carries the layout');
+  rt.dispose();
+  await mock.close();
+});
+
+test('editor helpers: canvas placement, reference-safe removal, auto seating, blank design', async () => {
+  const { placeStep, removeStep, removeRole, renameStep, groupsOf, autoLayout, blankDesign, newStep } = await import('../src/renderer/panels/designs/edit');
+  const d = { ...customDesign(), id: 'x' };
+  const ok = (x: unknown) => validateDesign({ ...(x as object), version: 1, createdAt: 0 });
+  assert.ok(ok(blankDesign()).ok, ok(blankDesign()).errors.join('; '));
+  // drag the summary onto the review's column → they run in parallel, same phase
+  const par = placeStep(d, d.steps[3], 3, { mode: 'join', col: 2 }, 'report');
+  assert.deepEqual(groupsOf(par.steps).map((g) => g.map((i) => par.steps[i].id)), [['design'], ['build'], ['critique', 'notes']]);
+  assert.equal(par.steps[3].parallel, true);
+  // move it back to its own column at the end
+  const back = placeStep(par, par.steps[3], 3, { mode: 'insert', col: 3 }, 'report');
+  assert.equal(back.steps[3].parallel, undefined);
+  assert.ok(ok(back).ok);
+  // a new step dropped as the first column takes the lane's phase
+  const added = placeStep(d, newStep(d, 'agent'), null, { mode: 'insert', col: 0 }, 'plan');
+  assert.equal(added.steps[0].type, 'agent');
+  assert.equal(added.steps[0].phase, 'plan');
+  // removing the review target repoints the review; removing a role clears its references and seat
+  const rm = removeStep(d, 1);
+  assert.notEqual(rm.steps.find((s) => s.id === 'critique')!.onReject!.goto, 'build');
+  const rr = removeRole({ ...d, court: autoLayout(d) }, 'coder');
+  assert.ok(!rr.steps.some((s) => s.executors?.includes('coder')));
+  assert.ok(!rr.court!.seats.some((s) => s.role === 'coder'));
+  const rn = renameStep(d, 'build', 'make');
+  assert.equal(rn.steps.find((s) => s.id === 'critique')!.onReject!.goto, 'make');
+  // auto seating is a valid layout with every role placed once
+  const lay = autoLayout(d);
+  assert.equal(lay.seats.length, d.roles.length);
+  assert.ok(ok({ ...d, court: lay }).ok);
+});

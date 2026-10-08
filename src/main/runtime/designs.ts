@@ -145,7 +145,7 @@ export class DesignStore {
     const version = (prev.at(-1) ?? 0) + 1;
     const design: CollabDesign = { ...(input as CollabDesign), id, version, createdAt: now(), note: note?.slice(0, 200), native: undefined };
     const last = prev.length ? this.readVersion(id, prev.at(-1)!) : null;
-    if (last && designHash(last) === designHash(design) && last.name === design.name && last.description === design.description) return last; // no-op save
+    if (last && designHash(last) === designHash(design) && last.name === design.name && last.description === design.description && canonical(last.court ?? null) === canonical(design.court ?? null)) return last; // no-op save
     fs.mkdirSync(path.join(this.dir, id), { recursive: true });
     fs.writeFileSync(path.join(this.dir, id, `v${version}.json`), JSON.stringify(design, null, 2), { flag: 'wx' });
     this.index.designs[id] = { activeVersion: version, status: this.index.designs[id]?.status ?? 'active' };

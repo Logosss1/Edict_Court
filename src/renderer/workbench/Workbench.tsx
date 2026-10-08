@@ -9,6 +9,7 @@ import { GitView } from './GitView';
 import { EditorArea } from './EditorArea';
 import { BottomPanel } from './BottomPanel';
 import { AgentPane } from './AgentPane';
+import { tip } from '../common/Tip';
 
 // what this release added — a 新 badge until the entry is opened once
 const NEW_PANELS: PanelId[] = ['designs'];
@@ -34,21 +35,21 @@ const NAV_GROUPS: { title: string; ids: PanelId[] }[] = [
   { title: '记录', ids: ['news', 'audit', 'help'] },
 ];
 
-const PANELS: { id: PanelId; label: string; icon: string }[] = [
-  { id: 'kanban', label: '旨意看板', icon: 'kanban' },
-  { id: 'monitor', label: '省部调度', icon: 'monitor' },
-  { id: 'memorials', label: '奏折阁', icon: 'scroll' },
-  { id: 'templates', label: '旨库', icon: 'book' },
-  { id: 'officials', label: '官员总览', icon: 'users' },
-  { id: 'news', label: '天下要闻', icon: 'news' },
-  { id: 'models', label: '模型配置', icon: 'cpu' },
-  { id: 'designs', label: '协同设计', icon: 'layers' },
-  { id: 'skills', label: '技能与 MCP', icon: 'plug' },
-  { id: 'sessions', label: '小任务 Sessions', icon: 'message' },
-  { id: 'ceremony', label: '上朝仪式', icon: 'flag' },
-  { id: 'debate', label: '朝堂议政', icon: 'gavel' },
-  { id: 'audit', label: '审计日志', icon: 'shield' },
-  { id: 'help', label: '使用说明', icon: 'book' },
+const PANELS: { id: PanelId; label: string; icon: string; desc: string }[] = [
+  { id: 'kanban', label: '旨意看板', icon: 'kanban', desc: '所有旨意按进度分列，点开看详情' },
+  { id: 'monitor', label: '省部调度', icon: 'monitor', desc: '每位官员此刻在做什么、用量与健康' },
+  { id: 'memorials', label: '奏折阁', icon: 'scroll', desc: '结案旨意的回奏存档' },
+  { id: 'templates', label: '旨库', icon: 'book', desc: '常用旨意模板，一键下旨' },
+  { id: 'officials', label: '官员总览', icon: 'users', desc: '各官员的职责、模型与战绩' },
+  { id: 'news', label: '天下要闻', icon: 'news', desc: '捷报与你订阅的新闻源' },
+  { id: 'models', label: '模型配置', icon: 'cpu', desc: '模型服务商、API Key 与路由' },
+  { id: 'designs', label: '协同设计', icon: 'layers', desc: '自己设计多个 AI 怎么分工协作、朝堂谁站哪' },
+  { id: 'skills', label: '技能与 MCP', icon: 'plug', desc: '管理技能和外部工具（MCP）' },
+  { id: 'sessions', label: '小任务 Sessions', icon: 'message', desc: '不走朝堂流程的单人对话' },
+  { id: 'ceremony', label: '上朝仪式', icon: 'flag', desc: '今日统计与上朝动画' },
+  { id: 'debate', label: '朝堂议政', icon: 'gavel', desc: '让几位官员就一件事辩论' },
+  { id: 'audit', label: '审计日志', icon: 'shield', desc: '关键操作的防篡改记录' },
+  { id: 'help', label: '使用说明', icon: 'book', desc: '功能介绍与快捷键' },
 ];
 
 export function Workbench() {
@@ -100,34 +101,34 @@ function ActivityBar() {
   void git;
   const mcpBad = useStore((s) => s.mcp.filter((m) => m.status === 'error' || m.status === 'untrusted').length);
   const [, bump] = useState(0);
-  const item = (id: 'explorer' | 'search' | 'git' | 'court' | 'preview', icon: string, label: string) => (
-    <button className={`ab-item ${sideView === id ? 'on' : ''}`} title={label} onClick={() => setUI({ sideView: sideView === id ? null : id })} data-testid={`ab-${id}`}>
+  const item = (id: 'explorer' | 'search' | 'git' | 'court' | 'preview', icon: string, label: string, desc: string, kbd?: string) => (
+    <button className={`ab-item ${sideView === id ? 'on' : ''}`} {...tip(label, desc, kbd)} onClick={() => setUI({ sideView: sideView === id ? null : id })} data-testid={`ab-${id}`}>
       <Icon name={icon} size={21} stroke={1.6} />
     </button>
   );
   return (
     <nav className="activitybar">
-      {item('explorer', 'files', '资源管理器')}
-      {item('search', 'search', '全局搜索（⇧⌘F）')}
-      {item('git', 'git', '源代码管理')}
-      {item('court', 'court', '军机处')}
-      {item('preview', 'globe', '网页预览')}
-      <button className="ab-item" title="协同设计" onClick={() => { markSeen('designs'); bump((n) => n + 1); openPanel('designs'); }} data-testid="ab-designs">
+      {item('explorer', 'files', '资源管理器', '浏览和打开工作区里的文件')}
+      {item('search', 'search', '全局搜索', '在整个工作区里搜索文字', '⇧⌘F')}
+      {item('git', 'git', '源代码管理', '查看改动、提交代码')}
+      {item('court', 'court', '军机处', '看板、奏折、议政等所有功能的入口')}
+      {item('preview', 'globe', '网页预览', '预览网页文件或本地开发服务器')}
+      <button className="ab-item" {...tip('协同设计', '自己设计多个 AI 怎么分工协作、朝堂谁站哪')} onClick={() => { markSeen('designs'); bump((n) => n + 1); openPanel('designs'); }} data-testid="ab-designs">
         <Icon name="layers" size={20} stroke={1.6} />
         {isNew('designs') && <span className="ab-badge new">新</span>}
       </button>
-      <button className="ab-item ab-court" title="进入朝堂（⌘J）" onClick={() => setUI({ mode: 'court' })} data-testid="ab-court-mode">
+      <button className="ab-item ab-court" {...tip('进入朝堂', '切换到像素朝堂，看官员们办差', '⌘J')} onClick={() => setUI({ mode: 'court' })} data-testid="ab-court-mode">
         <Icon name="crown" size={20} stroke={1.6} />
       </button>
       <div className="ab-spacer" />
-      <button className="ab-item" title="技能与 MCP" onClick={() => openPanel('skills')} data-testid="ab-skills">
+      <button className="ab-item" {...tip('技能与 MCP', mcpBad > 0 ? `管理技能和外部工具；有 ${mcpBad} 个服务异常或待信任` : '管理技能和外部工具（MCP）')} onClick={() => openPanel('skills')} data-testid="ab-skills">
         <Icon name="plug" size={20} stroke={1.6} />
-        {mcpBad > 0 && <span className="ab-badge" title={`${mcpBad} 个 MCP 服务异常或待信任`}>{mcpBad}</span>}
+        {mcpBad > 0 && <span className="ab-badge">{mcpBad}</span>}
       </button>
-      <button className={`ab-item ${bottomOpen ? 'on' : ''}`} title="终端 / 问题 / 输出（⌃`）" onClick={() => setUI({ bottomOpen: !bottomOpen })}>
+      <button className={`ab-item ${bottomOpen ? 'on' : ''}`} {...tip('终端 / 问题 / 输出', '打开或收起底部面板', '⌃`')} onClick={() => setUI({ bottomOpen: !bottomOpen })}>
         <Icon name="terminal" size={20} stroke={1.6} />
       </button>
-      <button className="ab-item" title="模型配置" onClick={() => openPanel('models')}>
+      <button className="ab-item" {...tip('模型配置', '模型服务商、API Key 与路由')} onClick={() => openPanel('models')} data-testid="ab-models">
         <Icon name="settings" size={20} stroke={1.6} />
       </button>
     </nav>
@@ -148,7 +149,7 @@ function CourtNav() {
     <div className="side-view">
       <div className="side-title">军机处</div>
       <div className="court-nav">
-        <button className="court-nav-item court-nav-enter" onClick={() => setUI({ mode: 'court' })} data-testid="nav-enter-court">
+        <button className="court-nav-item court-nav-enter" {...tip('进入朝堂', '切换到像素朝堂，看官员们办差', '⌘J')} onClick={() => setUI({ mode: 'court' })} data-testid="nav-enter-court">
           <Icon name="crown" size={15} />
           <span>进入朝堂</span>
           <span className="kbd">⌘J</span>
@@ -160,7 +161,7 @@ function CourtNav() {
               const p = byId[id];
               const n = (counts as Record<string, number>)[id];
               return (
-                <button key={id} className="court-nav-item" onClick={() => { markSeen(id); bump((x) => x + 1); openPanel(id); }}>
+                <button key={id} className="court-nav-item" {...tip(p.label, p.desc)} onClick={() => { markSeen(id); bump((x) => x + 1); openPanel(id); }}>
                   <Icon name={p.icon} size={15} />
                   <span>{p.label}</span>
                   {isNew(id) && <span className="nav-new">新</span>}
