@@ -9,7 +9,7 @@ English | [中文](README.zh-CN.md)
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22C55E" alt="MIT License"></a>
 </p>
 
-Edict for Mac is a desktop AI coding tool for **Apple Silicon Macs (arm64 only)**. Its core is the multi-agent workflow of [EDICT](https://github.com/cft0808/edict) — the Three Departments and Six Ministries
+Edict for Mac is a desktop AI coding tool for **Apple Silicon Macs (ARM64 only)**. Its core is the multi-agent workflow of [EDICT](https://github.com/cft0808/edict) — the Three Departments and Six Ministries
 
 ```
 Emperor issues an edict → Crown Prince triages (small talk is answered directly) → Secretariat plans
@@ -38,7 +38,7 @@ Both modes show the same live state: approve in the court and the workbench clos
 ## Highlights
 
 - **Institutional review.** The state machine matches EDICT's `STATE_TRANSITIONS`; there is no path from planning to dispatch that bypasses the Chancellery. Illegal transitions are refused and audited; high-risk transitions need you.
-- **Observable and interruptible.** Streaming thinking, tool calls, logs and health for every official. Pause / cancel / resume, notes the agent must answer, interjections during debates, and editing the plan before release.
+- **Observable and interruptible.** Streaming thinking, tool calls, logs, and health for every official. Pause / cancel / resume, notes the agent must answer, interjections during debates, and editing the plan before release.
 - **Auditable and recoverable.** SHA-256 hash-chained audit log; five-stage memorial timeline; every step is a persisted node, so a failure or restart re-runs only the failed node.
 - **Editor.** File tree, tabs, Monaco with diagnostics, global search/replace, integrated terminal, problems panel, Git.
 - **Multiple protocols and providers.** OpenAI Chat Completions, Anthropic Messages, OpenAI Responses; presets only fill in the base URL — **no keys are hard-coded**.
@@ -48,21 +48,21 @@ Both modes show the same live state: approve in the court and the workbench clos
 
 - **Thinking-level slider.** Its steps are the selected model's own levels (since 1.2.7 detected from the service and shown by their API names). Translated per protocol (`reasoning_effort`, `reasoning.effort`, `output_config.effort`, `thinking.budget_tokens`, `enable_thinking`, …), configurable per model and per official, with custom levels such as `ultra`.
 - **Readable model errors.** Configuration errors such as a relay's "this group doesn't support the model or access method" are no longer retried blindly; an error card explains the cause and offers **retry with another model**. **Protocol probe** tests Chat / Responses / Messages with and without thinking parameters.
-- **HTML preview and self-testing.** A sandboxed built-in browser runs generated pages with a console, device sizes, auto-reload and outbound-network blocking; agents verify their pages with the `preview_page` tool, which returns errors and a screenshot.
+- **HTML preview and self-testing.** A sandboxed built-in browser runs generated pages with a console, device sizes, auto-reload, and outbound-network blocking; agents verify their pages with the `preview_page` tool, which returns errors and a screenshot.
 - **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the  `mcp.json` format (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
 
 ### New in 1.2
 
-- **Collaboration designs.** The Three Departments and Six Ministries flow is a versioned design you can copy, edit, pin per edict and roll back; running edicts keep the version they started with. Design your own on a **flow canvas** (phases as rows, drag to reorder, drop to run in parallel, drag a review's ↺ onto an earlier step to set where a rejection goes) or in a form / JSON view. Undo / redo, ⌘S, autosave, favourites and undoable delete. The built-in 三省六部 stays read-only.
-- **Per-role and per-official models.** Each role in your own design can use a specific model and thinking level; built-in officials are listed one per row in Models with their own model and level. If a chosen model is removed, the role falls back to strong / economy routing and the log says so.
+- **Collaboration designs.** The Three Departments and Six Ministries flow is a versioned design you can copy, edit, pin per edict, and roll back; running edicts keep the version they started with. Design your own on a **flow canvas** (phases as rows, drag to reorder, drop to run in parallel, drag a review's ↺ onto an earlier step to set where a rejection goes) or in a form / JSON view. Undo/redo, ⌘S, autosave, favourites and undoable delete. The built-in three departments and six ministries stay read-only.
+- **Per-role and per-official models.** Each role in your own design can use a specific model and thinking level; built-in officials are listed one per row in Models with their own model and level. If a chosen model is removed, the role falls back to strong / economy routing, and the log says so.
 - **Thinking levels from the model itself.** **Detect thinking levels** sends one tiny request per level name and keeps the ones the service accepts; new models are detected when saved. Levels are shown by their API names (None · Minimal · Low · Medium · High · XHigh · Max · Ultra). A relay that accepts any value is marked "unconfirmed".
 - **Economy model fallback.** If the service says it doesn't offer the economy model, that official switches to your main model and carries on, with a notice.
-- **A finer Tang court that follows the palace layout.** Scenes redrawn at twice the detail; officials have 29 animations that follow their work. New **太和殿广场** scene; walk 太和殿 → 广场 → 承天门 → 六部值房 with the arrow keys or by clicking. Hover and click officials and objects, replay a finished edict, day / night and weather. Per-design court seating.
-- **Hover descriptions** on the activity bar, the 军机处 list, the court toolbar and every control in the edict box.
+- **A finer Tang court that follows the palace layout.** Scenes redrawn at twice the detail; officials have 29 animations that follow their work. New **Taihe Palace Square** scene; walk Taihe Palace → Square → Chengtian Gate → Six Ministries Office with the arrow keys or by clicking. Hover and click officials and objects, replay a finished edict, day/night and weather. Per-design court seating.
+- **Hover descriptions** on the activity bar, the Privy Council list, the court toolbar and every control in the edict box.
 
 | Flow canvas | 太和殿广场 | Per-official models |
 |---|---|---|
-| ![Collaboration design canvas](docs/screenshots/37-designs-canvas.png) | ![太和殿广场](docs/screenshots/38-court-guangchang.png) | ![Per-official models](docs/screenshots/39-models-agent-models.png) |
+| ![Collaboration design canvas](docs/screenshots/37-designs-canvas.png) | ![Taihe Palace Square](docs/screenshots/38-court-guangchang.png) | ![Per-official models](docs/screenshots/39-models-agent-models.png) |
 
 ## Install (Apple Silicon)
 
@@ -72,13 +72,13 @@ Download `Edict-<version>-arm64.dmg` from [Releases](https://github.com/Logosss1
 
 ```bash
 npm install
-npm run build            # bundle main / preload / renderer into dist/
+npm run build            # bundle main / preload/renderer into dist/
 npx electron dist        # run
 npm test                 # unit + integration tests (mock LLM)
 npm run package:mac      # assemble Edict.app (arm64), ad-hoc sign, create zip + DMG
 ```
 
-`package:mac` needs the official `electron-v44.4.5-darwin-arm64.zip` in `deps/` (or `ELECTRON_DARWIN_ZIP`). On macOS it signs with `codesign` and builds the DMG with `hdiutil`; on Linux it needs `rcodesign` and libdmg-hfsplus `dmg` on `PATH` (or `RCODESIGN` / `DMG_TOOL`). End-to-end tests: `npm run e2e` and `npm run e2e:features` (Playwright; on Linux run under `xvfb-run`).
+`package: mac` needs the official `electron-v44.4.5-darwin-arm64.zip` in `deps/` (or `ELECTRON_DARWIN_ZIP`). On macOS, it signs with `codesign` and builds the DMG with `hdiutil`; on Linux, it needs `rcodesign` and libdmg-hfsplus `dmg` on `PATH` (or `RCODESIGN` / `DMG_TOOL`). End-to-end tests: `npm run e2e` and `npm run e2e: features` (Playwright; on Linux, run under `xvfb-run`).
 
 ## Documentation (Chinese)
 
@@ -86,4 +86,4 @@ npm run package:mac      # assemble Edict.app (arm64), ad-hoc sign, create zip +
 
 ## License
 
-MIT. Third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EDICT and Yan-Agent are MIT-licensed. This project does not use the Visual Studio Code name, icons or Marketplace.
+MIT. Third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EDICT and Yan-Agent are MIT-licensed. This project does not use the Visual Studio Code name, icons, or Marketplace.
