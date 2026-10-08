@@ -259,6 +259,32 @@ test('court layout: validated, saved as its own version, never part of the behav
   await mock.close();
 });
 
+test('favourite, delete to trash, restore with versions and default flag', async () => {
+  const mock = await startMockLlm();
+  const rt = makeRuntime(mock.url);
+  assert.throws(() => rt.designs.remove(BUILTIN_DESIGN_ID), /不可删除/);
+  const a = rt.designs.save({ ...customDesign(), name: 'A' });
+  const b = rt.designs.save({ ...customDesign(), name: 'B' });
+  rt.designs.save({ ...b, description: '第二版' });
+  rt.designs.setFavorite(a.id, true);
+  assert.deepEqual(rt.designs.list().map((d) => d.id).slice(0, 2), [BUILTIN_DESIGN_ID, a.id], 'favourites follow the built-in');
+  rt.updateSettings({ defaultDesign: b.id });
+  const { token } = rt.designs.remove(b.id);
+  assert.ok(!rt.designs.list().some((d) => d.id === b.id));
+  assert.equal(rt.settings.defaultDesign, BUILTIN_DESIGN_ID, 'deleting the default falls back to the built-in');
+  assert.ok(fs.existsSync(path.join(rt.opts.dataDir, 'designs', '.trash', token, 'v2.json')), 'kept in the trash');
+  assert.equal(rt.designs.restore(token), b.id);
+  const back = rt.designs.list().find((d) => d.id === b.id)!;
+  assert.equal(back.activeVersion, 2);
+  assert.equal(rt.settings.defaultDesign, b.id, 'restoring brings the default back');
+  assert.throws(() => rt.designs.restore(token), /找不到/);
+  assert.throws(() => rt.designs.restore('../x-1234567890123'), /找不到/);
+  const actions = rt.audit.list({ limit: 100 }).map((e) => e.action);
+  assert.ok(actions.includes('design_deleted') && actions.includes('design_restored'));
+  rt.dispose();
+  await mock.close();
+});
+
 test('editor helpers: canvas placement, reference-safe removal, auto seating, blank design', async () => {
   const { placeStep, removeStep, removeRole, renameStep, groupsOf, autoLayout, blankDesign, newStep } = await import('../src/renderer/panels/designs/edit');
   const d = { ...customDesign(), id: 'x' };

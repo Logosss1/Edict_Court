@@ -43,7 +43,7 @@ const PANELS: { id: PanelId; label: string; icon: string; desc: string }[] = [
   { id: 'officials', label: '官员总览', icon: 'users', desc: '各官员的职责、模型与战绩' },
   { id: 'news', label: '天下要闻', icon: 'news', desc: '捷报与你订阅的新闻源' },
   { id: 'models', label: '模型配置', icon: 'cpu', desc: '模型服务商、API Key 与路由' },
-  { id: 'designs', label: '协同设计', icon: 'layers', desc: '自己设计多个 AI 怎么分工协作、朝堂谁站哪' },
+  { id: 'designs', label: '协同设计', icon: 'layers', desc: '自己设计多个 AI 怎么分工协作' },
   { id: 'skills', label: '技能与 MCP', icon: 'plug', desc: '管理技能和外部工具（MCP）' },
   { id: 'sessions', label: '小任务 Sessions', icon: 'message', desc: '不走朝堂流程的单人对话' },
   { id: 'ceremony', label: '上朝仪式', icon: 'flag', desc: '今日统计与上朝动画' },
@@ -113,7 +113,7 @@ function ActivityBar() {
       {item('git', 'git', '源代码管理', '查看改动、提交代码')}
       {item('court', 'court', '军机处', '看板、奏折、议政等所有功能的入口')}
       {item('preview', 'globe', '网页预览', '预览网页文件或本地开发服务器')}
-      <button className="ab-item" {...tip('协同设计', '自己设计多个 AI 怎么分工协作、朝堂谁站哪')} onClick={() => { markSeen('designs'); bump((n) => n + 1); openPanel('designs'); }} data-testid="ab-designs">
+      <button className="ab-item" {...tip('协同设计', '自己设计多个 AI 怎么分工协作')} onClick={() => { markSeen('designs'); bump((n) => n + 1); openPanel('designs'); }} data-testid="ab-designs">
         <Icon name="layers" size={20} stroke={1.6} />
         {isNew('designs') && <span className="ab-badge new">新</span>}
       </button>

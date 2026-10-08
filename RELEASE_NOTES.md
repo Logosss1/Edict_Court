@@ -2,6 +2,26 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 1.2.3
+
+**What's new**
+- **Manage your collaboration designs from the list**: every design except the built-in 三省六部 has edit, delete and ☆ favourite buttons on its row. Favourites sort right after 三省六部 and show a ★ in the edict pickers. The built-in can't be deleted; its ✎ opens an unsaved copy. **更多 ▾** in the detail view has favourite, duplicate, disable / enable and delete.
+- **Deleting can be undone**: the confirmation says how many versions go with it, and the toast afterwards has **撤销**. A deleted design is kept in `designs/.trash`.
+- **Court seating is in a corner**: **朝堂站位** sits at the top right of the editor (next to JSON) and at the end of the versions row in the detail view. It opens a side sheet; for 三省六部 it copies the full version first.
+- **Safer editing**:
+  - Undo / redo buttons, with ⌘Z / ⇧⌘Z.
+  - ⌘S saves.
+  - Esc closes the seating sheet or the inspector.
+  - Delete removes the selected step, and a toast says it can be undone.
+  - Unsaved changes are autosaved. If you leave the editor or the app closes, the list offers **继续编辑 / 丢弃**.
+  - Leaving with unsaved changes asks first.
+- **A tidier canvas**: empty phase rows fold to a thin strip and open while you drag.
+- The 协同设计 hover description no longer mentions court seating.
+
+**Install**: download `Edict-1.2.3-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data folder is kept when you install over 1.x.
+
+**Verified**: 51/51 unit + integration tests, 21/21 + 61/61 end-to-end UI checks (including favourite, delete and undo, undo / redo, Delete, Esc, ⌘S and restoring an autosaved draft) and the court smoke test on Linux + Xvfb (mock LLM). Not yet verified with a real model service.
+
 ## 1.2.2
 
 **What's new**

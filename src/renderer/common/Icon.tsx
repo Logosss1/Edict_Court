@@ -14,6 +14,8 @@ const P: Record<string, string> = {
   pause: 'M7 4h3v16H7zM14 4h3v16h-3z',
   stop: 'M6 6h12v12H6z',
   retry: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
+  undo: 'M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3',
+  redo: 'M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3',
   check: 'M4 12l5 5L20 6',
   x: 'M6 6l12 12M18 6L6 18',
   chevronRight: 'M9 6l6 6-6 6',

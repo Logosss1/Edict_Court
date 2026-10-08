@@ -10,6 +10,7 @@ import { systemPromptFor } from './runtime/agentLoop';
 import { parseMcpConfig } from './mcp/manager';
 import type { McpServerPolicy, McpToolPolicy, CollabDesign } from '../shared/types';
 import { validateDesign } from '../shared/design';
+import { builtinDeclarative } from './runtime/designs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gitStatus, gitShowHead, gitStage, gitUnstage, gitCommit, gitLog, gitInit } from './services/git';
@@ -96,6 +97,11 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFo
     designCopy: (id: string, opts?: { tier?: 'lite' | 'full'; name?: string }) => rt.designs.copy(id, opts),
     designActivate: (id: string, version: number) => rt.designs.activate(id, version),
     designSetStatus: (id: string, status: 'active' | 'disabled') => rt.designs.setStatus(id, status),
+    designSetFavorite: (id: string, favorite: boolean) => rt.designs.setFavorite(id, favorite),
+    designDelete: (id: string) => rt.designs.remove(id),
+    designRestore: (token: string) => rt.designs.restore(token),
+    /** the built-in 三省六部 as an editable starting point (not saved until the editor saves it) */
+    designTemplate: (tier: 'lite' | 'full') => ({ ...builtinDeclarative(tier, rt.settings), id: '', native: undefined }),
 
     // ── MCP
     mcpList: () => rt.mcp.list(),

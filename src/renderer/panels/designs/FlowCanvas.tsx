@@ -15,6 +15,7 @@ const CARD_W = 150;
 const CARD_H = 64;
 const GAP = 8;
 const PAD = 10;
+const EMPTY_LANE = 30;
 const TYPE_ICON: Record<StepType, string> = { agent: 'play', plan: 'scroll', review: 'gavel', fanout: 'users', summary: 'book', gate: 'flag' };
 
 type Drag =
@@ -39,6 +40,7 @@ export function FlowCanvas({ draft, onChange, selected, onSelect, errors }: Prop
   const pending = useRef<{ drag: Drag; x: number; y: number; id?: string } | null>(null);
   const steps = draft.steps;
   const groups = useMemo(() => groupsOf(steps), [steps]);
+  const expand = !!drag && (drag.kind === 'move' || drag.kind === 'new');
 
   // ── layout: lane heights from the tallest stack, card positions ──
   const layout = useMemo(() => {
@@ -59,14 +61,16 @@ export function FlowCanvas({ draft, onChange, selected, onSelect, errors }: Prop
     let y = 0;
     for (const p of PHASES) {
       laneTop[p] = y;
-      laneH[p] = Math.max(1, stack[p] ?? 0) * (CARD_H + GAP) + 2 * GAP;
+      // empty phases fold to a thin strip, and open up while a step is being dragged so they can take it
+      const used = (stack[p] ?? 0) > 0 || (p === 'confirm' && !!draft.policies.finalGate);
+      laneH[p] = used || expand ? Math.max(1, stack[p] ?? 0) * (CARD_H + GAP) + 2 * GAP : EMPTY_LANE;
       y += laneH[p];
     }
     const finalGate = !!draft.policies.finalGate;
     groups.forEach((g, col) => g.forEach((i) => pos.set(i, { x: LABEL_W + PAD + col * COL_W, y: laneTop[steps[i].phase] + GAP + (k.get(i) ?? 0) * (CARD_H + GAP), col })));
     const cols = groups.length + (finalGate ? 1 : 0);
     return { pos, laneTop, laneH, height: y, width: LABEL_W + PAD + (cols + 1) * COL_W, finalGate };
-  }, [groups, steps, draft.policies.finalGate]);
+  }, [groups, steps, draft.policies.finalGate, expand]);
 
   const local = (e: { clientX: number; clientY: number }) => {
     const r = content.current!.getBoundingClientRect();

@@ -349,6 +349,8 @@ select.input { padding: 4px 6px; }
 .toasts { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 500; display: flex; flex-direction: column; gap: 6px; align-items: center; pointer-events: none; }
 .toast { padding: 7px 14px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line2); box-shadow: var(--shadow); max-width: 560px; animation: slidein .18s; }
 .toast-success { border-color: var(--jade); }
+.toast-action { pointer-events: auto; margin-left: 12px; background: none; border: 0; color: var(--acc); font-weight: 600; cursor: pointer; padding: 0; }
+.toast-action:hover { text-decoration: underline; }
 .toast-warn { border-color: var(--warn); }
 .toast-error { border-color: var(--danger); color: var(--danger); }
 .modal-backdrop { position: fixed; inset: 0; z-index: 400; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; }
@@ -944,3 +946,33 @@ select.input { padding: 4px 6px; }
 .cl-token { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px; border: 1px dashed var(--line2); border-radius: 6px; cursor: grab; font-size: 11px; touch-action: none; user-select: none; background: var(--bg2); }
 .cl-token:hover { border-color: var(--gold); }
 .cl-empty { padding: 30px; display: flex; flex-direction: column; gap: 12px; align-items: flex-start; }
+
+/* designs list actions, corner links, sheets, confirm */
+.design-row .dr-star { width: 18px; height: 18px; display: inline-flex; align-items: center; justify-content: center; border: none; background: transparent; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0; flex: none; }
+.design-row .dr-star.on { color: var(--gold); }
+.design-row .dr-star.fixed { cursor: default; color: var(--jade); }
+.design-row .dr-actions { display: inline-flex; gap: 0; opacity: .45; transition: opacity .12s; }
+.design-row:hover .dr-actions, .design-row.on .dr-actions { opacity: 1; }
+.design-row .icon-btn.danger:hover { color: var(--danger); }
+.design-row .dr-sub { padding-left: 26px; }
+.design-row .chip.on { border-color: var(--acc); color: var(--acc); }
+.design-stash { margin: 0 10px 8px; padding: 8px 10px; border: 1px solid var(--gold); border-radius: 8px; background: color-mix(in srgb, var(--gold) 10%, transparent); display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; }
+.de-undo { display: inline-flex; gap: 2px; }
+.de-undo .icon-btn:disabled { opacity: .35; cursor: default; }
+.design-empty { margin: 10px; padding: 12px; border: 1px dashed var(--line2); border-radius: 8px; display: flex; flex-direction: column; gap: 4px; }
+.more-wrap { position: relative; }
+.more-menu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 190px; background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; }
+.more-menu button { display: flex; align-items: center; gap: 6px; text-align: left; border: none; background: transparent; padding: 7px 10px; border-radius: 5px; cursor: pointer; color: var(--text); font-size: 12.5px; }
+.more-menu button:hover { background: var(--bg2); }
+.more-menu button.danger { color: var(--danger); }
+.corner-link, .de-corner .link { display: inline-flex; align-items: center; gap: 3px; color: var(--muted); }
+.corner-link:hover, .de-corner .link:hover { color: var(--acc); }
+.de { position: relative; }
+.de-corner { display: flex; gap: 10px; padding-left: 4px; border-left: 1px solid var(--line); }
+.btn.ghost { background: transparent; }
+.de-sheet-backdrop { position: absolute; inset: 0; z-index: 30; background: rgba(20, 14, 10, .35); display: flex; justify-content: flex-end; }
+.de-sheet { width: min(980px, 100%); height: 100%; background: var(--panel); box-shadow: -10px 0 30px rgba(0,0,0,.25); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; animation: sheet-in .16s ease-out; }
+.de-sheet-h { flex: none; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+@keyframes sheet-in { from { transform: translateX(30px); } to { transform: none; } }
+.modal-msg { font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
+.btn.danger-fill { background: var(--danger); border-color: var(--danger); color: #fff6e8; }

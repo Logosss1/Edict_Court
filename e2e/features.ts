@@ -224,14 +224,13 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.waitForSelector('[data-testid=designs-panel]');
     ok('协同设计面板：内置三省六部只读并展示流程', (await win.textContent('[data-testid=design-flow]'))!.includes('门下审议'));
     await win.click('[data-testid=design-copy-full]');
-    await win.waitForTimeout(500);
+    await win.waitForSelector('[data-testid=design-editor]');
+    ok('「复制完整版修改」打开编辑器（未保存前不产生新设计）', ((await inv('designList')) as any[]).every((d) => d.native));
+    await win.click('[data-testid=de-save]');
+    await win.waitForSelector('[data-testid=design-set-default]');
     const list: any[] = await inv('designList');
     const copy = list.find((d) => !d.native);
-    ok('复制 Full Court 为我的设计（v1）', !!copy && copy.activeVersion === 1, copy?.name);
-    await win.waitForSelector('[data-testid=design-editor]');
-    ok('复制后直接进入编辑器', true);
-    await win.click('[data-testid=design-editor] .de-head button.btn >> text=返回');
-    await win.waitForSelector('[data-testid=design-set-default]');
+    ok('保存后成为我的设计（v1）', !!copy && copy.activeVersion === 1, copy?.name);
     await win.click('[data-testid=design-set-default]');
     await win.waitForTimeout(300);
     await shot('40-designs-panel');
@@ -262,7 +261,7 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const after: any[] = await inv('designList');
     ok('版本回滚：v2 → v1', after.find((d) => d.id === copy.id).activeVersion === 1);
     const audit: any[] = await inv('auditList', undefined, 400);
-    ok('设计操作全程审计', ['design_saved', 'design_copied', 'design_activated'].every((a) => audit.some((e) => e.action === a)));
+    ok('设计操作全程审计', ['design_saved', 'design_activated'].every((a) => audit.some((e) => e.action === a)));
   }
 
   if (want('designer')) {
@@ -274,22 +273,26 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.waitForSelector('[data-testid=flow-canvas]');
     ok('新建空白设计：校验通过', (await win.textContent('[data-testid=de-issues]'))!.includes('校验通过'));
     await win.fill('[data-testid=de-name]', 'E2E 自定义协作');
-    const drag = async (from: string, dest: { x: number; y: number } | string) => {
+    // the target is measured after the drag has started (empty phase lanes open up while dragging)
+    const drag = async (from: string, dest: { x: number; y: number } | string | (() => Promise<{ x: number; y: number }>)) => {
       await win.locator(from).scrollIntoViewIfNeeded();
       const b = (await win.locator(from).boundingBox())!;
-      const to = typeof dest === 'string' ? await center(dest) : dest;
       await win.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
       await win.mouse.down();
       await win.mouse.move(b.x + b.width / 2 + 10, b.y + b.height / 2 + 10, { steps: 3 });
+      await win.waitForTimeout(80);
+      const to = typeof dest === 'string' ? await center(dest) : typeof dest === 'function' ? await dest() : dest;
       await win.mouse.move(to.x, to.y, { steps: 8 });
       await win.mouse.up();
       await win.waitForTimeout(150);
     };
     const lane = async (name: string) => (await win.locator(`.fc-lane:has(.fc-lane-h:text-is("${name}"))`).boundingBox())!;
     // drag a review in from the palette into the 汇总 lane after the last column
-    const report = await lane('汇总');
-    const last = (await win.locator('.fc-card:not(.fixed)').last().boundingBox())!;
-    await drag('[data-testid=fc-new-review]', { x: last.x + last.width + 110, y: report.y + report.height / 2 });
+    await drag('[data-testid=fc-new-review]', async () => {
+      const report = await lane('汇总');
+      const last = (await win.locator('.fc-card:not(.fixed)').last().boundingBox())!;
+      return { x: last.x + last.width + 110, y: report.y + report.height / 2 };
+    });
     const cards = await win.$$eval('.fc-card:not(.fixed)', (els) => els.map((e) => e.getAttribute('data-testid')));
     ok('画布：从工具条拖入一个审议步骤', cards.length === 3 && cards[2] === 'fc-card-review', cards.join(','));
     // point its rejection back at the first step with the ↺ knob
@@ -316,7 +319,8 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     ok('表单：添加并改名角色', (await win.locator('.de-item-h b >> text=史官').count()) === 1);
     await shot('45-designer-form');
     // court layout: auto seating, then drag a seat and make it sit at a desk
-    await win.click('[data-testid=de-tab-court]');
+    await win.click('[data-testid=de-court]');
+    await win.waitForSelector('[data-testid=de-sheet-court]');
     await win.click('[data-testid=court-layout-auto]');
     await win.waitForSelector('[data-testid=cl-stage]');
     const seats = await win.locator('[data-testid^=cl-seat-]').count();
@@ -327,6 +331,7 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.click(`[data-testid=cl-pose-sit]`);
     await win.selectOption('[data-testid=cl-idle]', 'write');
     await shot('46-designer-court-layout');
+    await win.click('[data-testid=de-sheet-done]');
     await win.click('[data-testid=de-save]');
     await win.waitForSelector('[data-testid=design-set-default]');
     const mine = ((await inv('designList')) as any[]).find((d) => d.name === 'E2E 自定义协作');
@@ -349,6 +354,103 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await inv('updateSettings', { defaultDesign: 'edict-court' });
   }
 
+  if (want('manage')) {
+    // design list: built-in can't be deleted; others can be favourited, edited and deleted
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: null }));
+    await win.evaluate(() => (window as any).__openPanel('designs'));
+    await win.waitForSelector('[data-testid=designs-panel]');
+    const mk = async (name: string) => {
+      const t: any = await inv('designTemplate', 'lite');
+      const { version: _v, createdAt: _c, ...body } = t;
+      return inv('designSave', { ...body, name, origin: { kind: 'user' } }, 'E2E');
+    };
+    const a: any = await mk('E2E 甲');
+    const b: any = await mk('E2E 乙');
+    await win.waitForSelector(`[data-testid=design-item-${b.id}]`);
+    ok('内置三省六部没有删除按钮', (await win.locator('[data-testid=design-row-del-edict-court]').count()) === 0 && (await win.locator(`[data-testid=design-row-del-${a.id}]`).count()) === 1);
+    await win.click(`[data-testid=design-fav-${a.id}]`);
+    await win.waitForTimeout(300);
+    const order = await win.$$eval('[data-testid^=design-item-]', (els) => els.map((e) => e.getAttribute('data-testid')!.replace('design-item-', '')));
+    ok('收藏后排到内置之后的最前面，并显示 ★', order[0] === 'edict-court' && order[1] === a.id && (await win.textContent(`[data-testid=design-fav-${a.id}]`)) === '★', order.join(','));
+    await shot('50-designs-list-actions');
+    // edit from the row icon, then the corner link for seating
+    await win.click(`[data-testid=design-row-edit-${b.id}]`);
+    await win.waitForSelector('[data-testid=design-editor]');
+    ok('列表上的 ✎ 直接进入修改', (await win.inputValue('[data-testid=de-name]')) === 'E2E 乙');
+    await win.click('[data-testid=de-court]');
+    await win.waitForSelector('[data-testid=de-sheet-court]');
+    ok('编辑页右上角「朝堂站位」打开站位面板', await win.isVisible('[data-testid=court-layout-empty]'));
+    await shot('51-designer-court-sheet');
+    await win.click('[data-testid=de-sheet-done]');
+    await win.click('[data-testid=de-close]');
+    await win.waitForSelector('[data-testid=design-set-default]');
+    await win.click(`[data-testid=design-item-${b.id}]`);
+    await win.click('[data-testid=design-court-link]');
+    await win.waitForSelector('[data-testid=de-sheet-court]');
+    ok('详情页角落的「朝堂站位」直接打开站位编辑', true);
+    await win.click('[data-testid=de-sheet-done]');
+    await win.click('[data-testid=de-close]');
+    // delete (in-app confirm) — cancel first, then confirm
+    await win.click(`[data-testid=design-row-del-${b.id}]`);
+    await win.waitForSelector('[data-testid=confirm-msg]');
+    await shot('52-design-delete-confirm');
+    await win.click('.modal-actions >> text=取消');
+    ok('取消删除时设计保留', ((await inv('designList')) as any[]).some((d) => d.id === b.id));
+    await win.click(`[data-testid=design-row-del-${b.id}]`);
+    await win.click('[data-testid=confirm-ok]');
+    await win.waitForTimeout(400);
+    ok('确认后删除，列表与下旨选择里都消失', !((await inv('designList')) as any[]).some((d) => d.id === b.id) && (await win.locator(`[data-testid=design-item-${b.id}]`).count()) === 0);
+    const audit: any[] = await inv('auditList', undefined, 400);
+    ok('删除写入审计', audit.some((e) => e.action === 'design_deleted' && e.detail?.id === b.id) || audit.some((e) => e.action === 'design_deleted'));
+    await win.click('[data-testid=toast-action] >> text=撤销');
+    await win.waitForSelector(`[data-testid=design-item-${b.id}]`, { timeout: 3000 }).catch(() => {});
+    ok('删除后可在提示里一键撤销，设计连同版本恢复', ((await inv('designList')) as any[]).some((d) => d.id === b.id && d.versions.length === 1));
+    // editor: undo / redo, Delete on a selected step, Esc closes the seating sheet
+    await win.click(`[data-testid=design-row-edit-${a.id}]`);
+    await win.waitForSelector('[data-testid=flow-canvas]');
+    await win.fill('[data-testid=de-name]', 'E2E 甲 改');
+    await win.click('[data-testid=flow-canvas]', { position: { x: 5, y: 5 } }).catch(() => {});
+    await win.waitForTimeout(700);
+    const nCards = await win.locator('.fc-card:not(.fixed)').count();
+    await win.locator('.fc-card:not(.fixed)').first().click();
+    await win.keyboard.press('Delete');
+    const afterDel = await win.locator('.fc-card:not(.fixed)').count();
+    await win.click('[data-testid=de-undo]');
+    const afterUndo = await win.locator('.fc-card:not(.fixed)').count();
+    ok('选中步骤按 Delete 删除，撤销后回来', afterDel === nCards - 1 && afterUndo === nCards, `${nCards}→${afterDel}→${afterUndo}`);
+    await win.click('[data-testid=de-undo]');
+    const undone = await win.inputValue('[data-testid=de-name]');
+    await win.click('[data-testid=de-redo]');
+    ok('撤销 / 重做按钮', undone === 'E2E 甲' && (await win.inputValue('[data-testid=de-name]')) === 'E2E 甲 改', undone);
+    await win.click('[data-testid=de-court]');
+    await win.waitForSelector('[data-testid=de-sheet-court]');
+    await win.keyboard.press('Escape');
+    await win.waitForTimeout(150);
+    ok('Esc 关闭站位面板', (await win.locator('[data-testid=de-sheet-court]').count()) === 0);
+    // leaving without saving keeps an autosaved copy that the list offers to restore
+    await win.waitForTimeout(500);
+    await win.evaluate(() => (window as any).__openPanel('kanban'));
+    await win.waitForTimeout(300);
+    await win.evaluate(() => (window as any).__openPanel('designs'));
+    await win.waitForSelector('[data-testid=design-stash]', { timeout: 3000 }).catch(() => {});
+    ok('没保存就离开：列表顶部提示「继续编辑」', (await win.locator('[data-testid=design-stash]').count()) === 1);
+    await shot('53-design-stash');
+    await win.click('[data-testid=design-stash-resume]');
+    await win.waitForSelector('[data-testid=design-editor]');
+    ok('继续编辑恢复未保存的修改', (await win.inputValue('[data-testid=de-name]')) === 'E2E 甲 改');
+    await win.keyboard.press('Control+S');
+    await win.waitForSelector('[data-testid=design-set-default]', { timeout: 5000 }).catch(() => {});
+    const a2 = ((await inv('designList')) as any[]).find((d) => d.id === a.id);
+    ok('Ctrl/⌘+S 保存为新版本，自动保存的副本随之清除', a2?.activeVersion === 2 && a2.name === 'E2E 甲 改' && (await win.locator('[data-testid=design-stash]').count()) === 0, JSON.stringify({ v: a2?.activeVersion, n: a2?.name }));
+    // the built-in row's ✎ opens an unsaved copy; leaving it creates nothing
+    const before = ((await inv('designList')) as any[]).length;
+    await win.click('[data-testid=design-row-edit-edict-court]');
+    await win.waitForSelector('[data-testid=design-editor]');
+    await win.click('[data-testid=de-close]');
+    await win.waitForSelector('[data-testid=designs-panel] .split-list');
+    ok('内置的 ✎ 是「复制后修改」，不保存就不留下', ((await inv('designList')) as any[]).length === before);
+  }
+
   if (want('tips')) {
     // hover descriptions on the activity bar and the 军机处 list
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: 'court' }));
@@ -356,7 +458,7 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.hover('[data-testid=ab-designs]');
     await win.waitForSelector('[data-testid=tip]', { timeout: 3000 });
     const t1 = await win.textContent('[data-testid=tip]');
-    ok('活动栏悬停显示名称与一行说明', !!t1 && t1.includes('协同设计') && t1.includes('分工协作'), t1 ?? '');
+    ok('活动栏悬停显示名称与一行说明', !!t1 && t1.includes('协同设计') && t1.includes('分工协作') && !t1.includes('朝堂谁站哪'), t1 ?? '');
     await shot('48-tip-activitybar');
     await win.hover('[data-testid=ab-court-mode]');
     await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('⌘J'), null, { timeout: 3000 });

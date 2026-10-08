@@ -256,7 +256,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
         </select>
         {designs.length > 1 && (
           <select className="mini-select design-pick" value={design?.id ?? BUILTIN_DESIGN_ID} onChange={(e) => setDesignId(e.target.value)} title="协同设计：本旨意由哪一套协作流程完成（下旨时锁定版本）" data-testid="design-pick">
-            {designs.map((d) => <option key={d.id} value={d.id}>{d.native ? '三省六部' : d.name}{d.native ? '' : ` v${d.activeVersion}`}</option>)}
+            {designs.map((d) => <option key={d.id} value={d.id}>{d.native ? '三省六部' : `${d.favorite ? '★ ' : ''}${d.name}`}{d.native ? '' : ` v${d.activeVersion}`}</option>)}
           </select>
         )}
         {!custom && <div className="tier-seg" role="radiogroup" aria-label="协同档位">

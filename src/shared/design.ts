@@ -127,8 +127,10 @@ export interface DesignInfo {
   native: boolean;
   origin: CollabDesign['origin'];
   status: 'active' | 'disabled';
+  favorite?: boolean;
   activeVersion: number;
   latestVersion: number;
+  updatedAt?: number;
   versions: { version: number; hash: string; createdAt: number; note?: string }[];
   roles: number;
   steps: number;

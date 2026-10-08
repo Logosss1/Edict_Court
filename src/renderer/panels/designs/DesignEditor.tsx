@@ -1,31 +1,48 @@
 // 协同设计编辑器 — edit a user design as a draft (flow canvas, forms, court layout, JSON) and save it
 // as a new immutable version. The built-in 三省六部 is never edited here: it is copied first.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AGENT_MAP } from '../../../shared/court';
 import { AVATARS, PHASE_LABEL, validateDesign, type RoleSpec, type StepSpec, type StepType } from '../../../shared/design';
 import type { AgentId } from '../../../shared/types';
 import { call } from '../../api';
-import { toast } from '../../store';
+import { onMenu, toast, useStore } from '../../store';
+import { askConfirm } from '../../common/Prompt';
+import { tip } from '../../common/Tip';
 import { Icon } from '../../common/Icon';
 import { FlowCanvas } from './FlowCanvas';
 import { CourtLayoutEditor } from './CourtLayoutEditor';
+import { clearStash, useDraftHistory, writeStash } from './draftState';
 import {
   OUTPUTS, OUTPUT_LABEL, PHASES, STEP_TYPES, STEP_TYPE_HINT, STEP_TYPE_LABEL, clone, newRole, newStep, removeRole, removeStep, renameRole, renameStep, type Draft,
 } from './edit';
 
-type Tab = 'canvas' | 'form' | 'court' | 'json';
-const TABS: [Tab, string][] = [['canvas', '流程画布'], ['form', '表单编辑'], ['court', '朝堂布局'], ['json', 'JSON']];
+type Tab = 'canvas' | 'form';
+const TABS: [Tab, string][] = [['canvas', '流程画布'], ['form', '表单编辑']];
 const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
-export function DesignEditor({ initial, onClose, onSaved }: { initial: Draft; onClose: () => void; onSaved: (id: string) => void }) {
-  const [draft, setDraft] = useState<Draft>(() => clone(initial));
+const editable = (t: EventTarget | null) => t instanceof HTMLElement && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
+const MOD = navigator.platform.toLowerCase().includes('mac') ? '⌘' : 'Ctrl+';
+
+export function DesignEditor({ initial, resume, onClose, onSaved, startWithCourt }: { initial: Draft; resume?: { draft: Draft; note: string }; onClose: () => void; onSaved: (id: string) => void; startWithCourt?: boolean }) {
+  const { draft, setDraft, undo, redo, canUndo, canRedo } = useDraftHistory(clone(resume?.draft ?? initial));
   const [tab, setTab] = useState<Tab>('canvas');
   const [sel, setSel] = useState<string | null>(null);
-  const [note, setNote] = useState('');
+  const [note, setNote] = useState(resume?.note ?? '');
   const [saving, setSaving] = useState(false);
   const [showIssues, setShowIssues] = useState(false);
   const [rules, setRules] = useState(false);
-  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initial), [draft, initial]);
+  const [side, setSide] = useState<'court' | 'json' | null>(startWithCourt ? 'court' : null);
+  const isNew = !initial.id;
+  const isDefault = useStore((s) => s.settings.defaultDesign) === initial.id && !!initial.id;
+  // a new (or copied) design is always saveable; an existing one once something changed
+  const changed = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initial), [draft, initial]);
+  const dirty = isNew || changed;
+  // keep an autosaved copy while there are unsaved changes (restored from the 协同设计 list)
+  useEffect(() => {
+    if (!changed) return clearStash();
+    const t = setTimeout(() => writeStash({ base: initial, draft, note, at: Date.now() }), 300);
+    return () => clearTimeout(t);
+  }, [draft, note, changed, initial]);
   const check = useMemo(() => validateDesign({ ...draft, version: 1, createdAt: 0 }), [draft]);
   const stepErrors = useMemo(() => {
     const m = new Map<string, string[]>();
@@ -46,7 +63,8 @@ export function DesignEditor({ initial, onClose, onSaved }: { initial: Draft; on
       const { version: _v, createdAt: _c, ...body } = draft;
       void _v; void _c;
       const saved = await call<{ id: string; version: number }>('designSave', { ...body, id: draft.id || undefined }, note.trim() || '在编辑器中修改');
-      toast(`已保存为 v${saved.version}，新下的旨意会使用它（进行中的旨意不受影响）`, 'success');
+      clearStash();
+      toast(isDefault ? `已保存为 v${saved.version}，新下的旨意会按它办理（进行中的不受影响）` : `已保存为 v${saved.version}。要让新旨意按它办理，点「设为默认」`, 'success');
       onSaved(saved.id);
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -54,11 +72,60 @@ export function DesignEditor({ initial, onClose, onSaved }: { initial: Draft; on
       setSaving(false);
     }
   };
-  const close = () => {
-    if (dirty && !window.confirm('有未保存的修改，确定放弃吗？')) return;
+  const close = async () => {
+    if (changed && !(await askConfirm('放弃修改？', isNew ? '这份设计还没保存，放弃后不会留下。' : '这次的修改还没保存。', { ok: '放弃修改', danger: true }))) return;
+    clearStash();
     onClose();
   };
   const selStep = draft.steps.find((s) => s.id === sel);
+
+  // keyboard: ⌘S save · ⌘Z / ⇧⌘Z undo / redo · Esc closes the sheet or inspector · Delete removes the selected step
+  const keys = useRef({ save, undo, redo, side, sel, rules, tab, draft });
+  keys.current = { save, undo, redo, side, sel, rules, tab, draft };
+  const lastSave = useRef(0);
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  const savingRef = useRef(saving);
+  savingRef.current = saving;
+  useEffect(() => {
+    const trySave = () => {
+      if (Date.now() - lastSave.current < 400) return; // the key and the menu accelerator can both fire
+      lastSave.current = Date.now();
+      if (dirtyRef.current && !savingRef.current) void keys.current.save();
+    };
+    const down = (e: KeyboardEvent) => {
+      if (document.querySelector('.modal-backdrop')) return;
+      const k = keys.current;
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
+      if (mod && key === 's') {
+        e.preventDefault();
+        trySave();
+      } else if (mod && (key === 'z' || key === 'y') && !editable(e.target)) {
+        e.preventDefault();
+        if (key === 'y' || e.shiftKey) k.redo();
+        else k.undo();
+      } else if (e.key === 'Escape') {
+        if (k.side) setSide(null);
+        else if (k.sel || k.rules) { setSel(null); setRules(false); }
+        else return;
+        e.preventDefault();
+      } else if ((e.key === 'Delete' || e.key === 'Backspace') && !mod && k.tab === 'canvas' && k.sel && !k.side && !editable(e.target)) {
+        const idx = k.draft.steps.findIndex((s) => s.id === k.sel);
+        if (idx < 0) return;
+        e.preventDefault();
+        setDraft(removeStep(k.draft, idx));
+        setSel(null);
+        toast(`已删除步骤，${MOD}Z 可撤销`, 'info');
+      }
+    };
+    window.addEventListener('keydown', down);
+    const off = onMenu((cmd) => cmd === 'save' && trySave());
+    return () => {
+      window.removeEventListener('keydown', down);
+      off();
+    };
+  }, [setDraft]);
 
   return (
     <div className="de" data-testid="design-editor">
@@ -67,16 +134,25 @@ export function DesignEditor({ initial, onClose, onSaved }: { initial: Draft; on
         <div className="seg">
           {TABS.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)} data-testid={`de-tab-${k}`}>{l}</button>)}
         </div>
+        <button className="btn sm ghost" onClick={() => { setTab('canvas'); setSel(null); setRules(true); }} {...tip('规则', '预算、封驳上限、并行度、结案前御批')} data-testid="de-rules"><Icon name="settings" size={12} /> 规则</button>
+        <span className="de-undo">
+          <button className="icon-btn" disabled={!canUndo} onClick={undo} {...tip('撤销', undefined, `${MOD}Z`, 'below')} data-testid="de-undo"><Icon name="undo" size={14} /></button>
+          <button className="icon-btn" disabled={!canRedo} onClick={redo} {...tip('重做', undefined, `⇧${MOD}Z`, 'below')} data-testid="de-redo"><Icon name="redo" size={14} /></button>
+        </span>
         <span style={{ flex: 1 }} />
         <button className={`chip ${check.ok ? 'ok' : 'bad'}`} onClick={() => setShowIssues(!showIssues)} data-testid="de-issues">
           {check.ok ? `✓ 校验通过${check.warnings.length ? ` · ${check.warnings.length} 条提醒` : ''}` : `✕ ${check.errors.length} 处问题`}
         </button>
+        <div className="de-corner">
+          <button className="link small" onClick={() => setSide('court')} {...tip('朝堂站位', '角色在像素朝堂里站哪、做什么（只影响画面）')} data-testid="de-court"><Icon name="crown" size={11} /> 朝堂站位{draft.court ? ` · ${draft.court.seats.length}` : ''}</button>
+          <button className="link small" onClick={() => setSide('json')} {...tip('JSON', '高级：直接查看或修改设计的原始数据')} data-testid="de-json"><Icon name="code" size={11} /> JSON</button>
+        </div>
       </div>
       <div className="de-head">
         <input className="input de-desc" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="一句话说明这套协作适合做什么" />
         <input className="input de-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="这次改了什么（可选）" />
-        <button className="btn" onClick={close}>{dirty ? '放弃' : '返回'}</button>
-        <button className="btn primary" disabled={saving || !dirty} onClick={save} data-testid="de-save"><Icon name="check" size={13} /> 保存为新版本</button>
+        <button className="btn" onClick={close} data-testid="de-close">{changed ? '放弃' : '返回'}</button>
+        <button className="btn primary" disabled={saving || !dirty} onClick={save} {...tip(isNew ? '保存' : '保存为新版本', '旧版本会保留，可随时回滚', `${MOD}S`, 'below')} data-testid="de-save"><Icon name="check" size={13} /> {isNew ? '保存' : '保存为新版本'}</button>
       </div>
       {showIssues && (check.errors.length > 0 || check.warnings.length > 0) && (
         <div className="de-issues" data-testid="de-issue-list">
@@ -100,14 +176,23 @@ export function DesignEditor({ initial, onClose, onSaved }: { initial: Draft; on
                 <PoliciesForm draft={draft} onChange={setDraft} />
               )}
             </div>
-          ) : (
-            <button className="de-rules-btn" onClick={() => setRules(true)} title="预算、封驳上限、并行度、结案御批">规则</button>
-          )}
+          ) : null}
         </div>
       )}
       {tab === 'form' && <FormView draft={draft} onChange={setDraft} errors={stepErrors} />}
-      {tab === 'court' && <CourtLayoutEditor draft={draft} onChange={setDraft} />}
-      {tab === 'json' && <JsonView draft={draft} onChange={setDraft} />}
+      {side && (
+        <div className="de-sheet-backdrop" onMouseDown={() => setSide(null)}>
+          <div className="de-sheet" onMouseDown={(e) => e.stopPropagation()} data-testid={`de-sheet-${side}`}>
+            <div className="row-gap de-sheet-h">
+              <b>{side === 'court' ? '朝堂站位' : 'JSON'}</b>
+              <span className="muted small">{side === 'court' ? '只影响像素朝堂里的画面，不影响旨意怎么执行。随设计一起保存。' : '高级：改完点「应用」，再保存设计。'}</span>
+              <span style={{ flex: 1 }} />
+              <button className="btn sm primary" onClick={() => setSide(null)} data-testid="de-sheet-done">完成</button>
+            </div>
+            {side === 'court' ? <CourtLayoutEditor draft={draft} onChange={setDraft} /> : <JsonView draft={draft} onChange={setDraft} />}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -222,7 +307,7 @@ function RoleForm({ draft, role, onChange, onRenamed }: { draft: Draft; role: Ro
       <div className="field wide row-gap">
         <span className="muted small">{used.length ? `用于：${used.join('、')}` : '还没有步骤使用这个角色'}</span>
         <span style={{ flex: 1 }} />
-        <button className="btn sm danger" disabled={draft.roles.length <= 1} onClick={() => { if (!used.length || window.confirm(`「${role.name}」正被 ${used.length} 个步骤使用，删除后这些步骤需要重新指派。确定删除？`)) onChange(removeRole(draft, role.id)); }}>
+        <button className="btn sm danger" disabled={draft.roles.length <= 1} onClick={async () => { if (!used.length || (await askConfirm(`删除角色「${role.name}」？`, `它正被 ${used.length} 个步骤使用（${used.join('、')}），删除后这些步骤需要重新指派。`, { ok: '删除', danger: true }))) onChange(removeRole(draft, role.id)); }}>
           <Icon name="trash" size={12} /> 删除角色
         </button>
       </div>

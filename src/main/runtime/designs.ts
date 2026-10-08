@@ -13,7 +13,7 @@ import { SOULS, EXEC_OUTPUT_RULE } from './souls';
 import type { Runtime } from './runtime';
 import { now, sha256, uid } from './util';
 
-interface IndexEntry { activeVersion: number; status: 'active' | 'disabled' }
+interface IndexEntry { activeVersion: number; status: 'active' | 'disabled'; favorite?: boolean }
 interface DesignIndex { designs: Record<string, IndexEntry> }
 
 export const designHash = (d: CollabDesign) => sha256(canonical(designBody(d)));
@@ -76,7 +76,7 @@ export class DesignStore {
     // re-discover design folders missing from the index
     if (fs.existsSync(this.dir)) {
       for (const id of fs.readdirSync(this.dir)) {
-        if (this.index.designs[id] || !fs.statSync(path.join(this.dir, id)).isDirectory()) continue;
+        if (id.startsWith('.') || this.index.designs[id] || !fs.statSync(path.join(this.dir, id)).isDirectory()) continue;
         const vs = this.versionsOf(id);
         if (vs.length) this.index.designs[id] = { activeVersion: vs.at(-1)!, status: 'active' };
       }
@@ -114,6 +114,7 @@ export class DesignStore {
 
   list(): DesignInfo[] {
     const b = this.get(BUILTIN_DESIGN_ID)!;
+    const mine: DesignInfo[] = [];
     const out: DesignInfo[] = [{
       id: BUILTIN_DESIGN_ID, name: '三省六部（内置）', description: 'Solo / Court Lite / Full Court 三档；原生引擎执行，不可修改，可复制后自定义。', native: true, origin: { kind: 'builtin' },
       status: 'active', activeVersion: 1, latestVersion: 1, versions: [{ version: 1, hash: designHash(b), createdAt: 0 }], roles: b.roles.length, steps: b.steps.length,
@@ -122,16 +123,18 @@ export class DesignStore {
       const vs = this.versionsOf(id);
       const cur = this.readVersion(id, e.activeVersion);
       if (!cur) continue;
-      out.push({
-        id, name: cur.name, description: cur.description, native: false, origin: cur.origin, status: e.status, activeVersion: e.activeVersion, latestVersion: vs.at(-1) ?? e.activeVersion,
-        versions: vs.map((v) => {
-          const d = this.readVersion(id, v);
-          return { version: v, hash: d ? designHash(d) : '', createdAt: d?.createdAt ?? 0, note: d?.note };
-        }),
-        roles: cur.roles.length, steps: cur.steps.length,
+      const versions = vs.map((v) => {
+        const d = this.readVersion(id, v);
+        return { version: v, hash: d ? designHash(d) : '', createdAt: d?.createdAt ?? 0, note: d?.note };
+      });
+      mine.push({
+        id, name: cur.name, description: cur.description, native: false, origin: cur.origin, status: e.status, favorite: !!e.favorite, activeVersion: e.activeVersion, latestVersion: vs.at(-1) ?? e.activeVersion,
+        versions, updatedAt: Math.max(0, ...versions.map((v) => v.createdAt)), roles: cur.roles.length, steps: cur.steps.length,
       });
     }
-    return out;
+    // built-in first, then favourites, then the most recently changed
+    mine.sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite) || (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    return [...out, ...mine];
   }
 
   /** Save as a new immutable version (never overwrites). New design when `id` is absent/unknown. Activates the new version. */
@@ -177,6 +180,69 @@ export class DesignStore {
     this.saveIndex();
     this.rt.audit.record('emperor', 'design_activated', { id, from, to: version, rollback: version < from });
     this.emit();
+  }
+
+  /** 收藏 / 取消收藏 — favourites sort to the top of every design list */
+  setFavorite(id: string, favorite: boolean) {
+    if (id === BUILTIN_DESIGN_ID) throw new Error('内置三省六部始终排在最前，无需收藏');
+    const e = this.index.designs[id];
+    if (!e) throw new Error('协同设计不存在');
+    e.favorite = favorite || undefined;
+    this.saveIndex();
+    this.emit();
+  }
+
+  /**
+   * Delete a user design. Its folder moves to designs/.trash (recoverable by hand); edicts already
+   * running keep their pinned snapshot, so nothing in flight is affected.
+   */
+  /** Moves the design to designs/.trash (kept, so it can be restored); returns the restore token. */
+  remove(id: string): { token: string } {
+    if (id === BUILTIN_DESIGN_ID) throw new Error('内置三省六部不可删除');
+    const e = this.index.designs[id];
+    if (!e) throw new Error('协同设计不存在');
+    const name = this.readVersion(id, e.activeVersion)?.name ?? id;
+    const trash = path.join(this.dir, '.trash');
+    fs.mkdirSync(trash, { recursive: true });
+    const token = `${id}-${Date.now()}`;
+    const wasDefault = this.rt.settings.defaultDesign === id;
+    const src = path.join(this.dir, id);
+    if (fs.existsSync(src)) {
+      fs.writeFileSync(path.join(src, 'entry.json'), JSON.stringify({ ...e, wasDefault }));
+      fs.renameSync(src, path.join(trash, token));
+    }
+    delete this.index.designs[id];
+    this.saveIndex();
+    if (wasDefault) this.rt.updateSettings({ defaultDesign: BUILTIN_DESIGN_ID });
+    this.rt.audit.record('emperor', 'design_deleted', { id, name, versions: e.activeVersion });
+    this.emit();
+    return { token };
+  }
+
+  /** Undo a remove(): move the folder back from the trash with its index entry (and default flag). */
+  restore(token: string): string {
+    const m = /^([A-Za-z0-9][A-Za-z0-9_-]*)-(\d{10,})$/.exec(token);
+    const from = m && path.join(this.dir, '.trash', token);
+    if (!m || !from || !fs.existsSync(from)) throw new Error('找不到可恢复的设计');
+    const id = m[1];
+    if (this.index.designs[id] || fs.existsSync(path.join(this.dir, id))) throw new Error('已有同 id 的设计，无法恢复');
+    let saved: IndexEntry & { wasDefault?: boolean } = { activeVersion: 0, status: 'active' };
+    try {
+      saved = JSON.parse(fs.readFileSync(path.join(from, 'entry.json'), 'utf8'));
+      fs.unlinkSync(path.join(from, 'entry.json'));
+    } catch {
+      /* older trash folders have no entry file */
+    }
+    fs.renameSync(from, path.join(this.dir, id));
+    const versions = this.versionsOf(id);
+    if (!versions.length) throw new Error('恢复的设计没有可用版本');
+    const { wasDefault, ...entry } = saved;
+    this.index.designs[id] = { ...entry, activeVersion: versions.includes(entry.activeVersion) ? entry.activeVersion : versions[versions.length - 1] };
+    this.saveIndex();
+    if (wasDefault && entry.status === 'active') this.rt.updateSettings({ defaultDesign: id });
+    this.rt.audit.record('emperor', 'design_restored', { id });
+    this.emit();
+    return id;
   }
 
   setStatus(id: string, status: 'active' | 'disabled') {

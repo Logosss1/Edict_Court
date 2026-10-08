@@ -503,7 +503,7 @@ function EmperorBox({ debateId }: { debateId: string | null }) {
           )}
           {mode === 'edict' && designs.length > 1 && (
             <select className="px-select" value={design?.id ?? BUILTIN_DESIGN_ID} onChange={(e) => call('updateSettings', { defaultDesign: e.target.value })} {...tip('协同设计', '新下的旨意按哪套协作流程办；朝堂也按它的布局摆', undefined, 'below')} data-testid="court-design-pick">
-              {designs.map((d) => <option key={d.id} value={d.id}>{d.native ? '三省六部' : d.name}</option>)}
+              {designs.map((d) => <option key={d.id} value={d.id}>{d.native ? '三省六部' : `${d.favorite ? '★ ' : ''}${d.name}`}</option>)}
             </select>
           )}
           {mode === 'edict' && !custom && (

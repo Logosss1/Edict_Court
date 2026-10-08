@@ -24,6 +24,7 @@ export interface Toast {
   id: number;
   level: 'info' | 'warn' | 'error' | 'success';
   message: string;
+  action?: { label: string; run: () => void };
 }
 
 export interface UIState {
@@ -94,10 +95,13 @@ function upsert<T>(arr: T[], item: T, key: (x: T) => string): T[] {
 }
 
 let toastSeq = 1;
-export function toast(message: string, level: Toast['level'] = 'info') {
-  const t = { id: toastSeq++, level, message };
+export function toast(message: string, level: Toast['level'] = 'info', action?: Toast['action']) {
+  const t = { id: toastSeq++, level, message, action };
   setUI((ui) => ({ toasts: [...ui.toasts.slice(-4), t] }));
-  setTimeout(() => setUI((ui) => ({ toasts: ui.toasts.filter((x) => x.id !== t.id) })), level === 'error' ? 7000 : 3800);
+  setTimeout(() => dismissToast(t.id), level === 'error' || action ? 7000 : 3800);
+}
+export function dismissToast(id: number) {
+  setUI((ui) => ({ toasts: ui.toasts.filter((x) => x.id !== id) }));
 }
 
 // streaming deltas are batched per animation frame
