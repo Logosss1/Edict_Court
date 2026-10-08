@@ -21,7 +21,7 @@ Emperor issues an edict → Crown Prince triages (small talk is answered directl
 
 ## Two modes, one runtime (⌘J)
 
-| Workbench (default) | Court (pixel art) |
+| Workbench (default) | Court |
 |---|---|
 | ![Workbench](docs/screenshots/03-workbench-final-gate.png) | ![Hall of Supreme Harmony](docs/screenshots/08-court-taihe-presenter.png) |
 
