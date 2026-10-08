@@ -58,9 +58,9 @@ Both modes show the same live state: approve in the court and the workbench clos
 - **Thinking levels from the model itself.** **Detect thinking levels** sends one tiny request per level name and keeps the ones the service accepts; new models are detected when saved. Levels are shown by their API names (None · Minimal · Low · Medium · High · XHigh · Max · Ultra). A relay that accepts any value is marked "unconfirmed".
 - **Economy model fallback.** If the service says it doesn't offer the economy model, that official switches to your main model and carries on, with a notice.
 - **A finer Tang court that follows the palace layout.** Scenes redrawn at twice the detail; officials have 29 animations that follow their work. New **Taihe Palace Square** scene; walk Taihe Palace → Square → Chengtian Gate → Six Ministries Office with the arrow keys or by clicking. Hover and click officials and objects, replay a finished edict, day/night and weather. Per-design court seating.
-- **Hover descriptions** on the activity bar, the Privy Council list, the court toolbar and every control in the edict box.
+- **Hover descriptions** on the activity bar, the Privy Council list, the court toolbar, and every control in the edict box.
 
-| Flow canvas | 太和殿广场 | Per-official models |
+| Flow canvas | Taihe Palace Square | Per-official models |
 |---|---|---|
 | ![Collaboration design canvas](docs/screenshots/37-designs-canvas.png) | ![Taihe Palace Square](docs/screenshots/38-court-guangchang.png) | ![Per-official models](docs/screenshots/39-models-agent-models.png) |
 
