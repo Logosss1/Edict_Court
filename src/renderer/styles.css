@@ -833,6 +833,7 @@ select.input { padding: 4px 6px; }
 .tip-right { transform: translateY(-50%); }
 .tip-right::before { content: ''; position: absolute; left: -5px; top: 50%; margin-top: -4px; border: 4px solid transparent; border-right-color: #8a5a1c; border-left: none; }
 .tip-below { transform: translateX(-50%); }
+.tip-above { transform: translate(-50%, -100%); }
 .tip-h { display: flex; align-items: center; gap: 8px; }
 .tip-h b { color: #f2d27a; font-weight: 600; }
 .tip-h .kbd { margin-left: auto; font-size: 10.5px; padding: 0 5px; border: 1px solid #5a4030; border-radius: 4px; color: #d8c8a4; font-family: var(--mono); }

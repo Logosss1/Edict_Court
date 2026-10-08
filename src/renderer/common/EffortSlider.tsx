@@ -1,5 +1,6 @@
 // 思考程度 slider — the ladder is the selected model's own levels; the right end is always the model's top level.
 import { useStore } from '../store';
+import { tip } from './Tip';
 import { clampLevel, effectiveConfig, levelLabel } from '../../shared/reasoning';
 import type { ModelRef, ProviderConfig, ReasoningConfig } from '../../shared/types';
 
@@ -17,7 +18,7 @@ export function EffortSlider({ model, value, onChange, variant = 'ui' }: { model
   const cfg = reasoningFor(providers, model);
   if (!cfg || !cfg.levels.length) {
     return (
-      <span className={`effort none ${variant}`} title="该模型未配置思考档位（不发送思考参数）。可在「模型配置 → 思考程度」中设置。" data-testid="effort-none">
+      <span className={`effort none ${variant}`} {...tip('思考程度 · 不适用', '这个模型没有设置思考档位，不会发送思考参数。可在「模型配置 → 思考程度」里设置。', undefined, 'above')} data-testid="effort-none">
         思考 · 不适用
       </span>
     );
@@ -26,9 +27,9 @@ export function EffortSlider({ model, value, onChange, variant = 'ui' }: { model
   const idx = Math.max(0, cfg.levels.indexOf(shown));
   const last = cfg.levels.length - 1;
   const defIdx = cfg.levels.indexOf(cfg.default);
-  const title = `思考程度：${cfg.levels.map(levelLabel).join(' · ')}（最右 = 该模型最高档）${value === 'default' ? '；当前为模型默认' : ''}`;
+  const desc = `模型想得越深越准，但更慢、更费 token。可选：${cfg.levels.map(levelLabel).join(' · ')}（最右是该模型最高档）${value === 'default' ? '；当前为模型默认' : ''}`;
   return (
-    <span className={`effort ${variant}`} title={title} data-testid="effort">
+    <span className={`effort ${variant}`} {...tip('思考程度', desc, undefined, 'above')} data-testid="effort">
       <span className="effort-k">思考</span>
       <span className="effort-track">
         <input

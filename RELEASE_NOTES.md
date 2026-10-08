@@ -2,6 +2,21 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 1.2.5
+
+**Fixes**
+- **Collaboration failed while Solo worked (HTTP 503 "不支持该模型或接入方式")**:
+  - **Cause**: Solo uses the main model you pick in the composer. In collaboration, 太子, 尚书省 and 六部 use the **economy model** from 模型配置. That defaults to the second model in the service's list, which a relay group may not offer.
+  - **Fix**: when the service says it does not offer an economy-class model, that official switches to your main model and carries on. The bad model is skipped for the rest of the session. A notice and a log line name the model and tell you to change the economy model in 模型配置.
+  - The main model you picked yourself is never swapped silently. If it fails, the error card still shows.
+
+**What's new**
+- **Hover descriptions in the composer**: a short card with a one-line explanation appears above each control: 主模型, 协同设计, Solo / Court Lite / Full Court, 思考, 协同, 朝堂议政, 直接下旨, 续上一会话, the cost estimate, 下旨 and the header buttons. Cards near the bottom of the window open upwards and stay inside the window.
+
+**Install**: download `Edict-1.2.5-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data folder is kept when you install over 1.x.
+
+**Verified**: 52/52 unit + integration tests (including a relay that rejects the economy model), 21/21 + 62/62 end-to-end UI checks and the court smoke test on Linux + Xvfb (mock LLM). Not yet verified with a real model service.
+
 ## 1.2.4
 
 **What's new**

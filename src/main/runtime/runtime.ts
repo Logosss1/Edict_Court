@@ -385,7 +385,7 @@ export class Runtime {
 
   /** Model for a call. `role` = a custom collaboration-design role (per-official overrides do not apply to it). */
   resolveModel(agentId: AgentId, task?: Task, role?: { id: string; modelClass: ModelClass }): ModelRef {
-    const valid = (r?: ModelRef | null): r is ModelRef => !!r && !!r.model && this.providers.some((p) => p.id === r.providerId && p.enabled);
+    const valid = (r?: ModelRef | null): r is ModelRef => !!r && !!r.model && this.providers.some((p) => p.id === r.providerId && p.enabled) && !this.badModels.has(`${r.providerId}/${r.model}`);
     if (role) {
       const tr = task?.roleModels?.[role.id];
       if (valid(tr)) return tr;
@@ -405,6 +405,17 @@ export class Runtime {
     const p = this.providers.find((x) => x.enabled && x.models.length);
     if (p) return { providerId: p.id, model: p.models[0].id };
     throw new Error('尚未配置可用模型：请在「模型配置」中添加模型服务（base_url、API Key、模型 id）');
+  }
+
+  /** Models the service said it does not offer (wrong id, relay group, protocol) during this session: routing skips them. */
+  badModels = new Set<string>();
+
+  /** A working stand-in for a model the service rejected: the edict's main model first, then the routing defaults. */
+  fallbackModel(failed: ModelRef, task?: Task): ModelRef | null {
+    const ok = (r?: ModelRef | null): r is ModelRef => !!r && !!r.model && !(r.providerId === failed.providerId && r.model === failed.model)
+      && this.providers.some((p) => p.id === r.providerId && p.enabled) && !this.badModels.has(`${r.providerId}/${r.model}`);
+    for (const r of [task?.strongModel, this.settings.routing.strong, this.settings.routing.economy]) if (ok(r)) return r;
+    return null;
   }
 
   /** Models whose service rejected reasoning params during this session (param error → auto fallback). */

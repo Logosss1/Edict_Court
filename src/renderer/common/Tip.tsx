@@ -4,7 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 
 const DELAY = 450;
 
-interface Shown { title: string; desc?: string; kbd?: string; x: number; y: number; side: 'right' | 'below' }
+type Side = 'right' | 'below' | 'above';
+interface Shown { title: string; desc?: string; kbd?: string; x: number; y: number; side: Side }
 
 export function TipLayer() {
   const [tip, setTip] = useState<Shown | null>(null);
@@ -26,10 +27,14 @@ export function TipLayer() {
       timer.current = setTimeout(() => {
         if (target.current !== el || !el.isConnected) return;
         const r = el.getBoundingClientRect();
-        const side = el.dataset.tipSide === 'below' ? 'below' : 'right';
+        let side: Side = el.dataset.tipSide === 'below' || el.dataset.tipSide === 'above' ? el.dataset.tipSide : 'right';
+        // near the bottom of the window a card below would be cut off: show it above instead
+        if (side === 'below' && r.bottom + 80 > window.innerHeight) side = 'above';
+        // centred cards stay inside the window (cards are at most 260px wide)
+        const cx = Math.max(136, Math.min(window.innerWidth - 136, r.left + r.width / 2));
         setTip({
           title: el.dataset.tip ?? '', desc: el.dataset.tipDesc || undefined, kbd: el.dataset.tipKey || undefined,
-          x: side === 'right' ? r.right + 8 : r.left + r.width / 2, y: side === 'right' ? r.top + r.height / 2 : r.bottom + 6, side,
+          x: side === 'right' ? r.right + 8 : cx, y: side === 'right' ? r.top + r.height / 2 : side === 'below' ? r.bottom + 6 : r.top - 6, side,
         });
       }, DELAY);
     };
@@ -60,6 +65,6 @@ export function TipLayer() {
 }
 
 /** spread onto an element: tip('旨意看板', '所有旨意按状态分列', '⌘1') */
-export function tip(title: string, desc?: string, kbd?: string, side?: 'right' | 'below') {
+export function tip(title: string, desc?: string, kbd?: string, side?: Side) {
   return { 'data-tip': title, 'data-tip-desc': desc, 'data-tip-key': kbd, 'data-tip-side': side, 'aria-label': title };
 }
