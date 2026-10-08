@@ -71,11 +71,13 @@ export function DesignEditor({ initial, onClose, onSaved }: { initial: Draft; on
         <button className={`chip ${check.ok ? 'ok' : 'bad'}`} onClick={() => setShowIssues(!showIssues)} data-testid="de-issues">
           {check.ok ? `✓ 校验通过${check.warnings.length ? ` · ${check.warnings.length} 条提醒` : ''}` : `✕ ${check.errors.length} 处问题`}
         </button>
+      </div>
+      <div className="de-head">
+        <input className="input de-desc" value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="一句话说明这套协作适合做什么" />
         <input className="input de-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="这次改了什么（可选）" />
         <button className="btn" onClick={close}>{dirty ? '放弃' : '返回'}</button>
         <button className="btn primary" disabled={saving || !dirty} onClick={save} data-testid="de-save"><Icon name="check" size={13} /> 保存为新版本</button>
       </div>
-      <textarea className="input de-desc" rows={1} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} placeholder="一句话说明这套协作适合做什么" />
       {showIssues && (check.errors.length > 0 || check.warnings.length > 0) && (
         <div className="de-issues" data-testid="de-issue-list">
           {check.errors.map((e, i) => <div key={`e${i}`} className="danger small">✕ {e}</div>)}

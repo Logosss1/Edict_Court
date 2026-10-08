@@ -840,10 +840,10 @@ select.input { padding: 4px 6px; }
 /* ── 协同设计编辑器 ── */
 .designs-panel.editing { padding: 0; height: 100%; display: flex; }
 .de { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; height: 100%; overflow: hidden; }
-.de-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.de-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: none; }
 .de-name { width: 220px; font-weight: 600; }
 .de-note { width: 180px; }
-.de-desc { resize: vertical; min-height: 30px; }
+.de-desc { flex: 1; min-width: 160px; }
 .de .chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); cursor: pointer; }
 .de .chip.bad { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); cursor: pointer; }
 .de-issues { max-height: 120px; overflow: auto; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg2); }
