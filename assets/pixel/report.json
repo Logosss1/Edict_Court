@@ -1,98 +1,103 @@
 {
  "spec": {
-  "tile": 16,
   "character": [
-   32,
-   48
+   64,
+   96
   ],
   "scene": [
-   640,
-   360
+   1280,
+   720
   ],
-  "paletteSize": 31
+  "scale": 2,
+  "paletteSize": 47,
+  "maxColorsPerScene": 48
  },
  "scenes": {
   "taihe": {
-   "colors": 31,
+   "colors": 45,
    "ok": true
   },
   "junjichu": {
-   "colors": 30,
+   "colors": 42,
    "ok": true
   },
   "liubu": {
-   "colors": 30,
+   "colors": 45,
    "ok": true
   },
   "chengtian": {
-   "colors": 29,
+   "colors": 47,
+   "ok": true
+  },
+  "guangchang": {
+   "colors": 39,
    "ok": true
   }
  },
  "characters": {
   "emperor": {
-   "frames": 22,
-   "colors": 11
+   "frames": 116,
+   "colors": 28
   },
   "taizi": {
-   "frames": 22,
-   "colors": 15
+   "frames": 116,
+   "colors": 31
   },
   "zhongshu": {
-   "frames": 22,
-   "colors": 15
+   "frames": 116,
+   "colors": 32
   },
   "menxia": {
-   "frames": 22,
-   "colors": 15
+   "frames": 116,
+   "colors": 32
   },
   "shangshu": {
-   "frames": 22,
-   "colors": 15
+   "frames": 116,
+   "colors": 32
   },
   "hubu": {
-   "frames": 22,
-   "colors": 13
+   "frames": 116,
+   "colors": 30
   },
   "libu": {
-   "frames": 22,
-   "colors": 15
+   "frames": 116,
+   "colors": 29
   },
   "bingbu": {
-   "frames": 22,
-   "colors": 14
+   "frames": 116,
+   "colors": 30
   },
   "xingbu": {
-   "frames": 22,
-   "colors": 13
+   "frames": 116,
+   "colors": 30
   },
   "gongbu": {
-   "frames": 22,
-   "colors": 14
+   "frames": 116,
+   "colors": 28
   },
   "libu_hr": {
-   "frames": 22,
-   "colors": 15
+   "frames": 116,
+   "colors": 32
   },
   "zaochao": {
-   "frames": 22,
-   "colors": 14
+   "frames": 116,
+   "colors": 28
   },
   "solo": {
-   "frames": 22,
-   "colors": 13
+   "frames": 116,
+   "colors": 32
   },
   "guard": {
-   "frames": 22,
-   "colors": 15
+   "frames": 116,
+   "colors": 29
   },
   "lady": {
-   "frames": 22,
-   "colors": 14
+   "frames": 116,
+   "colors": 29
   },
   "clerk": {
-   "frames": 22,
-   "colors": 15
+   "frames": 116,
+   "colors": 28
   }
  }
 }

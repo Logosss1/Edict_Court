@@ -1,7 +1,9 @@
 // Indexed-colour raster + PNG encoder (no dependencies). Palette index 0 = transparent.
 import zlib from 'node:zlib';
 
-// Tang32 master palette — every scene & sprite draws ONLY from these colours (≤32 incl. transparency).
+// Tang48 master palette — every scene & sprite draws ONLY from these colours (≤48 incl. transparency).
+// Indices 1–31 are the original Tang32 set (unchanged); 32–47 add the tones the 2× art needs:
+// grey roof tiles, plaster walls, warm floors, distant hills, petals.
 export const PALETTE = [
   null,       // 0 transparent
   '#1a1220',  // 1 ink (outline)
@@ -35,11 +37,29 @@ export const PALETTE = [
   '#8fb8cc',  // 29 sky
   '#d2e6e4',  // 30 sky light / cloud
   '#ffe7a3',  // 31 lantern glow
+  '#c08a5a',  // 32 wood light
+  '#24160f',  // 33 deep shadow (interior)
+  '#8c2626',  // 34 red mid (column shade)
+  '#2e3440',  // 35 roof tile dark
+  '#4a5260',  // 36 roof tile
+  '#6e7888',  // 37 roof tile light
+  '#ddd2bc',  // 38 plaster shade 粉壁
+  '#4a3c36',  // 39 floor dark
+  '#6e5c50',  // 40 floor
+  '#8e7a68',  // 41 floor light
+  '#6f8aa0',  // 42 far hills
+  '#a3b8c6',  // 43 far hills light
+  '#f6d2ae',  // 44 skin light
+  '#f2b8c6',  // 45 petal pink
+  '#5c3a6e',  // 46 purple mid
+  '#b07a3a',  // 47 bronze
 ];
 export const C = {
   T: 0, INK: 1, DBROWN: 2, BROWN: 3, WOOD: 4, RED_D: 5, RED: 6, RED_L: 7, GOLD_D: 8, GOLD: 9, GOLD_L: 10, PAPER: 11, SKIN_S: 12, SKIN: 13,
   JADE: 14, STONE_L: 15, STONE: 16, STONE_D: 17, PUR_D: 18, PUR: 19, PUR_L: 20, GRN_D: 21, GRN: 22, GRN_L: 23, TEAL: 24, BLU_D: 25, BLU: 26,
   CRIMSON: 27, BLACK: 28, SKY: 29, SKY_L: 30, GLOW: 31,
+  WOOD_L: 32, DEEP: 33, RED_M: 34, TILE_D: 35, TILE: 36, TILE_L: 37, PLASTER_S: 38, FLOOR_D: 39, FLOOR: 40, FLOOR_L: 41,
+  HILL: 42, HILL_L: 43, SKIN_L: 44, PINK: 45, PUR_M: 46, BRONZE: 47,
 };
 
 const rgb = PALETTE.map((h) => (h ? [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)] : [0, 0, 0]));
@@ -70,6 +90,7 @@ export class Bitmap {
     for (let y = Math.min(y0, y1); y <= Math.max(y0, y1); y++) this.set(x, y, c);
   }
   line(x0, y0, x1, y1, c) {
+    x0 = Math.round(x0); y0 = Math.round(y0); x1 = Math.round(x1); y1 = Math.round(y1);
     const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
     let err = dx + dy;
     for (;;) {

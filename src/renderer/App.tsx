@@ -1,7 +1,8 @@
 import { useEffect, useState, lazy, Suspense, Component, type ReactNode } from 'react';
-import { useStore, setUI, onMenu, getState, openPanel, toast } from './store';
+import { useStore, setUI, onMenu, getState, openPanel, toast, dismissToast } from './store';
 import { call, isMac } from './api';
 import { Icon } from './common/Icon';
+import { TipLayer } from './common/Tip';
 import { fmtCost, fmtTokens, usageTokens } from './common/format';
 import { Workbench } from './workbench/Workbench';
 import { ApprovalsDock } from './workbench/Approvals';
@@ -87,6 +88,7 @@ export function App() {
       </div>
       <ApprovalsDock />
       <Toasts />
+      <TipLayer />
       <CommandPalette />
       <CeremonyOverlay />
       <PromptHost />
@@ -153,8 +155,9 @@ function Toasts() {
   return (
     <div className="toasts">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast toast-${t.level}`}>
+        <div key={t.id} className={`toast toast-${t.level}`} data-testid="toast">
           {t.message}
+          {t.action && <button className="toast-action" onClick={() => { dismissToast(t.id); t.action!.run(); }} data-testid="toast-action">{t.action.label}</button>}
         </div>
       ))}
     </div>

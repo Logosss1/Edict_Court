@@ -1,7 +1,7 @@
 {
   "name": "edict-for-mac",
   "productName": "Edict",
-  "version": "1.1.0",
+  "version": "1.2.7",
   "description": "Edict for Mac — an Apple Silicon desktop AI coding workstation with a pixel court for EDICT's Three Departments and Six Ministries workflow (三省六部像素朝堂 AI 编程工作站)",
   "main": "dist/main.js",
   "license": "MIT",
@@ -10,7 +10,7 @@
     "build": "node scripts/build.mjs",
     "assets": "node scripts/gen-pixel-assets.mjs",
     "start": "npm run build && electron .",
-    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test": "tsx --test --test-concurrency=1 --test-timeout=120000 tests/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "e2e": "tsx e2e/flow.ts",
     "package:mac": "node scripts/package-mac.mjs",

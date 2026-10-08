@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // Stage-2 art import: take a cleaned-up image (AI generated → Aseprite/LibreSprite), align it to
-// the pixel grid, quantise it to the Tang32 palette and replace the placeholder asset in place.
+// the pixel grid, quantise it to the Tang48 palette and replace the placeholder asset in place.
 //
 //   node scripts/art/import-art.mjs <kind> <key> <file.png> [--downscale N] [--dry-run]
-//     kind: char | scene | prop | tileset
+//     kind: char | scene | prop
 //     key : e.g. zhongshu | taihe | zhezi_doing
 //
-// Spec lock (rejected otherwise): char sheet = 352×96 (11×2 frames of 32×48), scene = 640×360,
-// tileset = multiples of 16, ≤ 32 colours after quantisation, no semi-transparent pixels.
+// Spec lock (rejected otherwise, 2× detail): char sheet = 512×1440 (8 columns of 64×96 frames, the
+// layout in src/renderer/court/game/anims.json), scene = 1280×720, ≤ 48 colours after
+// quantisation, no semi-transparent pixels.
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -17,7 +18,7 @@ import { PALETTE, Bitmap } from '../pixel/raster.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const [kind, key, file, ...rest] = process.argv.slice(2);
 if (!kind || !key || !file) {
-  console.log('usage: import-art.mjs <char|scene|prop|tileset> <key> <file.png> [--downscale N] [--dry-run]');
+  console.log('usage: import-art.mjs <char|scene|prop> <key> <file.png> [--downscale N] [--dry-run]');
   process.exit(1);
 }
 const down = Number(rest[rest.indexOf('--downscale') + 1]) || 1;
@@ -70,8 +71,15 @@ function decodePNG(buf) {
   return { w, h, rgba: out };
 }
 
+const LAYOUT = JSON.parse(fs.readFileSync(path.join(root, 'src/renderer/court/game/anims.json'), 'utf8'));
+const FRAMES = LAYOUT.anims.reduce((n, a) => n + a.frames, 0);
+const CHAR_SPEC = [LAYOUT.frameWidth * LAYOUT.columns, LAYOUT.frameHeight * Math.ceil(FRAMES / LAYOUT.columns)];
 const pal = PALETTE.map((hx) => (hx ? [parseInt(hx.slice(1, 3), 16), parseInt(hx.slice(3, 5), 16), parseInt(hx.slice(5, 7), 16)] : null));
+const memo = new Map();
 function nearest(r, g, b) {
+  const k = (r << 16) | (g << 8) | b;
+  const hit = memo.get(k);
+  if (hit !== undefined) return hit;
   let best = 1, bd = Infinity;
   for (let i = 1; i < pal.length; i++) {
     const [pr, pg, pb] = pal[i];
@@ -79,6 +87,7 @@ function nearest(r, g, b) {
     const d = 2 * (r - pr) ** 2 + 4 * (g - pg) ** 2 + 3 * (b - pb) ** 2;
     if (d < bd) { bd = d; best = i; }
   }
+  memo.set(k, best);
   return best;
 }
 
@@ -100,14 +109,13 @@ for (let y = 0; y < H; y++)
       }
     bmp.set(x, y, [...votes.entries()].sort((a, b) => b[1] - a[1])[0][0]);
   }
-const spec = { char: [352, 96], scene: [640, 360] }[kind];
+const spec = { char: CHAR_SPEC, scene: [1280, 720] }[kind];
 if (spec && (W !== spec[0] || H !== spec[1])) throw new Error(`${kind} must be ${spec[0]}×${spec[1]} after downscale (got ${W}×${H})`);
-if ((kind === 'tileset') && (W % 16 || H % 16)) throw new Error('tileset must be a multiple of 16×16');
 const used = new Set(bmp.px);
 used.delete(0);
-console.log(`[art] ${file} → ${W}×${H}, ${used.size} Tang32 colours, ${semi} semi-transparent px snapped`);
-if (used.size > 32) throw new Error('more than 32 colours');
-const dest = { char: `assets/pixel/chars/${key}.png`, scene: `assets/pixel/scenes/${key}.png`, prop: `assets/pixel/props/${key}.png`, tileset: 'assets/pixel/tileset.png' }[kind];
+console.log(`[art] ${file} → ${W}×${H}, ${used.size} Tang48 colours, ${semi} semi-transparent px snapped`);
+if (used.size > 48) throw new Error('more than 48 colours');
+const dest = { char: `assets/pixel/chars/${key}.png`, scene: `assets/pixel/scenes/${key}.png`, prop: `assets/pixel/props/${key}.png` }[kind];
 if (!dest) throw new Error(`unknown kind ${kind}`);
 const abs = path.join(root, dest);
 if (dry) {

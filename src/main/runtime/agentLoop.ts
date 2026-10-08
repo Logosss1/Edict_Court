@@ -1,7 +1,7 @@
 // Generic agent loop: LLM ⇄ tools with checkpoints (pause/budget/cancel), annotations,
 // rolling context compression, retries, live streaming activities and usage accounting.
 import type { Activity, AgentId, ModelRef, RunNode, Session, Task } from '../../shared/types';
-import { agentName } from '../../shared/court';
+import { AGENT_MAP, agentName } from '../../shared/court';
 import type { LlmMessage, LlmResult, ToolSpec } from '../llm/types';
 import { classifyLlmError, LlmCallError } from '../llm/types';
 import { reasoningParams, levelLabel } from '../../shared/reasoning';
@@ -27,6 +27,18 @@ export interface AgentRunOptions {
   label?: string;
   onText?: (delta: string) => void;
   signal?: AbortSignal;
+  /** A custom 协同设计 role. `agentId` is then the role's court avatar (status / court display only). */
+  role?: RoleRun;
+}
+
+export interface RoleRun {
+  key: string; // unique runtime identity, e.g. r:<designId>:<roleId> — used for the agent lock
+  id: string;
+  name: string;
+  prompt: string;
+  modelClass: 'strong' | 'economy';
+  model?: ModelRef;
+  effort?: string;
 }
 
 export interface AgentRunResult {
@@ -37,10 +49,10 @@ export interface AgentRunResult {
   steps: number;
 }
 
-export function systemPromptFor(rt: Runtime, agentId: AgentId): string {
+export function systemPromptFor(rt: Runtime, agentId: AgentId, role?: RoleRun): string {
   const skills = rt.skills.filter((s) => s.enabled !== false && (s.agents === 'all' || s.agents.includes(agentId)));
   const skillIdx = skills.length ? `\n\n可用技能（需要时用 load_skill 加载全文）：\n${skills.map((s) => `- ${s.name}：${s.description}`).join('\n')}` : '';
-  return SOULS[agentId] + skillIdx;
+  return (role ? role.prompt : SOULS[agentId]) + skillIdx;
 }
 
 const msgTokens = (ms: LlmMessage[]) => ms.reduce((n, m) => n + estimateTokens(m.content) + (m.toolCalls ? estimateTokens(JSON.stringify(m.toolCalls.map((t) => t.args))) : 0) + 4, 0);
@@ -54,7 +66,7 @@ function effortRequest(o: AgentRunOptions, model: ModelRef, withEffort: boolean)
   const { rt, agentId, task } = o;
   const info = rt.modelInfo(model);
   let maxTokens = o.maxTokens;
-  const eff = withEffort ? rt.resolveEffort(agentId, model, task) : undefined;
+  const eff = withEffort ? rt.resolveEffort(agentId, model, task, o.role?.modelClass, o.role?.effort) : undefined;
   const rp = eff?.level ? reasoningParams(eff.cfg, eff.level, eff.protocol) : { body: {} as Record<string, unknown> };
   if (rp.minMaxTokens) maxTokens = Math.max(maxTokens ?? 0, rp.minMaxTokens);
   if (info?.maxOutputTokens && maxTokens) maxTokens = Math.min(maxTokens, info.maxOutputTokens);
@@ -159,12 +171,8 @@ async function maybeCompress(o: AgentRunOptions, model: ModelRef, messages: LlmM
   const serial = middle
     .map((m) => (m.role === 'tool' ? `[工具结果 ${m.toolName ?? ''}] ${truncate(m.content, 1500)}` : m.toolCalls?.length ? `[${m.role}] ${m.content} 调用：${m.toolCalls.map((t) => `${t.name}(${JSON.stringify(t.args).slice(0, 300)})`).join('; ')}` : `[${m.role}] ${truncate(m.content, 2500)}`))
     .join('\n');
-  let econ: ModelRef;
-  try {
-    econ = rt.settings.routing.economy ?? model;
-  } catch {
-    econ = model;
-  }
+  const e = rt.settings.routing.economy;
+  const econ: ModelRef = e && !rt.badModels.has(`${e.providerId}/${e.model}`) ? e : model;
   const r = await callLlm(
     { ...o, onText: undefined },
     econ,
@@ -181,20 +189,58 @@ async function maybeCompress(o: AgentRunOptions, model: ModelRef, messages: LlmM
 
 export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
   const { rt, agentId, task, node } = o;
-  const model = o.model ?? rt.resolveModel(agentId, task);
-  const provider = rt.providerRuntime(model.providerId);
+  const role = o.role;
+  let model = o.model ?? rt.resolveModel(agentId, task, role);
+  let provider = rt.providerRuntime(model.providerId);
+  const warnKey = `${task?.id ?? ''}/${role?.id ?? ''}`;
+  if (role?.model && !o.model && (role.model.providerId !== model.providerId || role.model.model !== model.model) && !task?.roleModels?.[role.id] && !rt.roleModelWarned.has(warnKey)) {
+    rt.roleModelWarned.add(warnKey);
+    rt.activity('log', `${role.name} 指定的模型 ${role.model.model} 当前不可用（服务已删除、停用或本次运行中报错），改用 ${model.model}。可在「协同设计」里修改这个角色的模型。`, { taskId: task?.id, agentId, nodeId: node?.id });
+  }
   const runId = uid('run-');
-  if (node) {
-    node.runId = runId;
+  const stamp = () => {
+    if (!node) return;
     node.model = model.model;
     node.providerId = model.providerId;
     node.protocol = provider.config.protocol;
-    node.effort = rt.resolveEffort(agentId, model, task).level;
+    node.effort = rt.resolveEffort(agentId, model, task, role?.modelClass, role?.effort).level;
+  };
+  if (node) {
+    node.runId = runId;
+    stamp();
+    if (role) {
+      node.roleId = role.id;
+      node.roleName = role.name;
+    }
     node.errorInfo = undefined;
     if (task) rt.touch(task);
   }
-  const effort = rt.resolveEffort(agentId, model, task).level;
-  const system = systemPromptFor(rt, agentId);
+  const effort = rt.resolveEffort(agentId, model, task, role?.modelClass, role?.effort).level;
+  const system = systemPromptFor(rt, agentId, role);
+  /** one model call; if the service says it does not offer this (routed) model, switch once to a working one */
+  let switched = false;
+  const llm = async (msgs: LlmMessage[]) => {
+    try {
+      return await callLlm(o, model, system, msgs, tools, {});
+    } catch (e) {
+      // only routed economy-class models are swapped; the main model the emperor picked fails visibly with its error card
+      const economy = (role ? role.modelClass : AGENT_MAP[agentId]?.modelClass) === 'economy' && agentId !== 'solo';
+      const fb = e instanceof LlmCallError && e.info.kind === 'config' && economy && !o.model && !switched ? rt.fallbackModel(model, task) : null;
+      if (!fb) throw e;
+      switched = true;
+      const bad = model;
+      rt.badModels.add(`${bad.providerId}/${bad.model}`);
+      model = fb;
+      provider = rt.providerRuntime(model.providerId);
+      stamp();
+      if (task) rt.touch(task);
+      const who = role?.name ?? agentName(agentId);
+      rt.activity('log', `${who} 用的模型 ${bad.model} 在当前服务不可用（${e.info.status ? `HTTP ${e.info.status}，` : ''}${e.info.hint.split('：')[0]}），已改用 ${model.model} 继续；本次运行期间不再使用 ${bad.model}。要长期解决，请在「模型配置 → 模型路由」里把经济模型换成可用的模型。`, { taskId: task?.id, agentId, nodeId: node?.id });
+      rt.toast('warn', `模型 ${bad.model} 不可用，已自动改用 ${model.model}。请到「模型配置」检查经济模型`);
+      rt.audit.record(agentId, 'model_fallback', { from: bad.model, to: model.model, kind: e.info.kind, status: e.info.status ?? null }, task?.id);
+      return await callLlm(o, model, system, msgs, tools, {});
+    }
+  };
   // built-in tools + MCP tools granted to this agent (read-only toolsets only see MCP tools marked read)
   const tools = o.tools?.length ? [...o.tools.map((t) => TOOL_SPECS[t]), ...rt.mcp.toolSpecsFor(agentId, !o.tools.includes('write_file'))] : undefined;
   let messages: LlmMessage[] = [...(o.history ?? []), { role: 'user', content: o.prompt }];
@@ -202,11 +248,11 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
   const signal = o.signal ?? (task ? rt.controller(task.id).signal : undefined);
   const busy = rt.agents.get(agentId);
   if (busy && busy.status !== 'idle' && busy.taskId !== task?.id) {
-    rt.activity('log', `${agentName(agentId)} 正在处理其他事务，排队等候`, { taskId: task?.id, agentId, nodeId: node?.id });
+    if (!role) rt.activity('log', `${agentName(agentId)} 正在处理其他事务，排队等候`, { taskId: task?.id, agentId, nodeId: node?.id });
   }
-  const release = await rt.acquireAgent(agentId, signal);
+  const release = await rt.acquireAgent(role?.key ?? agentId, signal);
   rt.setAgent(agentId, { status: 'thinking', taskId: task?.id, nodeId: node?.id, activity: o.label ?? '处理中' });
-  rt.audit.record(agentId, 'run_start', { runId, model: model.model, provider: provider.config.name, protocol: provider.config.protocol, effort: effort ?? null, node: node?.id }, task?.id);
+  rt.audit.record(agentId, 'run_start', { runId, model: model.model, provider: provider.config.name, protocol: provider.config.protocol, effort: effort ?? null, node: node?.id, role: role?.key ?? null }, task?.id);
   let finalText = '';
   let steps = 0;
   let pendingResp: ReturnType<Runtime['pendingAnnotations']> | null = null;
@@ -221,7 +267,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
         rt.activity('annotation', `${agentName(agentId)} 已接阅朱批 ${anns.length} 条`, { taskId: task?.id, agentId, nodeId: node?.id });
       }
       messages = await maybeCompress(o, model, messages);
-      const r = await callLlm(o, model, system, messages, tools, {});
+      const r = await llm(messages);
       if (pendingResp) {
         const resp = r.text.trim() || (r.toolCalls.length ? `（已阅朱批，随即调用：${r.toolCalls.map((t) => describeToolCall(t.name, t.args)).join('；')}）` : '（已阅）');
         rt.respondAnnotations(pendingResp, resp);
@@ -247,7 +293,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
     }
     if (!finalText && steps >= maxSteps && tools) {
       messages.push({ role: 'user', content: '已达到本轮工具调用步数上限。请不要再调用工具，直接给出最终结论（按要求的格式）。' });
-      const r = await callLlm(o, model, system, messages, tools, {});
+      const r = await llm(messages);
       messages.push({ role: 'assistant', content: r.text });
       finalText = r.text;
     }

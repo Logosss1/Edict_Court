@@ -4,8 +4,8 @@ import { useSyncExternalStore, useRef } from 'react';
 import type { Activity, AgentId, RuntimeEvent, Snapshot, Task, Debate, Session, Memorial, ApprovalRequest, Annotation } from '../shared/types';
 import { call } from './api';
 
-export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help';
-export type CourtScene = 'taihe' | 'junjichu' | 'liubu' | 'chengtian';
+export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help';
+export type CourtScene = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian';
 
 export interface Tab {
   id: string;
@@ -24,6 +24,7 @@ export interface Toast {
   id: number;
   level: 'info' | 'warn' | 'error' | 'success';
   message: string;
+  action?: { label: string; run: () => void };
 }
 
 export interface UIState {
@@ -31,7 +32,7 @@ export interface UIState {
   selectedTaskId: string | null;
   tabs: Tab[];
   activeTab: string | null;
-  sideView: 'explorer' | 'search' | 'git' | 'court' | null;
+  sideView: 'explorer' | 'search' | 'git' | 'court' | 'preview' | null;
   bottomOpen: boolean;
   bottomTab: 'terminal' | 'problems' | 'output' | 'audit';
   composerHidden: boolean;
@@ -63,7 +64,7 @@ const initialUI: UIState = {
 
 let state: AppState = {
   ready: false, tasks: [], agents: [], debates: [], sessions: [], memorials: [], approvals: [], annotations: [], news: [], settings: {} as AppState['settings'],
-  providers: [], skills: [], mcp: [], templates: [], workspace: null, dataDir: '', version: '', platform: '', totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 },
+  providers: [], skills: [], mcp: [], designs: [], templates: [], workspace: null, dataDir: '', version: '', platform: '', totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 },
   activities: {}, ui: initialUI,
 };
 
@@ -94,10 +95,13 @@ function upsert<T>(arr: T[], item: T, key: (x: T) => string): T[] {
 }
 
 let toastSeq = 1;
-export function toast(message: string, level: Toast['level'] = 'info') {
-  const t = { id: toastSeq++, level, message };
+export function toast(message: string, level: Toast['level'] = 'info', action?: Toast['action']) {
+  const t = { id: toastSeq++, level, message, action };
   setUI((ui) => ({ toasts: [...ui.toasts.slice(-4), t] }));
-  setTimeout(() => setUI((ui) => ({ toasts: ui.toasts.filter((x) => x.id !== t.id) })), level === 'error' ? 7000 : 3800);
+  setTimeout(() => dismissToast(t.id), level === 'error' || action ? 7000 : 3800);
+}
+export function dismissToast(id: number) {
+  setUI((ui) => ({ toasts: ui.toasts.filter((x) => x.id !== id) }));
 }
 
 // streaming deltas are batched per animation frame
@@ -179,6 +183,9 @@ export function applyEvent(e: RuntimeEvent) {
       break;
     case 'skills':
       set({ skills: e.skills });
+      break;
+    case 'designs':
+      set({ designs: e.designs });
       break;
     case 'mcp':
       set({ mcp: e.servers });
@@ -282,7 +289,7 @@ export function openTab(tab: Tab) {
 }
 
 export function openPanel(panel: PanelId) {
-  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', skills: '技能与 MCP', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明' };
+  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', designs: '协同设计', skills: '技能与 MCP', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明' };
   openTab({ id: `panel:${panel}`, kind: 'panel', title: titles[panel], panel });
 }
 

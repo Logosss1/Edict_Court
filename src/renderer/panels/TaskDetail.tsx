@@ -26,7 +26,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           <h2 className="ellipsis">{task.title}</h2>
           <code className="muted">{task.id}</code>
         </div>
-        <div className="muted small">{TIER_LABEL[task.tier]} · 下旨 {fmtTime(task.createdAt)} · 工作区 {task.workspace ?? '（无）'}</div>
+        <div className="muted small">{task.design && !task.design.native ? `协同设计「${task.design.name}」v${task.design.version}（${task.design.hash.slice(0, 8)}）` : TIER_LABEL[task.tier]} · 下旨 {fmtTime(task.createdAt)} · 工作区 {task.workspace ?? '（无）'}</div>
         <Pipeline task={task} />
         <UsageLine task={task} />
         <div className="row-gap">
@@ -111,7 +111,7 @@ function PlanHistory({ task }: { task: Task }) {
               {task.planHistory.map((p) => <button key={p.version} className={`pill ${p.version === cur.version ? 'on' : ''}`} onClick={() => setV(p.version)}>v{p.version}{p.author === 'emperor' ? ' 朱批' : ''}</button>)}
               <span className="muted small">{cur.author === 'emperor' ? '皇上朱笔涂改' : '中书省拟'} · {fmtTime(cur.at)}{cur.note ? ` · ${cur.note}` : ''}</span>
             </div>
-            <PlanEditor plan={cur.plan} readOnly />
+            <PlanEditor plan={cur.plan} readOnly task={task} />
           </>
         ) : <div className="muted pad">中书省尚未呈上方案</div>}
       </div>

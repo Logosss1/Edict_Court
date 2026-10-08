@@ -4,6 +4,7 @@ import { useStore, selectTask, openTaskTab } from '../store';
 import { KANBAN_COLUMNS, AGENTS, AGENT_MAP, TIER_SHORT } from '../../shared/court';
 import type { Task } from '../../shared/types';
 import { Icon } from '../common/Icon';
+import { roleInfo } from '../common/roles';
 import { StateChip, fmtAgo, fmtTokens, fmtCost, usageTokens } from '../common/format';
 import { TaskControls } from './TaskWidgets';
 
@@ -88,7 +89,7 @@ function TaskCard({ t }: { t: Task }) {
         <div className="kcard-subs">
           {t.plan.subtasks.map((s) => {
             const n = [...t.nodes].reverse().find((x) => x.subtaskId === s.id);
-            return <span key={s.id} className={`sub-dot st-${n?.status ?? 'none'}`} title={`${s.id} ${AGENT_MAP[s.dept].name}：${s.title}（${n?.status ?? '未开始'}）`} style={{ borderColor: AGENT_MAP[s.dept].color }} />;
+            return <span key={s.id} className={`sub-dot st-${n?.status ?? 'none'}`} title={`${s.id} ${roleInfo(t, s.dept).name}：${s.title}（${n?.status ?? '未开始'}）`} style={{ borderColor: roleInfo(t, s.dept).color }} />;
           })}
           <span className="muted small">{doneSubs}/{t.plan.subtasks.length}</span>
         </div>

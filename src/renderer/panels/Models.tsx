@@ -3,8 +3,9 @@ import { useEffect, useState } from 'react';
 import { useStore, toast } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
+import { EffortSelect, ModelSelect, effortDefaultLabel, useModelShort } from '../common/ModelPick';
 import { AGENTS } from '../../shared/court';
-import type { ModelInfo, ModelRef, PermissionMode, ProbeRow, ProviderConfig, Protocol, ReasoningConfig, ReasoningStyle, Settings } from '../../shared/types';
+import type { ModelInfo, ModelRef, PermissionMode, ProbeRow, ProviderConfig, Protocol, ReasoningConfig, ReasoningDetectResult, ReasoningStyle, Settings } from '../../shared/types';
 import { STYLE_LABEL, STYLE_LEVELS, levelLabel, presetFor } from '../../shared/reasoning';
 
 interface Preset { id: string; name: string; protocol: Protocol; baseUrl: string; replayReasoning?: boolean; hint: string }
@@ -75,6 +76,7 @@ function ProviderEditor({ draft, setDraft, onSaved }: { draft: ProviderConfig; s
   const [busy, setBusy] = useState(false);
   const [openReasoning, setOpenReasoning] = useState<number | null>(null);
   const [probe, setProbe] = useState<ProbeRow[] | null>(null);
+  const [detecting, setDetecting] = useState<string | null>(null);
   const savedProviders = useStore((st) => st.providers);
   const saved = savedProviders.find((p) => p.id === draft.id);
   const dirty = !saved || JSON.stringify(saved) !== JSON.stringify(draft);
@@ -84,13 +86,41 @@ function ProviderEditor({ draft, setDraft, onSaved }: { draft: ProviderConfig; s
     if (!draft.baseUrl.trim()) return toast('请填写 base_url', 'warn');
     if (!draft.models.length) return toast('请至少添加一个模型 id', 'warn');
     try {
-      const saved = await call<ProviderConfig>('upsertProvider', draft, key ? key : undefined);
+      const before = new Set((saved?.models ?? []).map((m) => m.id));
+      const added = draft.models.map((m) => m.id.trim()).filter((id) => id && !before.has(id));
+      const next = await call<ProviderConfig>('upsertProvider', draft, key ? key : undefined);
       setKey('');
       toast('已保存（API Key 已加密存储，不会出现在日志中）', 'success');
-      onSaved(saved.id);
+      onSaved(next.id);
+      // new models get their thinking levels detected once (a handful of tiny requests each)
+      if (next.enabled && added.length && added.length <= 5) void detectMany(next.id, added);
+      else if (next.enabled && added.length > 5) toast(`新增了 ${added.length} 个模型，可在下方逐个点「检测思考档位」`, 'info');
     } catch (e) {
       toast((e as Error).message, 'error');
     }
+  };
+  const putReasoning = (modelId: string, reasoning: ReasoningConfig | undefined) => setDraft((d) => ({ ...d, models: d.models.map((m) => (m.id === modelId ? { ...m, reasoning } : m)) }));
+  const detect = async (providerId: string, modelId: string, quiet = false) => {
+    setDetecting(modelId);
+    try {
+      const r = await call<ReasoningDetectResult>('detectReasoning', providerId, modelId);
+      if (r.ok) putReasoning(modelId, r.reasoning);
+      if (!quiet || !r.ok || !r.reasoning?.detected?.reliable) toast(`${modelId}：${r.message}`, r.ok ? (r.reasoning?.detected?.reliable ? 'success' : 'warn') : 'error');
+      return r;
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      return null;
+    } finally {
+      setDetecting(null);
+    }
+  };
+  const detectMany = async (providerId: string, ids: string[]) => {
+    const done: string[] = [];
+    for (const id of ids) {
+      const r = await detect(providerId, id, true);
+      if (r?.ok && r.reasoning?.detected?.reliable) done.push(`${id}：${(r.reasoning.levels.length ? r.reasoning.levels.map(levelLabel).join(' · ') : '不支持思考档位')}`);
+    }
+    if (done.length) toast(`已检测思考档位 — ${done.join('；')}`, 'success');
   };
   const test = async () => {
     if (!draft.id) return toast('请先保存', 'warn');
@@ -181,7 +211,8 @@ function ProviderEditor({ draft, setDraft, onSaved }: { draft: ProviderConfig; s
       </div>
       {openReasoning !== null && draft.models[openReasoning] && (
         <div className="card inset reasoning-card">
-          <div className="row-gap"><b>思考程度 · {draft.models[openReasoning].id || '（未命名模型）'}</b><span style={{ flex: 1 }} /><button className="icon-btn" onClick={() => setOpenReasoning(null)}><Icon name="x" size={12} /></button></div>
+          <div className="row-gap"><b>思考程度 · {draft.models[openReasoning].id || '（未命名模型）'}</b><span style={{ flex: 1 }} />
+            {draft.id && saved?.models.some((m) => m.id === draft.models[openReasoning].id) && <button className="btn sm" disabled={!!detecting} onClick={() => detect(draft.id!, draft.models[openReasoning].id)} data-testid="reasoning-detect-card">{detecting === draft.models[openReasoning].id ? '检测中…' : '检测思考档位'}</button>}<button className="icon-btn" onClick={() => setOpenReasoning(null)}><Icon name="x" size={12} /></button></div>
           <ReasoningEditor key={openReasoning} model={draft.models[openReasoning]} protocol={draft.protocol} onChange={(patch) => setModel(openReasoning, patch)} />
         </div>
       )}
@@ -196,6 +227,7 @@ function ProviderEditor({ draft, setDraft, onSaved }: { draft: ProviderConfig; s
         <div className="row-gap test-row">
           <select className="input sm" value={testModel} onChange={(e) => setTestModel(e.target.value)}>{draft.models.map((m) => <option key={m.id}>{m.id}</option>)}</select>
           <button className="btn sm" disabled={busy} onClick={test}>测试连接</button>
+          <button className="btn sm" disabled={busy || !!detecting} onClick={() => detect(draft.id!, testModel)} data-testid="reasoning-detect" title="对这个模型逐个试各个思考档位，记下服务真正接受的那几档">{detecting === testModel ? '检测中…' : '检测思考档位'}</button>
           <button className="btn sm" disabled={busy} onClick={runProbe} data-testid="probe-btn" title="用同一 base_url / Key / 模型，分别以 Chat / Responses / Messages 协议、带与不带思考参数各试一次">协议探测</button>
           {dirty && draft.id && <span className="muted small">（有未保存修改，测试使用已保存配置）</span>}
           {testMsg && <span className="small">{testMsg}</span>}
@@ -241,8 +273,10 @@ export const KIND_LABEL: Record<string, string> = { auth: 'Key/权限', config: 
 
 function reasoningSummary(m: ModelInfo, protocol: Protocol) {
   const cfg = m.reasoning ?? presetFor(m.id, protocol);
-  if (cfg.style === 'none' || !cfg.levels.length) return m.reasoning ? '不发送' : '自动：不发送';
-  return `${m.reasoning ? '' : '自动：'}${levelLabel(cfg.levels[0])}→${levelLabel(cfg.levels[cfg.levels.length - 1])} · 默认${levelLabel(cfg.default)}`;
+  const d = cfg.detected;
+  const tag = !m.reasoning ? '推测：' : d ? (d.reliable ? '已检测：' : '未能确认：') : '';
+  if (cfg.style === 'none' || !cfg.levels.length) return d?.reliable ? '已检测：不支持' : `${tag}不发送`;
+  return `${tag}${levelLabel(cfg.levels[0])}→${levelLabel(cfg.levels[cfg.levels.length - 1])} · 默认 ${levelLabel(cfg.default)}`;
 }
 
 function ReasoningEditor({ model, protocol, onChange }: { model: ModelInfo; protocol: Protocol; onChange: (p: Partial<ModelInfo>) => void }) {
@@ -264,6 +298,12 @@ function ReasoningEditor({ model, protocol, onChange }: { model: ModelInfo; prot
   return (
     <div className="reasoning-editor" data-testid="reasoning-editor">
       <div className="form-grid">
+        <label>检测结果</label>
+        <div className="small" data-testid="reasoning-detected">
+          {!cfg.detected ? <span className="muted">还没检测。档位是按模型名推测的，点右上角「检测思考档位」向服务确认。</span>
+            : cfg.detected.reliable ? <span>服务接受：{cfg.detected.accepted.map(levelLabel).join(' · ') || '无'}{cfg.detected.rejected.length ? <span className="muted"> · 拒绝：{cfg.detected.rejected.map(levelLabel).join(' · ')}</span> : null}</span>
+            : <span className="warn-text">这个服务不校验思考档位（乱写的档位也被接受），档位无法确认，下面是现在用的档位。</span>}
+        </div>
         <label>思考方式</label>
         <div className="row-gap">
           <select className="input" value={cfg.style} onChange={(e) => setStyle(e.target.value as ReasoningStyle)} data-testid="reasoning-style">
@@ -276,15 +316,14 @@ function ReasoningEditor({ model, protocol, onChange }: { model: ModelInfo; prot
             <label>可用档位</label>
             <div className="row-gap">
               {all.map((l) => (
-                <label key={l} className="chk small"><input type="checkbox" checked={cfg.levels.includes(l)} onChange={() => toggle(l)} /> {levelLabel(l)} <span className="muted">{l}</span></label>
+                <label key={l} className="chk small"><input type="checkbox" checked={cfg.levels.includes(l)} onChange={() => toggle(l)} /> {levelLabel(l)}</label>
               ))}
             </div>
             <label>默认档位</label>
             <div className="row-gap">
               <select className="input sm" value={cfg.default} onChange={(e) => put({ default: e.target.value })}>
-                {cfg.levels.map((l) => <option key={l} value={l}>{levelLabel(l)}（{l}）</option>)}
+                {cfg.levels.map((l) => <option key={l} value={l}>{levelLabel(l)}</option>)}
               </select>
-              <span className="muted small">滑块最右 = 已勾选的最高档（{levelLabel(cfg.levels[cfg.levels.length - 1] ?? '')}）</span>
             </div>
           </>
         )}
@@ -327,21 +366,6 @@ function safeJson(t: string): Record<string, Record<string, unknown>> | null {
   }
 }
 
-function ModelSelect({ value, onChange, allowDefault }: { value: ModelRef | null | undefined; onChange: (r: ModelRef | null) => void; allowDefault?: string }) {
-  const providers = useStore((s) => s.providers);
-  const v = value ? `${value.providerId}::${value.model}` : '';
-  return (
-    <select className="input sm" value={v} onChange={(e) => { const [providerId, model] = e.target.value.split('::'); onChange(e.target.value ? { providerId, model } : null); }}>
-      <option value="">{allowDefault ?? '（未设置）'}</option>
-      {providers.map((p) => (
-        <optgroup key={p.id} label={p.name}>
-          {p.models.map((m) => <option key={m.id} value={`${p.id}::${m.id}`}>{m.label || m.id}</option>)}
-        </optgroup>
-      ))}
-    </select>
-  );
-}
-
 function Routing() {
   const s = useStore((st) => st.settings);
   const up = (routing: Settings['routing']) => call('updateSettings', { routing });
@@ -361,22 +385,25 @@ function Routing() {
 
 function AgentModels() {
   const s = useStore((st) => st.settings);
+  const short = useModelShort();
+
   return (
     <section className="card">
-      <h3>官员独立模型与思考程度（热切换，下一次调用生效）</h3>
-      <div className="agent-model-grid">
-        {AGENTS.map((a) => (
-          <div key={a.id} className="agent-model-row">
-            <span>{a.emoji} {a.name}</span>
-            <span className="muted small">{a.modelClass === 'strong' ? '强' : '经济'}</span>
-            <ModelSelect value={s.agentModels?.[a.id]} allowDefault="默认路由" onChange={(r) => call('setAgentModel', a.id, r)} />
-            <select className="input sm" value={s.agentEffort?.[a.id] ?? ''} title="该官员的思考程度（按其模型的档位就近取值）" onChange={(e) => call('updateSettings', { agentEffort: { ...(s.agentEffort ?? {}), [a.id]: e.target.value || undefined } })}>
-              <option value="">思考：跟随旨意/默认</option>
-              {['off', 'low', 'medium', 'high', 'xhigh', 'max'].map((l) => <option key={l} value={l}>思考：{levelLabel(l)}</option>)}
-              <option value="top">思考：该模型最高档</option>
-            </select>
-          </div>
-        ))}
+      <h3>官员独立模型与思考程度</h3>
+      <p className="muted small">只影响内置的三省六部（改完下一次调用生效）。自己的协同设计在「协同设计」里给每个角色选模型。</p>
+      <div className="agent-model-list" data-testid="agent-model-list">
+        <div className="agent-model-row head muted small"><span>官员</span><span>档位</span><span>模型</span><span>思考程度</span></div>
+        {AGENTS.map((a) => {
+          const route = a.modelClass === 'strong' ? s.routing?.strong : s.routing?.economy;
+          return (
+            <div key={a.id} className="agent-model-row" data-testid={`agent-model-${a.id}`}>
+              <span className="amr-who"><b>{a.emoji} {a.name}</b><span className="muted small ellipsis">{a.duty}</span></span>
+              <span className={`chip chip-sm ${a.modelClass === 'strong' ? 'on' : ''}`}>{a.modelClass === 'strong' ? '强' : '经济'}</span>
+              <ModelSelect value={s.agentModels?.[a.id]} allowDefault={`跟随${a.modelClass === 'strong' ? '强' : '经济'}路由（${short(route)}）`} onChange={(r) => call('setAgentModel', a.id, r)} />
+              <EffortSelect model={s.agentModels?.[a.id] ?? route} defaultLabel={effortDefaultLabel(a.modelClass)} value={s.agentEffort?.[a.id]} onChange={(v) => call('updateSettings', { agentEffort: { ...(s.agentEffort ?? {}), [a.id]: v } })} />
+            </div>
+          );
+        })}
       </div>
     </section>
   );

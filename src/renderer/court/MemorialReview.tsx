@@ -67,7 +67,7 @@ export function MemorialReview({ taskId, tab: initial }: { taskId: string; tab?:
             {tabs.map(([k, l]) => <button key={k} className={`px-btn sm ${tab === k ? 'on' : ''}`} onClick={() => setTab(k)}>{l}</button>)}
           </div>
           <div className="mr-body">
-            {tab === 'plan' && (task.gate && task.state === 'Menxia' ? <GateCard task={task} variant="court" onDecided={() => (others.length ? setUI({ review: { taskId: others[0].id } }) : close())} /> : task.plan ? <PlanEditor plan={task.plan} readOnly /> : <div className="px-muted">中书省尚未呈上方案</div>)}
+            {tab === 'plan' && (task.gate && task.state === 'Menxia' ? <GateCard task={task} variant="court" onDecided={() => (others.length ? setUI({ review: { taskId: others[0].id } }) : close())} /> : task.plan ? <PlanEditor plan={task.plan} readOnly task={task} /> : <div className="px-muted">中书省尚未呈上方案</div>)}
             {tab === 'report' && (
               <>
                 {task.gate && task.state !== 'Menxia' ? <GateCard task={task} variant="court" onDecided={() => (others.length ? setUI({ review: { taskId: others[0].id } }) : close())} /> : <Markdown text={task.result?.summary || '（尚未回奏）'} />}

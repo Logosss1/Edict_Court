@@ -2,7 +2,7 @@
 // RunNode, so an interrupted/failed node can be retried locally without replaying the
 // whole agent tree. 门下省 review is structural — there is no code path from Zhongshu to
 // Assigned that does not pass a Menxia verdict (or the emperor's explicit decision).
-import type { MinistryId, ModelRef, Plan, Review, RunNode, Session, Subtask, Task, Tier } from '../../shared/types';
+import type { CollabDesign, DesignPin, MinistryId, ModelRef, Plan, Review, RunNode, Session, Subtask, Task, Tier } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL, agentName } from '../../shared/court';
 import { runAgent } from './agentLoop';
@@ -12,6 +12,8 @@ import { ALL_TOOLS, READ_TOOLS } from './tools';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { extractJson, now, sha256, truncate, uid } from './util';
 import { createDebate, runDebate, concludeDebate } from './debate';
+import { flowDecideGate, flowStep } from './flow';
+import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
 
 const drivingByRt = new WeakMap<Runtime, Set<string>>();
 const drivingSet = (rt: Runtime) => {
@@ -37,6 +39,7 @@ export interface SubmitInput {
   withDebate?: boolean;
   sessionId?: string;
   effort?: string; // 思考程度 slider: a level name, 'default' or 'top'
+  designId?: string; // 协同设计（缺省 = 内置三省六部）
 }
 
 export type SubmitResult = { kind: 'chat'; sessionId: string; reply: string } | { kind: 'task'; taskId: string };
@@ -45,8 +48,10 @@ export type SubmitResult = { kind: 'chat'; sessionId: string; reply: string } | 
 export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitResult> {
   const text = input.text.trim();
   if (!text) throw new Error('旨意内容为空');
-  const tier: Tier = input.multiAgent ? input.tier : 'solo';
-  rt.audit.record('emperor', 'edict_submitted', { tier, chars: text.length, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
+  // a custom 协同设计 is pinned now (version + hash + snapshot); later switches never affect this edict
+  const pinned = input.designId && input.designId !== BUILTIN_DESIGN_ID ? rt.designs.pin(input.designId) : undefined;
+  const tier: Tier = pinned?.spec ? pinned.spec.policies.tier : input.multiAgent ? input.tier : 'solo';
+  rt.audit.record('emperor', 'edict_submitted', { design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: text.length, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
 
   if (tier === 'solo') {
     let session = input.sessionId ? rt.sessions.get(input.sessionId) : undefined;
@@ -95,28 +100,31 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     session.status = 'done';
     rt.emit({ type: 'session', session });
   }
-  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan), templateId: input.templateId, effort: input.effort });
+  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: pinned ? false : (input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan)), templateId: input.templateId, effort: input.effort, design: pinned });
   task.nodes.push({ id: 'triage', kind: 'triage', agentId: 'taizi', label: '太子分拣', status: 'done', attempts: 1, startedAt: now(), endedAt: now(), exitStatus: 'ok', output: triageOutput, usage: session.usage });
   rt.transition(task, 'Taizi', 'taizi', '太子接旨分拣');
   void drive(rt, task.id);
   return { kind: 'task', taskId: task.id };
 }
 
-export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string }): Task {
+export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string; design?: { pin: DesignPin; spec?: CollabDesign } }): Task {
   const s = rt.settings;
+  const design = o.design ?? rt.designs.pin(BUILTIN_DESIGN_ID);
+  const pol = design.spec?.policies;
   const est = rt.estimate(o.text, o.tier, o.model);
   const t: Task = {
     id: rt.newTaskId(), title: o.title, edict: o.text, tier: o.tier, state: 'Pending', createdAt: now(), updatedAt: now(),
     workspace: rt.workspace?.root ?? null,
     flow: [{ at: now(), from: '皇上', to: o.tier === 'solo' ? '独相' : '太子', remark: '下旨', state: 'Pending' }],
     planHistory: [], reviews: [], nodes: [], paused: false, changes: [], usage: emptyUsage(),
-    budget: { maxTokens: s.budgets[o.tier], maxRejections: o.tier === 'full' ? s.maxRejections.full : s.maxRejections.lite, maxCostUsd: s.maxCostUsd },
+    budget: { maxTokens: pol?.tokenBudget || s.budgets[o.tier], maxRejections: pol ? pol.maxRejections : o.tier === 'full' ? s.maxRejections.full : s.maxRejections.lite, maxCostUsd: s.maxCostUsd },
+    design: design.pin, designSpec: design.spec, flowRun: design.spec ? { cursor: 0, iter: {}, rejections: {} } : undefined,
     estimate: { tokens: est.tokens, costUsd: est.costUsd },
     strongModel: o.model ?? undefined, withDebate: o.withDebate, sessionId: o.sessionId, templateId: o.templateId, effort: o.effort && o.effort !== 'default' ? o.effort : undefined, lastActivityAt: now(), execRound: 1,
   };
   rt.tasks.set(t.id, t);
-  rt.audit.record('emperor', 'edict_issued', { id: t.id, title: t.title, tier: t.tier, estimate: t.estimate, budget: t.budget, workspace: t.workspace }, t.id);
-  rt.activity('human', `皇上下旨（${t.tier}）：${t.title}`, { taskId: t.id });
+  rt.audit.record('emperor', 'edict_issued', { id: t.id, title: t.title, tier: t.tier, estimate: t.estimate, budget: t.budget, workspace: t.workspace, design: { id: design.pin.id, version: design.pin.version, hash: design.pin.hash } }, t.id);
+  rt.activity('human', `皇上下旨（${design.spec ? `协同设计「${design.pin.name}」v${design.pin.version}` : t.tier}）：${t.title}`, { taskId: t.id });
   rt.touch(t);
   return t;
 }
@@ -161,9 +169,9 @@ export function block(rt: Runtime, t: Task, reason: string) {
   rt.opts.notify?.('旨意阻塞', `${t.title}：${truncate(reason, 80)}`);
 }
 
-class NodeFailedError extends Error {}
+export class NodeFailedError extends Error {}
 
-async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Promise<string>): Promise<string> {
+export async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Promise<string>): Promise<string> {
   node.status = 'running';
   node.attempts++;
   node.startedAt = now();
@@ -201,7 +209,7 @@ async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Promise<st
   }
 }
 
-function ensureNode(t: Task, id: string, init: Omit<RunNode, 'id' | 'status' | 'attempts'>): RunNode {
+export function ensureNode(t: Task, id: string, init: Omit<RunNode, 'id' | 'status' | 'attempts'>): RunNode {
   let n = t.nodes.find((x) => x.id === id);
   if (!n) {
     n = { id, status: 'pending', attempts: 0, ...init };
@@ -213,6 +221,8 @@ function ensureNode(t: Task, id: string, init: Omit<RunNode, 'id' | 'status' | '
 const planReviews = (t: Task) => t.reviews.filter((r) => r.stage === 'plan');
 
 async function step(rt: Runtime, t: Task): Promise<boolean> {
+  // 协同设计（非内置）由解释器驱动；内置三省六部继续走下面的原生引擎
+  if (t.designSpec && t.design && !t.design.native && t.state !== 'Pending') return flowStep(rt, t);
   switch (t.state) {
     case 'Pending':
       rt.transition(t, t.tier === 'solo' ? 'Doing' : 'Taizi', 'system', t.tier === 'solo' ? 'Solo 直接执行，无需三省流转' : '太子接旨');
@@ -243,12 +253,12 @@ async function step(rt: Runtime, t: Task): Promise<boolean> {
   }
 }
 
-function otherDoing(rt: Runtime, t: Task) {
+export function otherDoing(rt: Runtime, t: Task) {
   return [...rt.tasks.values()].some((x) => x.id !== t.id && x.state === 'Doing' && x.tier !== 'solo' && x.workspace && x.workspace === t.workspace);
 }
 
 // ───────────────────────── 中书省 ─────────────────────────
-function repoContext(rt: Runtime, t: Task): string {
+export function repoContext(rt: Runtime, t: Task): string {
   if (!rt.workspace || t.workspace !== rt.workspace.root) return '（未打开工作区：本旨意不涉及本地文件，或仅产出文本。）';
   try {
     const map = rt.workspace.repoMap(120);
@@ -259,7 +269,8 @@ function repoContext(rt: Runtime, t: Task): string {
   }
 }
 
-export function validatePlan(p: unknown): { plan?: Plan; error?: string } {
+/** `allowed` = executor roles of a 协同设计 (id → name); default = the six ministries. */
+export function validatePlan(p: unknown, allowed?: Record<string, string>): { plan?: Plan; error?: string } {
   const j = p as Partial<Plan> | null;
   if (!j || typeof j !== 'object') return { error: '不是 JSON 对象' };
   if (!Array.isArray(j.subtasks) || !j.subtasks.length) return { error: 'subtasks 为空' };
@@ -270,10 +281,11 @@ export function validatePlan(p: unknown): { plan?: Plan; error?: string } {
     if (ids.has(id)) return { error: `子任务 id 重复：${id}` };
     ids.add(id);
     let dept = String(s.dept ?? '').trim() as MinistryId;
-    if (!MINISTRIES.includes(dept)) {
-      const byName = MINISTRIES.find((m) => AGENT_MAP[m].name === (s.dept as string));
-      if (byName) dept = byName;
-      else return { error: `子任务 ${id} 的部门无效：${s.dept}（应为 ${MINISTRIES.join('/')}）` };
+    const deptIds: string[] = allowed ? Object.keys(allowed) : MINISTRIES;
+    if (!deptIds.includes(dept)) {
+      const byName = deptIds.find((m) => (allowed ? allowed[m] : AGENT_MAP[m as MinistryId].name) === (s.dept as string));
+      if (byName) dept = byName as MinistryId;
+      else return { error: `子任务 ${id} 的${allowed ? '执行角色' : '部门'}无效：${s.dept}（应为 ${deptIds.join('/')}）` };
     }
     subs.push({ id, title: String(s.title ?? '').trim() || `子任务 ${id}`, dept, detail: String(s.detail ?? ''), acceptance: String(s.acceptance ?? ''), dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn.map(String) : [] });
   }
@@ -354,7 +366,7 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
 }
 
 // ───────────────────────── 门下省 ─────────────────────────
-function parseVerdict(text: string): { verdict: 'approve' | 'reject'; issues: string[]; comment: string; rework: string[] } | null {
+export function parseVerdict(text: string): { verdict: 'approve' | 'reject'; issues: string[]; comment: string; rework: string[] } | null {
   const j = extractJson<{ verdict?: string; issues?: unknown; comment?: string; rework?: unknown }>(text);
   if (!j || typeof j !== 'object') return null;
   const v = String(j.verdict ?? '').toLowerCase();
@@ -453,7 +465,7 @@ async function stepAssigned(rt: Runtime, t: Task): Promise<boolean> {
 }
 
 // ───────────────────────── 六部执行 ─────────────────────────
-interface ExecConclusion {
+export interface ExecConclusion {
   status: 'done' | 'partial' | 'failed';
   summary: string;
   artifacts: string[];
@@ -461,7 +473,7 @@ interface ExecConclusion {
   issues: string[];
 }
 
-function parseConclusion(text: string): ExecConclusion {
+export function parseConclusion(text: string): ExecConclusion {
   const j = extractJson<Partial<ExecConclusion>>(text);
   if (j && typeof j === 'object' && 'summary' in j) {
     const st = String(j.status ?? 'done');
@@ -627,7 +639,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
   return true;
 }
 
-function summarizeChanges(t: Task): string {
+export function summarizeChanges(t: Task): string {
   const m = new Map<string, string>();
   for (const c of t.changes) if (!c.reverted) m.set(c.path, `${c.op} ${c.path} (${c.afterHash ? c.afterHash.slice(0, 12) : '已删除'}) by ${AGENT_MAP[c.agentId]?.name ?? c.agentId}`);
   return [...m.values()].join('\n');
@@ -695,6 +707,8 @@ export function decideGate(rt: Runtime, taskId: string, d: GateDecision) {
     }
     return;
   }
+
+  if (t.designSpec && t.design && !t.design.native) return flowDecideGate(rt, t, d);
 
   if (t.state === 'Menxia' && (g.kind === 'plan' || g.kind === 'reject_limit')) {
     let edited = false;
@@ -768,7 +782,7 @@ export function retryNode(rt: Runtime, taskId: string, nodeId: string) {
   rt.audit.record('emperor', 'node_retry', { nodeId, label: n.label, previousRunId: n.runId }, taskId);
   rt.activity('human', `皇上下令局部重试：${n.label}（其余已完成节点不重放）`, { taskId, nodeId });
   if (t.state === 'Blocked') {
-    const back = t.resumeState && t.resumeState !== 'Blocked' ? t.resumeState : inferState(n);
+    const back = t.resumeState && t.resumeState !== 'Blocked' ? t.resumeState : inferState(n, t);
     t.blockedReason = undefined;
     rt.transition(t, back, 'emperor', `局部恢复：重试 ${n.label}`);
   }
@@ -782,14 +796,17 @@ export function retryNodeWithModel(rt: Runtime, taskId: string, nodeId: string, 
   const n = t.nodes.find((x) => x.id === nodeId);
   if (!n) throw new Error('节点不存在');
   if (!rt.providers.some((p) => p.id === ref.providerId && p.enabled)) throw new Error('所选模型服务不可用');
-  t.agentModels = { ...(t.agentModels ?? {}), [n.agentId]: ref };
+  if (n.roleId) t.roleModels = { ...(t.roleModels ?? {}), [n.roleId]: ref };
+  else t.agentModels = { ...(t.agentModels ?? {}), [n.agentId]: ref };
   if (n.agentId === 'solo' || n.kind === 'plan') t.strongModel = ref;
   rt.audit.record('emperor', 'node_model_switch', { nodeId, agentId: n.agentId, providerId: ref.providerId, model: ref.model }, taskId);
   rt.activity('human', `皇上改用 ${ref.model} 重试：${n.label}`, { taskId, nodeId });
   retryNode(rt, taskId, nodeId);
 }
 
-function inferState(n: RunNode) {
+function inferState(n: RunNode, t?: Task) {
+  const st = n.stepId ? t?.designSpec?.steps.find((x) => x.id === n.stepId) : undefined;
+  if (st) return PHASE_STATE[st.phase];
   switch (n.kind) {
     case 'plan':
     case 'debate':

@@ -47,10 +47,23 @@ Both modes are projections of the same main-process state: tasks, approvals, res
 
 ### New in 1.1.0
 
-- **Thinking-level slider.** Its steps are the selected model's own levels; **the far right is always that model's highest level**. Translated per protocol (`reasoning_effort`, `reasoning.effort`, `output_config.effort`, `thinking.budget_tokens`, `enable_thinking`, …), configurable per model and per official, with custom levels such as `ultra`.
+- **Thinking-level slider.** Its steps are the selected model's own levels (since 1.2.7 detected from the service and shown by their API names). Translated per protocol (`reasoning_effort`, `reasoning.effort`, `output_config.effort`, `thinking.budget_tokens`, `enable_thinking`, …), configurable per model and per official, with custom levels such as `ultra`.
 - **Readable model errors.** Configuration errors such as a relay's "this group doesn't support the model or access method" are no longer retried blindly; an error card explains the cause and offers **retry with another model**. **Protocol probe** tests Chat / Responses / Messages with and without thinking parameters.
 - **HTML preview and self-testing.** A sandboxed built-in browser runs generated pages with a console, device sizes, auto-reload and outbound-network blocking; agents verify their pages with the `preview_page` tool, which returns errors and a screenshot.
 - **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the  `mcp.json` format (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
+
+### New in 1.2
+
+- **Collaboration designs.** The Three Departments and Six Ministries flow is a versioned design you can copy, edit, pin per edict and roll back; running edicts keep the version they started with. Design your own on a **flow canvas** (phases as rows, drag to reorder, drop to run in parallel, drag a review's ↺ onto an earlier step to set where a rejection goes) or in a form / JSON view. Undo / redo, ⌘S, autosave, favourites and undoable delete. The built-in 三省六部 stays read-only.
+- **Per-role and per-official models.** Each role in your own design can use a specific model and thinking level; built-in officials are listed one per row in Models with their own model and level. If a chosen model is removed, the role falls back to strong / economy routing and the log says so.
+- **Thinking levels from the model itself.** **Detect thinking levels** sends one tiny request per level name and keeps the ones the service accepts; new models are detected when saved. Levels are shown by their API names (None · Minimal · Low · Medium · High · XHigh · Max · Ultra). A relay that accepts any value is marked "unconfirmed".
+- **Economy model fallback.** If the service says it doesn't offer the economy model, that official switches to your main model and carries on, with a notice.
+- **A finer Tang court that follows the palace layout.** Scenes redrawn at twice the detail; officials have 29 animations that follow their work. New **太和殿广场** scene; walk 太和殿 → 广场 → 承天门 → 六部值房 with the arrow keys or by clicking. Hover and click officials and objects, replay a finished edict, day / night and weather. Per-design court seating.
+- **Hover descriptions** on the activity bar, the 军机处 list, the court toolbar and every control in the edict box.
+
+| Flow canvas | 太和殿广场 | Per-official models |
+|---|---|---|
+| ![Collaboration design canvas](docs/screenshots/37-designs-canvas.png) | ![太和殿广场](docs/screenshots/38-court-guangchang.png) | ![Per-official models](docs/screenshots/39-models-agent-models.png) |
 
 ## Install (Apple Silicon)
 

@@ -109,6 +109,25 @@ test('relay 503 fails fast (no blind retries) with an error card; 换模型重�
   await mock.close();
 });
 
+test('collaboration: a routed economy model the relay does not offer falls back to the main model, once (mock)', async () => {
+  const mock = await startMockLlm({
+    reject: (c) => (c.model === 'mock-economy' ? { status: 503, body: '{"error":{"message":"当前分组 default 下对于模型 mock-economy 无可用渠道","type":"new_api_error"}}' } : undefined),
+  });
+  const rt = makeRuntime(mock.url);
+  rt.updateSettings({ routing: { strong: { providerId: 'mock', model: 'mock-strong' }, economy: { providerId: 'mock', model: 'mock-economy' } } });
+  rt.setWorkspace(tmpDir('edict-ws-'));
+  const r = (await submit(rt, { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true, model: { providerId: 'mock', model: 'mock-strong' } })) as { kind: string; taskId: string };
+  assert.equal(r.kind, 'task', 'triage by 太子 (economy) succeeded on the fallback model');
+  await waitFor(() => ['PendingConfirm', 'Blocked', 'Done'].includes(stateOf(rt, r.taskId)), 30000, 'finished');
+  const t = rt.tasks.get(r.taskId)!;
+  assert.notEqual(t.state, 'Blocked', t.blockedReason);
+  assert.equal(mock.calls.filter((c) => c.model === 'mock-economy').length, 1, 'the bad model is tried once, then skipped for the session');
+  assert.ok(t.nodes.filter((n) => n.agentId === 'bingbu' || n.agentId === 'shangshu').every((n) => !n.model || n.model === 'mock-strong'));
+  assert.ok(rt.audit.list({ limit: 200 }).some((e) => e.action === 'model_fallback'));
+  rt.dispose();
+  await mock.close();
+});
+
 test('protocol probe reports which protocol works, with and without reasoning (mock)', async () => {
   const mock = await startMockLlm({
     reject: (c, body) => (c.protocol === 'openai-responses' ? { status: 503, body: '{"error":{"message":"当前分组暂不支持您请求的模型或接入方式"}}' } : body.output_config ? { status: 400, body: '{"error":{"message":"output_config: Extra inputs are not permitted"}}' } : undefined),
@@ -126,4 +145,33 @@ test('protocol probe reports which protocol works, with and without reasoning (m
   assert.equal(by['openai-chat'].plain.ok, true);
   rt.dispose();
   await mock.close();
+});
+
+test('检测思考档位: keeps only the levels the service accepts; a service that accepts anything is marked unconfirmed', async () => {
+  const supported = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+  const strict = await startMockLlm({
+    reject: (_c, body) => ('reasoning_effort' in body && !supported.has(body.reasoning_effort) ? { status: 400, body: `{"error":{"message":"Unsupported value: 'reasoning_effort' does not support '${body.reasoning_effort}' with this model."}}` } : undefined),
+  });
+  const rt = makeRuntime(strict.url);
+  const r = await rt.detectReasoning('mock', 'mock-strong');
+  assert.ok(r.ok, r.message);
+  assert.deepEqual(r.reasoning?.levels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(r.reasoning?.style, 'openai');
+  assert.equal(r.reasoning?.detected?.reliable, true);
+  assert.deepEqual(rt.modelInfo({ providerId: 'mock', model: 'mock-strong' })?.reasoning?.levels, r.reasoning?.levels, 'saved on the model');
+  assert.ok(r.message.includes('Low') && r.message.includes('Max'), r.message);
+  // only the plain call, the made-up level and the eight candidates
+  assert.equal(strict.calls.length, 10);
+  rt.dispose();
+  await strict.close();
+
+  const lax = await startMockLlm({});
+  const rt2 = makeRuntime(lax.url);
+  const r2 = await rt2.detectReasoning('mock', 'mock-economy');
+  assert.ok(r2.ok);
+  assert.equal(r2.reasoning?.detected?.reliable, false, 'accepted a made-up level → unconfirmed');
+  assert.deepEqual(r2.reasoning?.levels, ['none', 'low', 'medium', 'high', 'xhigh'], 'unknown name → five-step fallback');
+  assert.equal(lax.calls.length, 2, 'stops after the made-up level');
+  rt2.dispose();
+  await lax.close();
 });
