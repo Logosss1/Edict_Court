@@ -4,7 +4,7 @@
 > 只从你信任的来源获取本安装包。仅支持 Apple Silicon（M1 及以后），不支持 Intel Mac。
 
 ## 安装
-1. 双击 `Edict-1.1.0-arm64.dmg`，把 **Edict.app** 拖到 **Applications（应用程序）**。
+1. 双击 `Edict-1.2.7-arm64.dmg`，把 **Edict.app** 拖到 **Applications（应用程序）**。
 2. 首次打开时 macOS 会提示「无法验证开发者」或「Apple 无法检查其是否包含恶意软件」：
    - 点「完成 / 取消」；
    - 打开 **系统设置 → 隐私与安全性**，在页面下方找到 “已阻止使用 Edict” → 点 **仍要打开**，输入密码确认；

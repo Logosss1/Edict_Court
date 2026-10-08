@@ -21,7 +21,7 @@ Release descriptions (English and Chinese) are on the [GitHub Releases page](htt
 ## 1.2.6
 
 **What's new**
-- **Per-official models are easier to read**: 模型配置 → 官员独立模型与思考程度 now lists the officials one per row instead of a cramped three-column grid. Each row shows the official and their duty, 强 / 经济, a wide model dropdown and a thinking-level dropdown. The default option names the model it follows, e.g. 跟随经济路由（gpt-5.6-luna）.
+- **Per-official models are easier to read**: 模型配置 → 官员独立模型与思考程度 now lists the officials one per row instead of a cramped three-column grid. Each row shows the official and their duty, 强 / 经济, a wide model dropdown and a thinking-level dropdown. The default option names the model it follows, e.g. 跟随经济路由（<your economy model>）.
 - **Choose a model and thinking level for each role in your own collaboration designs**:
   - The built-in 三省六部 stays read-only. Copy it, or create a new design, and each role's form has two new fields:
     - **模型**: 跟随强/经济路由 (default) or any model from 模型配置.

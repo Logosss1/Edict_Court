@@ -22,6 +22,12 @@
 - `tests/preview.test.ts`：预览文件服务（类型、index 回退、目录列表、中文路径）、拒绝 `.env` / 越界 / 符号链接逃逸；URL 策略；`preview_page` 在无桌面环境时如实报告不可用、在（替身）宿主下把控制台错误判为失败。
 - `tests/mcp.test.ts`：**真实子进程**（`tests/fixtures/mcp-echo-server.mjs`，按 MCP 规范写的测试服务）经 stdio 完成 initialize → 分页 tools/list → tools/call、服务端反向请求 roots/list；未信任不启动、命令改变需重新信任；风险分级、只读模式、官员授权、工具停用、高风险驳回；密钥移入钥匙串且仍能送达服务、不进审计；**真实本地 HTTP 服务**上的 Streamable HTTP（JSON 与 SSE 回包、`Mcp-Session-Id`、`MCP-Protocol-Version`）与旧版 HTTP+SSE 自动回退；Solo 官员（mock LLM）调用 MCP 工具。
 
+### v1.2 新增
+- `tests/designs.test.ts`：设计校验（阶段顺序、规划步骤、封驳去向、角色模型格式与思考程度）；设计库（内置只读、复制 → 版本 → 回滚、审计、无改动不出新版本）；进行中的旨意固定版本；复制的三省六部在解释器上跑出与原生引擎相同的流程、关卡与封驳循环；自定义角色的批评家循环；重启中断后只重跑该节点；朝堂站位单独存版本且不进行为哈希；收藏、删除进回收站与恢复；画布编辑辅助函数；**角色指定模型与思考程度**真实写进请求体，被删除的模型回退到路由且每道旨意只提示一次。
+- `tests/reasoning.test.ts`：经济模型被服务拒绝时自动换用主模型；**检测思考档位**：严格的服务只保留接受的档位（共 10 个极小请求），什么都接受的服务标为未能确认并用通用五档。
+- `e2e/features.ts`：协同设计列表 / 画布拖拽 / 表单 / 朝堂站位 / 保存 / 朝堂按设计布局；收藏、删除与撤销、⌘Z、Delete、Esc、⌘S、恢复暂存；悬停说明；官员模型竖排；角色指定模型与思考程度并显示在详情页；滑块英文档位与新说明文字；检测思考档位。
+- `e2e/court-smoke.ts`：五个场景截图；皇帝从太和殿走到广场、承天门、六部值房再走回来；悬停、菜单、赏赐动画。
+
 ## 3. 端到端 UI（mock LLM，Linux + Xvfb，真实 Electron）
 `npm run e2e`（`e2e/flow.ts`，Playwright `_electron`）：在 UI 中添加模型服务并测试连接 → 打开工作区 → 输入框下旨 → 审批卡片 → 御批结案 → 看板 → Editor 打开 Agent 产物、磁盘改动实时刷新 → 问题面板 TS 诊断 → 终端交互 → 全局搜索 → Full Court 在**朝堂奏折批阅浮层**中涂改方案并放行 → 六部值房 / 军机处 → 朝堂内准奏 → 议政中通过**皇上口谕框**插话 → Solo → 承天门上朝仪式 → 全部面板 → 审计校验 → Key 未落盘。截图输出到 `docs/screenshots/`，结果写入 `docs/screenshots/e2e-results.json`。
 
@@ -35,4 +41,4 @@ EDICT_PROTOCOL=openai-chat EDICT_TIER=lite npx tsx scripts/verify-real.ts
 脚本使用应用同一个运行时，完成后检查真实文件产物、节点 run ID 与审计链。**本构建环境未执行**（无 Key、无法访问模型服务）。
 
 ## 5. 安装包
-`python3 scripts/verify-dmg.py release/Edict-1.1.0-arm64.dmg release/stage`：解码 UDIF → 解析 ISO9660/RockRidge → 校验可执行位、框架符号链接、Applications 链接、代码封印存在、主程序与已签名副本逐字节一致。**真实 Mac 上的挂载 / Gatekeeper / 启动未验证。**
+`python3 scripts/verify-dmg.py release/Edict-1.2.7-arm64.dmg release/stage`：解码 UDIF → 解析 ISO9660/RockRidge → 校验可执行位、框架符号链接、Applications 链接、代码封印存在、主程序与已签名副本逐字节一致。1.2.x 的每个版本都在一台 Apple Silicon Mac 上打包，并从文件夹直接启动过；**DMG 挂载、拖入「应用程序」和 Gatekeeper 首次打开未验证。**
