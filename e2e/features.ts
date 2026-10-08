@@ -78,11 +78,13 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const slider = win.locator('[data-testid=composer] [data-testid=effort] input[type=range]');
     await slider.waitFor({ timeout: 5000 });
     const max = await slider.getAttribute('max');
-    ok('思考程度滑块按模型档位显示（mock-strong：低→超高，4 档）', max === '3', `max=${max}`);
+    ok('思考程度滑块按模型档位显示（mock-strong：Low→XHigh，4 档）', max === '3', `max=${max}`);
     await slider.fill('3');
     await win.waitForTimeout(200);
     const label = await win.textContent('[data-testid=composer] .effort-v');
-    ok('滑到最右 = 该模型最高档（超高 xhigh）', label === '超高', label ?? '');
+    ok('滑到最右 = 该模型最高档，显示英文原名 XHigh', label === 'XHigh', label ?? '');
+    const effTip = (await win.locator('[data-testid=composer] [data-testid=effort]').getAttribute('data-tip-desc')) ?? '';
+    ok('思考程度说明：新文案，不再写「最右是该模型最高档」', effTip.startsWith('模型想得越深结果越好，但更慢、更费 token。') && !effTip.includes('最右'), effTip);
     await shot('30-effort-slider');
     await win.fill('#composer-input', 'EFFORTTEST 写 solo.txt');
     await win.click('text=协同'); // off → Solo
@@ -126,6 +128,12 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const boxes = await rows.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); const sel = e.querySelector('select')!.getBoundingClientRect(); return { y: r.y, w: sel.width }; }));
     ok('官员模型竖排：每位官员一行，模型下拉足够宽', boxes.length >= 10 && boxes.every((b, i) => i === 0 || b.y > boxes[i - 1].y) && boxes.every((b) => b.w >= 230), JSON.stringify(boxes.slice(0, 3)));
     await shot('33-models-agent-list');
+    // 检测思考档位: the mock accepts any level, so the result is "unconfirmed" and the hand-set ladder is kept
+    const before = mock.calls.length;
+    await win.click('[data-testid=reasoning-detect]');
+    await win.waitForSelector('.toast >> text=不校验思考档位', { timeout: 15000 });
+    const summary = (await win.textContent('[data-testid=reasoning-btn] >> nth=0')) ?? '';
+    ok('检测思考档位：服务不校验时标「未能确认」，保留原档位', summary.startsWith('未能确认') && summary.includes('Low→XHigh') && mock.calls.length - before === 2, `${summary} calls=${mock.calls.length - before}`);
   }
 
   // ── 3. HTML 预览
@@ -353,7 +361,7 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
       && spec.roles.some((r: any) => r.name === '史官' && r.model?.model === 'mock-strong' && r.effort === 'high') && seat?.pose === 'sit' && seat.idle === 'write' && Math.abs(seat.x - 330) <= 2 && spec.court.hideBuiltin === true, JSON.stringify({ review, step2: spec?.steps.find((s: any) => s.id === 'step2'), roles: spec?.roles.map((r: any) => r.name), seat }));
     const shiguan = spec?.roles.find((r: any) => r.name === '史官');
     const cell = (await win.textContent(`[data-testid=role-model-cell-${shiguan?.id}]`).catch(() => '')) ?? '';
-    ok('详情页角色表显示每个角色用的模型', cell.includes('mock-strong') && cell.includes('高'), cell);
+    ok('详情页角色表显示每个角色用的模型', cell.includes('mock-strong') && cell.includes('High'), cell);
     // the court follows the chosen design's layout
     await win.click('[data-testid=design-set-default]');
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'court', courtScene: 'taihe' }));

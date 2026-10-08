@@ -146,3 +146,32 @@ test('protocol probe reports which protocol works, with and without reasoning (m
   rt.dispose();
   await mock.close();
 });
+
+test('检测思考档位: keeps only the levels the service accepts; a service that accepts anything is marked unconfirmed', async () => {
+  const supported = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+  const strict = await startMockLlm({
+    reject: (_c, body) => ('reasoning_effort' in body && !supported.has(body.reasoning_effort) ? { status: 400, body: `{"error":{"message":"Unsupported value: 'reasoning_effort' does not support '${body.reasoning_effort}' with this model."}}` } : undefined),
+  });
+  const rt = makeRuntime(strict.url);
+  const r = await rt.detectReasoning('mock', 'mock-strong');
+  assert.ok(r.ok, r.message);
+  assert.deepEqual(r.reasoning?.levels, ['low', 'medium', 'high', 'xhigh', 'max']);
+  assert.equal(r.reasoning?.style, 'openai');
+  assert.equal(r.reasoning?.detected?.reliable, true);
+  assert.deepEqual(rt.modelInfo({ providerId: 'mock', model: 'mock-strong' })?.reasoning?.levels, r.reasoning?.levels, 'saved on the model');
+  assert.ok(r.message.includes('Low') && r.message.includes('Max'), r.message);
+  // only the plain call, the made-up level and the eight candidates
+  assert.equal(strict.calls.length, 10);
+  rt.dispose();
+  await strict.close();
+
+  const lax = await startMockLlm({});
+  const rt2 = makeRuntime(lax.url);
+  const r2 = await rt2.detectReasoning('mock', 'mock-economy');
+  assert.ok(r2.ok);
+  assert.equal(r2.reasoning?.detected?.reliable, false, 'accepted a made-up level → unconfirmed');
+  assert.deepEqual(r2.reasoning?.levels, ['none', 'low', 'medium', 'high', 'xhigh'], 'unknown name → five-step fallback');
+  assert.equal(lax.calls.length, 2, 'stops after the made-up level');
+  rt2.dispose();
+  await lax.close();
+});

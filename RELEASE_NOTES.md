@@ -2,6 +2,22 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 1.2.7
+
+**What's new**
+- **Thinking levels come from the model itself**:
+  - **检测思考档位**: a new button in 模型配置, next to 测试连接, and in each model's 思考程度 card. It sends one tiny request per level name (none, minimal, low, medium, high, xhigh, max, ultra) and keeps the ones the service accepts. About ten very small requests per model.
+  - Models you add are detected once automatically when you save (up to five at a time).
+  - Some relays accept any value. Edict sends a made-up level first; if that is accepted too, the result is marked **未能确认**. Your own settings are kept, otherwise the name-based guess is used. If the name is unknown, a five-step ladder is used (None · Low · Medium · High · XHigh, or Low … Max for Claude-style services); its right end is thinking fully on.
+  - The model table shows where the levels came from: 已检测, 未能确认 or 推测.
+- **Levels use the API's own names**: None · Minimal · Low · Medium · High · XHigh · Max · Ultra, only the ones the current model has. GPT and Claude models show their own ladders.
+- **Hover text**: 「模型想得越深结果越好，但更慢、更费 token。档位来自对当前模型的检测」, followed by the current level. The fixed level list and 「最右是该模型最高档」 are gone.
+- **Per-official and per-role thinking levels** (1.2.6) list only the levels of the model that official or role uses. The separate 「该模型最高档」 option is removed; the last entry is the top level.
+
+**Install**: download `Edict-1.2.7-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data folder is kept when you install over 1.x.
+
+**Verified**: 54/54 unit + integration tests (including a strict service that accepts only some levels and a relay that accepts anything), 21/21 + 67/67 end-to-end UI checks and the court smoke test on Linux + Xvfb (mock LLM). Not yet verified with a real model service.
+
 ## 1.2.6
 
 **What's new**

@@ -162,7 +162,8 @@ export function designBody(d: CollabDesign) {
 
 // ───────────────────────── validation ─────────────────────────
 const ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
-export const ROLE_EFFORTS = ['off', 'low', 'medium', 'high', 'xhigh', 'max', 'top'];
+// any level name a model's ladder can have, plus 'top' (older designs: the model's highest level)
+export const ROLE_EFFORTS = ['none', 'off', 'minimal', 'low', 'medium', 'on', 'high', 'xhigh', 'max', 'ultra', 'top'];
 export const AVATARS: AgentId[] = ['taizi', 'zhongshu', 'menxia', 'shangshu', 'hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'zaochao', 'solo'];
 
 /** Shortest legal path between two states over the protected state machine (no terminal / Blocked hops). */

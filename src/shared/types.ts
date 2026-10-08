@@ -398,6 +398,15 @@ export interface ReasoningConfig {
   default: string;
   budgets?: Record<string, number>; // thinking token budgets (anthropic-budget / qwen)
   custom?: Record<string, Record<string, unknown>>; // style=custom: JSON merged into the request body per level
+  /** set by 检测思考档位: levels the service actually accepted. reliable=false → it accepted a made-up level too, so levels are a guess */
+  detected?: { at: number; reliable: boolean; accepted: string[]; rejected: string[] };
+}
+
+export interface ReasoningDetectResult {
+  ok: boolean;
+  /** the config now saved on the model (unchanged when ok=false) */
+  reasoning?: ReasoningConfig;
+  message: string;
 }
 
 export interface ErrorInfo {

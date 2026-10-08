@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
-  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult, ModelClass,
+  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENTS, AGENT_MAP, STATE_LABEL, agentName, TERMINAL } from '../../shared/court';
@@ -13,7 +13,7 @@ import { AuditLog, BlobStore, JsonFile, JsonlLog } from './persist';
 import { assertTransition, IllegalTransitionError } from './stateMachine';
 import { addUsage, estimateTokens, now, sha256, uid, ymd, redactSecrets } from './util';
 import { defaultSettings, TEMPLATES } from './defaults';
-import { clampLevel, effectiveConfig, reasoningParams } from '../../shared/reasoning';
+import { DETECT_CANDIDATES, LEVEL_RANK, STYLE_LABEL, clampLevel, effectiveConfig, fallbackLadder, levelLabel, presetFor, reasoningParams } from '../../shared/reasoning';
 import { classifyLlmError } from '../llm/types';
 import { Workspace } from '../services/workspace';
 import { McpManager } from '../mcp/manager';
@@ -74,6 +74,11 @@ function sanitizeReasoning(r: unknown): ReasoningConfig | undefined {
   const out: ReasoningConfig = { style: x.style, levels, default: levels.includes(x.default) ? x.default : levels[Math.floor(levels.length / 2)] ?? '' };
   if (x.budgets && typeof x.budgets === 'object') out.budgets = Object.fromEntries(Object.entries(x.budgets).filter(([k, v]) => levels.includes(k) && Number.isFinite(+v) && +v > 0).map(([k, v]) => [k, Math.round(+v)]));
   if (x.style === 'custom' && x.custom && typeof x.custom === 'object') out.custom = JSON.parse(JSON.stringify(x.custom));
+  const d = x.detected;
+  if (d && typeof d === 'object' && Number.isFinite(+d.at)) {
+    const names = (a: unknown) => (Array.isArray(a) ? a.filter((l) => typeof l === 'string' && /^[a-z0-9_-]{1,24}$/i.test(l)).slice(0, 12) : []);
+    out.detected = { at: +d.at, reliable: !!d.reliable, accepted: names(d.accepted), rejected: names(d.rejected) };
+  }
   return out;
 }
 
@@ -913,6 +918,70 @@ export class Runtime {
     }));
     this.audit.record('emperor', 'provider_probe', { providerId: id, model, result: rows.map((r) => `${r.protocol}:${r.plain.ok ? 'ok' : r.plain.status ?? r.plain.kind}/${r.reasoning.ok ? 'ok' : r.reasoning.skipped ? '-' : r.reasoning.status ?? r.reasoning.kind}`) });
     return rows;
+  }
+
+  /**
+   * 检测思考档位：ask the service which reasoning levels this model accepts — one tiny request per level name.
+   * A made-up level is sent first: a service that accepts that too doesn't validate levels, so the result is a guess
+   * (name preset, or the five-step fallback ladder). The outcome is saved on the model.
+   */
+  async detectReasoning(providerId: string, modelId: string): Promise<ReasoningDetectResult> {
+    const base = this.providerRuntime(providerId);
+    const info = this.modelInfo({ providerId, model: modelId });
+    if (!info) return { ok: false, message: `模型 ${modelId} 还没保存到「${base.config.name}」，请先保存` };
+    const protocol = base.config.protocol;
+    const preset = presetFor(modelId, protocol);
+    const current = info.reasoning ?? preset;
+    const valueStyles: ReasoningStyle[] = ['openai', 'anthropic'];
+    const style: ReasoningStyle = valueStyles.includes(current.style) ? current.style : current.style === 'none' ? (protocol === 'anthropic-messages' ? 'anthropic' : 'openai') : current.style;
+    if (!valueStyles.includes(style)) return { ok: false, message: `${STYLE_LABEL[style]} 的档位不能逐个检测，保留现有设置` };
+    const probeCfg: ReasoningConfig = { style, levels: [], default: '' };
+    const ask = async (level?: string): Promise<'ok' | 'rejected' | ErrorInfo> => {
+      const rp = level ? reasoningParams(probeCfg, level, protocol) : { body: undefined, dropTemperature: false };
+      try {
+        await streamLlm(base, modelId, { system: '你是连接测试助手。', messages: [{ role: 'user', content: '回复：在' }], maxTokens: 16, idleTimeoutMs: 30000, extraBody: rp.body, dropTemperature: !!rp.dropTemperature }, this.opts.fetchImpl);
+        return 'ok';
+      } catch (e) {
+        const er = classifyLlmError(e);
+        return level && (er.kind === 'param' || er.status === 400 || er.status === 422) ? 'rejected' : er;
+      }
+    };
+    const fail = (er: ErrorInfo, what: string) => ({ ok: false, message: `检测中断（${what}）：${er.hint}`.slice(0, 300) });
+    const plain = await ask();
+    if (plain !== 'ok') return fail(plain as ErrorInfo, '基础请求失败');
+    const bogus = await ask('edict-made-up');
+    if (bogus !== 'ok' && bogus !== 'rejected') return fail(bogus, '服务出错');
+    const accepted: string[] = [];
+    const rejected: string[] = [];
+    if (bogus === 'rejected') {
+      for (const l of DETECT_CANDIDATES) {
+        const r = await ask(l);
+        if (r === 'ok') accepted.push(l);
+        else if (r === 'rejected') rejected.push(l);
+        else return fail(r, `检测 ${levelLabel(l)} 时出错`);
+      }
+    }
+    const reliable = bogus === 'rejected';
+    const detected = { at: now(), reliable, accepted, rejected };
+    let next: ReasoningConfig;
+    // unconfirmed: keep what the user set by hand, else the name guess, else the five-step fallback
+    const guess = info.reasoning ?? (preset.style !== 'none' ? preset : fallbackLadder(protocol));
+    if (!reliable) next = { ...guess, detected };
+    else if (!accepted.length) next = { style: 'none', levels: [], default: '', detected };
+    else {
+      const levels = LEVEL_RANK.filter((l) => accepted.includes(l));
+      const def = [current.default, 'medium', 'high'].find((l) => l && levels.includes(l)) ?? levels[Math.floor(levels.length / 2)];
+      next = { style, levels, default: def, detected };
+    }
+    const p = this.providers.find((x) => x.id === providerId)!;
+    this.upsertProvider({ ...p, models: p.models.map((m) => (m.id === modelId ? { ...m, reasoning: next } : m)) });
+    const saved = this.modelInfo({ providerId, model: modelId })?.reasoning;
+    this.audit.record('emperor', 'reasoning_detect', { providerId, model: modelId, reliable, accepted, rejected });
+    const names = (a: string[]) => a.map(levelLabel).join(' · ');
+    const message = !reliable
+      ? `这个服务不校验思考档位（乱写的档位也被接受），无法确认；${info.reasoning ? '保留现有设置' : preset.style !== 'none' ? '暂按模型名推测' : '暂按通用五档'}：${names(saved?.levels ?? []) || '不发送'}`
+      : accepted.length ? `检测到 ${accepted.length} 档：${names(saved?.levels ?? [])}` : '这个模型不接受思考档位参数，将不发送思考参数';
+    return { ok: true, reasoning: saved, message };
   }
 
   async fetchModels(id: string): Promise<string[]> {

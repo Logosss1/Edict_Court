@@ -6,8 +6,9 @@
 // custom:     any JSON merged into the body per level (for relays / private models, e.g. an `ultra` level)
 import type { Protocol, ReasoningConfig, ReasoningStyle } from './types';
 
+// levels are shown by the names the model's own API uses
 export const LEVEL_LABEL: Record<string, string> = {
-  none: '关', off: '关', minimal: '极低', low: '低', medium: '中', high: '高', xhigh: '超高', max: '最高', ultra: 'Ultra', on: '开',
+  none: 'None', off: 'Off', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max', ultra: 'Ultra', on: 'On',
 };
 export const levelLabel = (l: string) => LEVEL_LABEL[l] ?? l;
 
@@ -55,13 +56,24 @@ export function effectiveConfig(cfg: ReasoningConfig | undefined, modelId: strin
   return cfg ?? presetFor(modelId, protocol);
 }
 
+/** every level name 检测思考档位 tries, low → high (also the rank used to clamp a level onto a ladder) */
+export const LEVEL_RANK = ['none', 'off', 'minimal', 'low', 'medium', 'on', 'high', 'xhigh', 'max', 'ultra'];
+export const DETECT_CANDIDATES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'];
+
+/** Fallback ladder when the name is unknown and the service accepts any level (so detection can't tell): five steps, the right end = thinking fully on. */
+export function fallbackLadder(protocol: Protocol): ReasoningConfig {
+  return protocol === 'anthropic-messages'
+    ? { style: 'anthropic', levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'medium' }
+    : { style: 'openai', levels: ['none', 'low', 'medium', 'high', 'xhigh'], default: 'medium' };
+}
+
 /** Clamp any requested level onto the model's own ladder (by rank), so the slider's top is always the model's top. */
 export function clampLevel(cfg: ReasoningConfig, level: string | undefined): string | undefined {
   if (!cfg.levels.length) return undefined;
   if (!level || level === 'default') return cfg.default || cfg.levels[Math.floor(cfg.levels.length / 2)];
   if (level === 'top') return cfg.levels[cfg.levels.length - 1];
   if (cfg.levels.includes(level)) return level;
-  const rank = ['none', 'off', 'minimal', 'low', 'medium', 'on', 'high', 'xhigh', 'max', 'ultra'];
+  const rank = LEVEL_RANK;
   const want = rank.indexOf(level);
   if (want < 0) return cfg.default;
   let best = cfg.levels[0];

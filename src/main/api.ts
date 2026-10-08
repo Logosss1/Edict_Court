@@ -69,6 +69,7 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFo
     deleteProvider: (id: string) => rt.deleteProvider(id),
     testProvider: (id: string, model: string) => rt.testProvider(id, model),
     probeProvider: (id: string, model: string, level?: string) => rt.probeProvider(id, model, level),
+    detectReasoning: (id: string, model: string) => rt.detectReasoning(id, model),
     fetchModels: (id: string) => rt.fetchModels(id),
     presets: () => rt.presets(),
 

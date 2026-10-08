@@ -2,8 +2,8 @@
 import { useStore } from '../store';
 import type { ModelRef } from '../../shared/types';
 import { levelLabel } from '../../shared/reasoning';
+import { reasoningFor } from './EffortSlider';
 
-export const EFFORT_CHOICES = ['off', 'low', 'medium', 'high', 'xhigh', 'max'];
 
 /** "label · provider" for a model ref, '未设置' when empty */
 export function useModelName() {
@@ -48,17 +48,22 @@ export function ModelSelect({ value, onChange, allowDefault, testid, className =
   );
 }
 
-export function EffortSelect({ value, onChange, defaultLabel = '跟随旨意 / 模型默认', testid, className = 'input sm' }: { value: string | undefined; onChange: (v: string | undefined) => void; defaultLabel?: string; testid?: string; className?: string }) {
+/** thinking level for one model: only the levels that model has (detected or guessed), by their API names */
+export function EffortSelect({ model, value, onChange, defaultLabel = '跟随旨意 / 模型默认', testid, className = 'input sm' }: { model: ModelRef | null | undefined; value: string | undefined; onChange: (v: string | undefined) => void; defaultLabel?: string; testid?: string; className?: string }) {
+  const providers = useStore((s) => s.providers);
+  const cfg = model ? reasoningFor(providers, model) : null;
+  const levels = cfg?.levels ?? [];
+  const stale = value && !levels.includes(value);
   return (
-    <select className={className} value={value ?? ''} data-testid={testid} onChange={(e) => onChange(e.target.value || undefined)}>
-      <option value="">{defaultLabel}</option>
-      {EFFORT_CHOICES.map((l) => <option key={l} value={l}>{levelLabel(l)}</option>)}
-      <option value="top">该模型最高档</option>
+    <select className={className} value={value ?? ''} data-testid={testid} disabled={!levels.length && !value} title={levels.length ? `这个模型的档位：${levels.map(levelLabel).join(' · ')}` : '这个模型没有思考档位'} onChange={(e) => onChange(e.target.value || undefined)}>
+      <option value="">{levels.length ? defaultLabel : '无思考档位'}</option>
+      {levels.map((l) => <option key={l} value={l}>{levelLabel(l)}</option>)}
+      {stale && <option value={value}>{value === 'top' ? '最高一档' : levelLabel(value!)}（按最接近的档）</option>}
     </select>
   );
 }
 
-export const effortText = (e?: string) => (!e ? '' : e === 'top' ? '最高档' : levelLabel(e));
+export const effortText = (e?: string) => (!e ? '' : e === 'top' ? '最高一档' : levelLabel(e));
 
 /** how a design role's model reads in lists: short (chip) and full (table / tooltip) */
 export function useRoleModelText() {

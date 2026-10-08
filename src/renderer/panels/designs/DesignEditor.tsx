@@ -310,7 +310,7 @@ function RoleForm({ draft, role, onChange, onRenamed }: { draft: Draft; role: Ro
         {role.model && !exists(role.model) && <span className="small warn-text" data-testid="role-model-missing">这个模型已不在模型配置里，运行时会改用{tier}模型路由。</span>}
       </div>
       <div className="field"><label>思考程度</label>
-        <EffortSelect className="input" testid="role-effort" defaultLabel={effortDefaultLabel(role.modelClass)} value={role.effort} onChange={(v) => patch({ effort: v })} />
+        <EffortSelect className="input" testid="role-effort" model={role.model && exists(role.model) ? role.model : route} defaultLabel={effortDefaultLabel(role.modelClass)} value={role.effort} onChange={(v) => patch({ effort: v })} />
       </div>
       <div className="field"><label>工具权限（上限）</label>
         <select className="input" value={role.toolAccess} onChange={(e) => patch({ toolAccess: e.target.value as RoleSpec['toolAccess'] })}>
