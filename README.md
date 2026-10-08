@@ -82,7 +82,7 @@ npm run package:mac      # assemble Edict.app (arm64), ad-hoc sign, create zip +
 
 ## Documentation (Chinese)
 
-[STATUS](docs/STATUS.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TESTING](docs/TESTING.md) · [ART_PIPELINE](docs/ART_PIPELINE.md) · [INSTALL_MAC](docs/INSTALL_MAC.md) · [AI_HANDOFF](AI_HANDOFF.md) · [RELEASE_NOTES](RELEASE_NOTES.md)
+[STATUS](docs/STATUS.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TESTING](docs/TESTING.md) · [ART_PIPELINE](docs/ART_PIPELINE.md) · [INSTALL_MAC](docs/INSTALL_MAC.md) · [RELEASE_NOTES](RELEASE_NOTES.md)
 
 ## License
 
