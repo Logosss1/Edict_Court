@@ -70,6 +70,7 @@ export function tasksHandledBy(tasks: Task[], id: AgentId): Task[] {
 
 const SCENES: { key: SceneKey; label: string; kbd: string; desc: string }[] = [
   { key: 'taihe', label: '太和殿', kbd: '⌘1', desc: '百官上朝，奏折在这里呈给皇上御批' },
+  { key: 'guangchang', label: '太和殿广场', kbd: '', desc: '殿前广场，往南出太和门、午门到承天门' },
   { key: 'junjichu', label: '军机处值房', kbd: '⌘2', desc: '旨意折子墙和流转链' },
   { key: 'liubu', label: '六部值房', kbd: '⌘3', desc: '各部办差现场与办过的旨意' },
   { key: 'chengtian', label: '承天门', kbd: '⌘4', desc: '告示榜，击鼓上朝' },

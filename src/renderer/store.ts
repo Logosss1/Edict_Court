@@ -5,7 +5,7 @@ import type { Activity, AgentId, RuntimeEvent, Snapshot, Task, Debate, Session, 
 import { call } from './api';
 
 export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help';
-export type CourtScene = 'taihe' | 'junjichu' | 'liubu' | 'chengtian';
+export type CourtScene = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian';
 
 export interface Tab {
   id: string;

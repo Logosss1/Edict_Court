@@ -20,8 +20,8 @@ const fail = (m: string) => { throw new Error(m); };
   await win.evaluate((h) => (window as any).__court.setHour(h), hour);
   await win.waitForTimeout(300);
   await win.screenshot({ path: `${SHOTS}/court-taihe.png` });
-  for (const [i, n] of [[2, 'junjichu'], [3, 'liubu'], [4, 'chengtian']] as const) {
-    await win.click(`.court-hud .px-btn:nth-child(${i})`);
+  for (const [label, n] of [['太和殿广场', 'guangchang'], ['军机处值房', 'junjichu'], ['六部值房', 'liubu'], ['承天门', 'chengtian']] as const) {
+    await win.click(`.court-hud > .px-btn:text-is("${label}")`);
     await win.waitForTimeout(1400);
     await win.evaluate((h) => (window as any).__court.setHour(h), hour);
     await win.waitForTimeout(200);
@@ -46,7 +46,7 @@ const fail = (m: string) => { throw new Error(m); };
   await win.click('[data-testid=court-weather] button:nth-child(1)');
 
   // back to the throne hall: hover card, official menu, reward animation
-  await win.click('.court-hud .px-btn:nth-child(1)');
+  await win.click('.court-hud > .px-btn:text-is("太和殿")');
   await win.waitForTimeout(1400);
   await win.evaluate(() => (window as any).__court.setHour(11));
   const p = await at(390, 205);
@@ -81,8 +81,33 @@ const fail = (m: string) => { throw new Error(m); };
   await win.keyboard.press('Escape');
   await win.waitForTimeout(2500);
 
+  // walking out follows the palace layout: 太和殿 → 太和殿广场 → 承天门 → 六部值房
+  const sceneNow = async () => (await win.textContent('.court-hud > .px-btn.on'))?.trim();
+  const walkUntil = async (key: string, to: string) => {
+    await win.keyboard.down(key);
+    for (let t = 0; t < 80 && (await sceneNow()) !== to; t++) await win.waitForTimeout(100);
+    await win.keyboard.up(key);
+    await win.waitForTimeout(900);
+    const now = await sceneNow();
+    if (now !== to) fail(`walking ${key} should reach ${to}, got ${now}`);
+    console.log(`[court-smoke] walked ${key} → ${to}`);
+  };
+  await win.mouse.move(5, 5);
+  await walkUntil('ArrowDown', '太和殿广场');
+  await win.evaluate(() => (window as any).__court.setHour(11));
+  await win.waitForTimeout(300);
+  await win.screenshot({ path: `${SHOTS}/court-guangchang-walk.png` });
+  await walkUntil('ArrowDown', '承天门');
+  await walkUntil('ArrowRight', '六部值房');
+  await walkUntil('ArrowLeft', '承天门');
+  const gate = await at(320, 290);
+  await win.mouse.click(gate.x, gate.y); // walk over to the gate, then in through it
+  await win.waitForTimeout(4500);
+  await walkUntil('ArrowUp', '太和殿广场');
+  await walkUntil('ArrowUp', '太和殿');
+
   // clickable scene object: the memorial wall opens the kanban panel
-  await win.click('.court-hud .px-btn:nth-child(2)');
+  await win.click('.court-hud > .px-btn:text-is("军机处值房")');
   await win.waitForTimeout(1400);
   const w = await at(300, 150);
   await win.mouse.click(w.x, w.y);

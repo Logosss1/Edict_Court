@@ -4,7 +4,7 @@ import type { AgentId, AgentRuntime, ApprovalRequest, Debate, NewsItem, Task, Me
 import type { PanelId } from '../../store';
 import type { CourtLayout } from '../../../shared/design';
 
-export type SceneKey = 'taihe' | 'junjichu' | 'liubu' | 'chengtian';
+export type SceneKey = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian';
 export type Weather = 'clear' | 'rain' | 'snow' | 'petals';
 export type SoundCue = 'drum' | 'bell' | 'meow' | 'chirp' | 'chime' | 'gong';
 

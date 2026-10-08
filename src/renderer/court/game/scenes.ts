@@ -24,8 +24,10 @@ export interface Bridge {
 
 const A = '../assets/pixel';
 const S = 1 / DETAIL; // display scale for 2× art
-const SCENE_KEYS: SceneKey[] = ['taihe', 'junjichu', 'liubu', 'chengtian'];
-const SCENE_NAME: Record<SceneKey, string> = { taihe: '太和殿', junjichu: '军机处值房', liubu: '六部值房', chengtian: '承天门' };
+const SCENE_KEYS: SceneKey[] = ['taihe', 'guangchang', 'junjichu', 'liubu', 'chengtian'];
+const SCENE_NAME: Record<SceneKey, string> = { taihe: '太和殿', guangchang: '太和殿广场', junjichu: '军机处值房', liubu: '六部值房', chengtian: '承天门' };
+/** open-air scenes: full weather, a darker night and stars */
+const OUTDOOR = new Set<SceneKey>(['guangchang', 'chengtian']);
 const CHAR_KEYS = ['emperor', 'taizi', 'zhongshu', 'menxia', 'shangshu', 'hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'zaochao', 'solo', 'guard', 'lady', 'clerk'];
 const MINISTRY_PROPS = ['hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr'];
 const PROPS = ['desk', 'scroll', 'fan', 'seal', 'cloud', 'cloud2', 'ring', 'glow', 'rain', 'snow', 'petal',
@@ -36,6 +38,7 @@ const SHEETS: [string, number, number][] = [['lantern', 32, 72], ['flame', 8, 12
 /** where the emperor may walk (world units) */
 const WALK: Record<SceneKey, { x0: number; x1: number; y0: number; y1: number }> = {
   taihe: { x0: 24, x1: 616, y0: 180, y1: 352 },
+  guangchang: { x0: 16, x1: 624, y0: 150, y1: 352 },
   junjichu: { x0: 20, x1: 620, y0: 238, y1: 352 },
   liubu: { x0: 12, x1: 628, y0: 262, y1: 352 },
   chengtian: { x0: 12, x1: 628, y0: 252, y1: 352 },
@@ -339,8 +342,8 @@ export function makeScenes(P: any, bridge: Bridge) {
         this.emperor.tag?.setDepth(THRONE.y + 6);
         return;
       }
-      let x = { chengtian: 320, junjichu: 430, liubu: 520, taihe: 360 }[this.key];
-      let y = { chengtian: 300, junjichu: 290, liubu: 318, taihe: 300 }[this.key];
+      let x = { chengtian: 320, guangchang: 320, junjichu: 430, liubu: 520, taihe: 360 }[this.key];
+      let y = { chengtian: 300, guangchang: 300, junjichu: 290, liubu: 318, taihe: 300 }[this.key];
       if (door) {
         const [dx, dy, dw, dh] = door;
         x = Math.max(w.x0 + 24, Math.min(w.x1 - 24, dx + dw / 2));
@@ -614,7 +617,7 @@ export function makeScenes(P: any, bridge: Bridge) {
     }
     applyTime() {
       const ph = this.phase();
-      const outdoor = this.key === 'chengtian';
+      const outdoor = OUTDOOR.has(this.key);
       const wash: Record<DayPhase, [number, number]> = { dawn: [0xffb070, 0.1], day: [0x000000, 0], dusk: [0xff7a3a, 0.14], night: outdoor ? [0x101838, 0.5] : [0x141a36, 0.34] };
       let [c, a] = wash[ph];
       if (bridge.weather === 'rain' || bridge.weather === 'snow') {
@@ -642,7 +645,7 @@ export function makeScenes(P: any, bridge: Bridge) {
       if (this.shade) this.applyTime();
       if (w === 'clear') return;
       const windows = WINDOWS[this.key];
-      if (this.key !== 'chengtian' && !windows) return;
+      if (!OUTDOOR.has(this.key) && !windows) return;
       const cfg: Record<Exclude<Weather, 'clear'>, any> = {
         rain: { speedY: { min: 300, max: 380 }, speedX: { min: -50, max: -30 }, lifespan: 1300, frequency: 8, quantity: 3, alpha: 0.75, scale: S },
         snow: { speedY: { min: 14, max: 32 }, speedX: { min: -12, max: 12 }, lifespan: 16000, frequency: 70, quantity: 1, alpha: { min: 0.7, max: 1 }, scale: { min: S * 0.75, max: S * 1.25 } },
@@ -651,7 +654,7 @@ export function makeScenes(P: any, bridge: Bridge) {
       const tex = w === 'rain' ? 'rain' : w === 'snow' ? 'snow' : 'petal';
       this.weatherFx = this.add.particles(0, -12, tex, { x: { min: -40, max: WORLD_W + 40 }, ...cfg[w] }).setDepth(2400);
       this.weatherFx.fastForward?.(w === 'rain' ? 1500 : 12000);
-      if (this.key !== 'chengtian' && windows) {
+      if (!OUTDOOR.has(this.key) && windows) {
         const g = this.make.graphics({ add: false });
         g.fillStyle(0xffffff);
         for (const [x, y, ww, hh] of windows) g.fillRect(x, y, ww, hh);
@@ -1097,14 +1100,7 @@ export function makeScenes(P: any, bridge: Bridge) {
       this.time.delayedCall(2500, () => this.birds());
     }
     onTime(ph: DayPhase) {
-      this.stars.forEach((s) => s.destroy());
-      this.stars = [];
-      if (ph !== 'night') return;
-      for (let i = 0; i < 26; i++) {
-        const s = this.add.rectangle(Math.round(Math.random() * WORLD_W), Math.round(4 + Math.random() * 90), 1, 1, 0xfff6d0).setOrigin(0, 0).setDepth(2550);
-        this.tweens.add({ targets: s, alpha: { from: 1, to: 0.3 }, duration: 800 + Math.random() * 1600, yoyo: true, repeat: -1, delay: Math.random() * 1000 });
-        this.stars.push(s);
-      }
+      this.stars = starField(this, this.stars, ph, 90);
     }
     sync(m: CourtModel) {
       this.lines.forEach((l) => l.destroy());
@@ -1155,7 +1151,42 @@ export function makeScenes(P: any, bridge: Bridge) {
     }
   }
 
-  return [Boot, Taihe, Junjichu, Liubu, Chengtian];
+  // ───────────────────────── 太和殿广场 ─────────────────────────
+  class Guangchang extends Base {
+    stars: any[] = [];
+    constructor() {
+      super('guangchang');
+    }
+    build() {
+      this.stars = [];
+      [[262, 186], [378, 186], [262, 268], [378, 268], [120, 200], [520, 200]].forEach(([x, y]) => this.extra('guard', x, y));
+      txt(this, 320, 54, '太和殿', { color: '#f2d27a' }).setOrigin(0.5, 0.5).setDepth(10);
+      txt(this, 320, 352, '太 和 殿 广 场', { color: '#f2d27a', stroke: '#1a1220', strokeThickness: 3 }).setOrigin(0.5, 1).setDepth(9000);
+    }
+    ambient() {
+      const roof = (this.spots.wallTop as number[][] | undefined) ?? [[124, 108], [162, 108]];
+      this.cat(roof.slice(0, 2), 200).setVisible(Math.random() < 0.6);
+      this.time.delayedCall(3000, () => this.birds());
+    }
+    onTime(ph: DayPhase) {
+      this.stars = starField(this, this.stars, ph, 60);
+    }
+  }
+
+  return [Boot, Taihe, Guangchang, Junjichu, Liubu, Chengtian];
+}
+
+/** twinkling stars over an open-air scene at night (replaces the previous set) */
+function starField(scene: any, old: any[], ph: DayPhase, maxY: number) {
+  old.forEach((s) => s.destroy());
+  if (ph !== 'night') return [];
+  const out: any[] = [];
+  for (let i = 0; i < 26; i++) {
+    const s = scene.add.rectangle(Math.round(Math.random() * WORLD_W), Math.round(4 + Math.random() * maxY), 1, 1, 0xfff6d0).setOrigin(0, 0).setDepth(2550);
+    scene.tweens.add({ targets: s, alpha: { from: 1, to: 0.3 }, duration: 800 + Math.random() * 1600, yoyo: true, repeat: -1, delay: Math.random() * 1000 });
+    out.push(s);
+  }
+  return out;
 }
 
 /** linear mix of two 0xRRGGBB colours (t = 0 → a, 1 → b) */

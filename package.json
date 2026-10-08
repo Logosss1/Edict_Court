@@ -1,7 +1,7 @@
 {
   "name": "edict-for-mac",
   "productName": "Edict",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Edict for Mac — an Apple Silicon desktop AI coding workstation with a pixel court for EDICT's Three Departments and Six Ministries workflow (三省六部像素朝堂 AI 编程工作站)",
   "main": "dist/main.js",
   "license": "MIT",

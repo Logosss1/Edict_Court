@@ -2,6 +2,19 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 1.2.4
+
+**What's new**
+- **The court follows the palace layout**: leaving 太和殿 by the south door no longer drops you straight at 承天门.
+  - **太和殿广场 (new scene)**: the paved court in front of the hall. 太和殿 stands on its three white marble terraces, with the 御路 stairs, bronze vats, cranes and the sundial, and guards along the imperial way.
+  - **New route**: 太和殿 → south door → 太和殿广场 → south through 太和门 and 午门 → 承天门 → east along the 千步廊 → 六部值房. 军机处 is still through the west door of 太和殿. 太和殿 no longer has a door straight into 六部值房.
+  - 太和殿广场 is also in the court toolbar. It is open-air, so weather, night and stars show there.
+- Fixed: the 承天门 gateway can now be entered on foot. Before, it only worked by clicking.
+
+**Install**: download `Edict-1.2.4-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data folder is kept when you install over 1.x.
+
+**Verified**: 51/51 unit + integration tests, 21/21 + 61/61 end-to-end UI checks and the court smoke test, which now walks the emperor 太和殿 → 广场 → 承天门 → 六部值房 and back, on Linux + Xvfb (mock LLM). Not yet verified with a real model service.
+
 ## 1.2.3
 
 **What's new**

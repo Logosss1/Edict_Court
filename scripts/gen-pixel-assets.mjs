@@ -44,6 +44,7 @@ const sceneChars = {
   junjichu: ['clerk', 'shangshu', 'zaochao', 'emperor'],
   liubu: ['hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'clerk', 'emperor'],
   chengtian: ['guard', 'zaochao', 'zhongshu', 'menxia', 'shangshu', 'taizi', 'emperor'],
+  guangchang: ['guard', 'emperor'],
 };
 const props = buildProps();
 for (const [k, b] of Object.entries(props)) write(path.join(out, 'props', `${k}.png`), b.toPNG());

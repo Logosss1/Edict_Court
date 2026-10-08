@@ -606,6 +606,7 @@ export function buildScenes() {
   scenes.junjichu = junjichu();
   scenes.liubu = liubu();
   scenes.chengtian = chengtian();
+  scenes.guangchang = guangchang();
   return scenes;
 }
 
@@ -667,7 +668,7 @@ function taihe() {
       lamps: [...LAMP_CUPS(372, 380), ...LAMP_CUPS(908, 380)].map(([x, y]) => [x / 2, y / 2]),
       incense: [[260, 162], [380, 162]],
       lanterns: [[86, 4], [236, 4], [404, 4], [554, 4]],
-      doors: { junjichu: [6, 200, 22, 90], liubu: [612, 200, 22, 90], chengtian: [270, 344, 100, 16] },
+      doors: { junjichu: [6, 200, 22, 90], guangchang: [270, 344, 100, 16] },
       desk: [320, 112],
     },
   };
@@ -745,7 +746,7 @@ function liubu() {
   ditherBand(b, 0, 510, SW, 8, C.BLACK, 2);
   lightShaft(b, 60, 520, 120, 200, 0.5);
   scrollShelf(b, 18, 470, 74, 180, 9);
-  return { bg: b, spots: { official: [130, 292], screen: [190, 32, 430, 214], plaque: [90, 31], doors: { taihe: [8, 300, 20, 56] }, deptProp: [250, 352] } };
+  return { bg: b, spots: { official: [130, 292], screen: [190, 32, 430, 214], plaque: [90, 31], doors: { chengtian: [8, 300, 20, 56] }, deptProp: [250, 352] } };
 }
 
 // 承天门 (Tang palace gate)
@@ -831,7 +832,108 @@ function chengtian() {
       drum: [568, 286],
       flags: [[151, 62], [491, 62]],
       wallTop: [[0, 119], [150, 119], [490, 119], [640, 119]],
-      doors: { taihe: [298, 166, 44, 74] },
+      // north through the gate into the palace; east along the 千步廊 to the ministries
+      doors: { guangchang: [298, 166, 44, 90], liubu: [612, 256, 22, 84] },
+      lanterns: [],
+    },
+  };
+}
+
+// 太和殿广场: the paved court in front of the hall, looking north at 太和殿 on its three marble terraces
+function marbleRail(b, x0, x1, y, h = 14) {
+  b.rect(x0, y + h - 3, x1 - x0, 3, C.STONE);
+  b.rect(x0, y + 2, x1 - x0, 3, C.PAPER);
+  b.hline(x0, x1 - 1, y + 5, C.STONE);
+  for (let x = x0 + 6; x < x1 - 2; x += 8) b.vline(x, y + 5, y + h - 3, C.STONE_L);
+  for (let x = x0; x < x1; x += 24) {
+    b.rect(x, y - 2, 4, h + 2, C.PAPER);
+    b.vline(x + 3, y - 2, y + h - 1, C.STONE);
+    b.rect(x - 1, y - 5, 6, 3, C.PAPER);
+    b.set(x + 1, y - 6, C.STONE_L);
+  }
+}
+function terrace(b, x0, x1, top, h, seed) {
+  b.rect(x0, top, x1 - x0, h, C.STONE_L);
+  b.rect(x0, top + h - 3, x1 - x0, 3, C.STONE);
+  noise(b, x0, top + 2, x1 - x0, h - 5, [C.PAPER, C.STONE], 0.05, seed);
+  for (let x = x0 + 10; x < x1 - 6; x += 24) { b.rect(x, top + 4, 4, 3, C.STONE_D); b.set(x + 1, top + 7, C.STONE_D); } // 螭首 spouts
+  marbleRail(b, x0, x1, top - 12);
+}
+function bronzeVat(b, cx, bottom) {
+  b.ellipse(cx, bottom - 14, 22, 15, C.BRONZE);
+  b.ellipse(cx, bottom - 26, 22, 5, C.GOLD_D);
+  b.ellipse(cx, bottom - 26, 18, 3, C.DEEP);
+  b.hline(cx - 20, cx + 20, bottom - 16, C.GOLD_D);
+  for (const dx of [-14, 14]) b.rect(cx + dx - 2, bottom - 4, 5, 5, C.DBROWN);
+}
+function guangchang() {
+  const b = new Bitmap(SW, SH);
+  gradient(b, 0, 0, SW, 230, [C.SKY, C.SKY, C.SKY_L, C.JADE]);
+  cloudBank(b, 70, 40, 180);
+  cloudBank(b, 1000, 66, 160);
+  // side galleries 廊庑 with 弘义阁 (west) and 体仁阁 (east)
+  for (const [x0, x1] of [[0, 330], [950, SW]]) {
+    b.rect(x0, 236, x1 - x0, 110, C.RED_D);
+    b.rect(x0, 236, x1 - x0, 6, C.RED);
+    for (let x = x0 + 18; x < x1; x += 46) { b.rect(x, 262, 26, 56, C.RED); for (let i = x + 3; i < x + 24; i += 5) b.vline(i, 264, 316, C.RED_D); }
+    b.rect(x0, 340, x1 - x0, 8, C.STONE);
+    hipRoof(b, (x0 + x1) / 2, 240, (x1 - x0) / 2 + 30, 214, (x1 - x0) / 2 - 10, { fin: 10, lift: 4 });
+  }
+  hallBody(b, 46, 230, 190, 280, 5);
+  hipRoof(b, 138, 194, 116, 150, 52, { fin: 14, lift: 6 });
+  hallBody(b, 1050, 1234, 190, 280, 5);
+  hipRoof(b, 1142, 194, 116, 150, 52, { fin: 14, lift: 6 });
+  // 太和殿: double-eaved hip roof (重檐庑殿) over an eleven-bay hall
+  hipRoof(b, 640, 158, 312, 130, 262, { fin: 0, lift: 8 });
+  b.rect(420, 102, 440, 28, C.JADE);
+  dougongRow(b, 420, 860, 108, 40);
+  hipRoof(b, 640, 104, 270, 40, 150, { fin: 30, lift: 10 });
+  hallBody(b, 400, 880, 158, 238, 11);
+  // plaque (text drawn at runtime)
+  b.rect(600, 104, 80, 22, C.DEEP);
+  b.rect(604, 107, 72, 16, C.BLU_D);
+  frameRect(b, 604, 107, 72, 16, C.GOLD);
+  // three marble terraces 三台
+  terrace(b, 360, 920, 238, 20, 61);
+  terrace(b, 300, 980, 270, 22, 62);
+  terrace(b, 240, 1040, 304, 24, 63);
+  // the stairs and the carved 御路 slab between them
+  for (const [x0, x1] of [[560, 720], [440, 488], [792, 840]]) {
+    for (let y = 228; y < 328; y += 5) { b.hline(x0, x1, y, C.PAPER); b.hline(x0, x1, y + 3, C.STONE); b.hline(x0, x1, y + 4, C.STONE_D); }
+    b.vline(x0, 228, 327, C.PAPER);
+    b.vline(x1, 228, 327, C.PAPER);
+  }
+  b.rect(610, 226, 60, 102, C.PAPER);
+  frameRect(b, 610, 226, 60, 102, C.STONE);
+  for (let y = 236; y < 320; y += 12) { b.line(620, y, 640, y + 6, C.STONE_L); b.line(640, y + 6, 660, y, C.STONE_L); b.ellipse(640, y + 3, 3, 2, C.STONE_L); }
+  // bronze cranes, tortoises and the sundial on the terrace
+  for (const x of [330, 950]) { b.rect(x - 2, 280, 4, 22, C.BRONZE); b.ellipse(x, 276, 7, 5, C.BRONZE); b.line(x + 4, 272, x + 10, 262, C.BRONZE); }
+  for (const x of [400, 880]) { b.ellipse(x, 296, 12, 7, C.BRONZE); b.ellipse(x + 11, 292, 4, 3, C.BRONZE); b.hline(x - 10, x + 10, 293, C.GOLD_D); }
+  b.rect(1000, 270, 6, 30, C.STONE); b.poly([[984, 276], [1014, 262], [1018, 268], [988, 282]], C.PAPER); b.line(1001, 270, 1010, 258, C.BRONZE);
+  // the paved court and the imperial way
+  b.rect(0, 328, SW, SH - 328, C.STONE_D);
+  for (let y = 328; y < SH; y += 18) {
+    b.hline(0, SW - 1, y, C.BLACK);
+    for (let x = ((y / 18) % 2) * 24; x < SW; x += 48) b.vline(x, y, y + 17, C.BLACK);
+  }
+  noise(b, 0, 330, SW, SH - 330, [C.STONE, C.FLOOR_D], 0.06, 64);
+  b.rect(572, 328, 136, SH - 328, C.STONE);
+  for (let y = 328; y < SH; y += 18) b.hline(572, 707, y, C.STONE_D);
+  b.vline(572, 328, SH - 1, C.STONE_L);
+  b.vline(707, 328, SH - 1, C.STONE_L);
+  ditherBand(b, 0, 328, SW, 8, C.BLACK, 2);
+  // rows of 品级山 rank markers along the way and fire-water vats by the terrace
+  for (let y = 420; y < 700; y += 70) for (const x of [520, 760]) { b.rect(x - 5, y - 18, 10, 18, C.STONE_L); b.poly([[x - 5, y - 18], [x, y - 26], [x + 5, y - 18]], C.PAPER); }
+  bronzeVat(b, 190, 380);
+  bronzeVat(b, 1090, 380);
+  tree(b, 30, 712, 1.1, 7);
+  tree(b, 1252, 712, 1.1, 9);
+  return {
+    bg: b,
+    spots: {
+      // up the central stairs into the hall; south through 太和门 and 午门 to 承天门
+      doors: { taihe: [292, 140, 56, 20], chengtian: [270, 344, 100, 16] },
+      wallTop: [[124, 108], [162, 108]],
       lanterns: [],
     },
   };
