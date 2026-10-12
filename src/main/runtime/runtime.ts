@@ -1,22 +1,24 @@
 // Edict runtime: owns every task, agent, debate, approval and audit record. Both the
 // workbench and the pixel court are projections of this single state (bidirectional sync
 // = both send commands here and both render the same events).
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
   Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
-  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo,
+  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo, RevertResult,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENTS, AGENT_MAP, STATE_LABEL, agentName, TERMINAL } from '../../shared/court';
 import { AuditLog, BlobStore, JsonlLog } from './persist';
 import { openStateStore, type DocKind, type PersistedSettingsLike, type PersistedStateLike, type SqliteStore } from './sqliteStore';
 import { assertTransition, IllegalTransitionError } from './stateMachine';
-import { addUsage, estimateTokens, now, sha256, uid, ymd, redactSecrets } from './util';
+import { addUsage, estimateTokens, now, sha256, uid, ymd, redactSecrets, truncate } from './util';
 import { defaultSettings, TEMPLATES } from './defaults';
 import { DETECT_CANDIDATES, LEVEL_RANK, STYLE_LABEL, clampLevel, effectiveConfig, fallbackLadder, levelLabel, presetFor, reasoningParams } from '../../shared/reasoning';
 import { classifyLlmError } from '../llm/types';
 import { Workspace } from '../services/workspace';
+import { ShadowSnapshots } from '../services/shadowSnapshot';
 import { McpManager } from '../mcp/manager';
 import { LspManager, loadLspConfig, saveLspConfig, type LspConfig } from '../lsp/manager';
 import { DesignStore } from './designs';
@@ -104,6 +106,8 @@ export class Runtime {
   readonly store: SqliteStore;
   /** language servers found on this machine (auto-detected; missing ones show install hints) */
   readonly lsp: LspManager;
+  /** R7: shadow snapshots per workspace root — what run_command changed on disk */
+  readonly snapshots: ShadowSnapshots;
   private listeners = new Set<(e: RuntimeEvent) => void>();
   private activityBuf = new Map<string, Activity[]>(); // taskId|'_global' → recent
   private activityLogs = new Map<string, JsonlLog<Activity>>();
@@ -150,6 +154,7 @@ export class Runtime {
     fs.mkdirSync(opts.dataDir, { recursive: true });
     this.audit = new AuditLog(path.join(opts.dataDir, 'audit.jsonl'));
     this.blobs = new BlobStore(path.join(opts.dataDir, 'blobs'));
+    this.snapshots = new ShadowSnapshots(path.join(opts.dataDir, 'snapshots'), { audit: (action, detail) => this.audit.record('system', action, detail) });
     this.store = openStateStore(opts.dataDir);
     const s: PersistedSettings = this.store.loadSettings() ?? { settings: defaultSettings(), providers: [] };
     this.settings = { ...defaultSettings(), ...s.settings };
@@ -848,19 +853,26 @@ export class Runtime {
   }
 
   // ───────────────────────── file changes & artifacts ─────────────────────────
-  recordChange(task: Task | undefined, agentId: AgentId, nodeId: string | undefined, rel: string, before: Buffer | null, after: Buffer | null) {
+  /**
+   * Record one file change. `via: 'command'` marks a run_command side effect (R7). An oversize change passes
+   * `op`: its content was not kept, so a null before / after there does not mean the file was absent.
+   */
+  recordChange(task: Task | undefined, agentId: AgentId, nodeId: string | undefined, rel: string, before: Buffer | null, after: Buffer | null, meta: { via?: 'tool' | 'command'; command?: string; op?: FileChange['op']; oversize?: boolean } = {}) {
     const ch: FileChange = {
       id: uid('fc'), taskId: task?.id ?? '', path: rel,
-      op: before === null ? 'create' : after === null ? 'delete' : 'modify',
+      op: meta.op ?? (before === null ? 'create' : after === null ? 'delete' : 'modify'),
       beforeHash: before === null ? null : this.blobs.put(before),
       afterHash: after === null ? null : this.blobs.put(after),
-      agentId, nodeId, at: now(),
+      agentId, nodeId, at: now(), via: meta.via ?? 'tool',
     };
+    if (meta.command !== undefined) ch.command = meta.command.slice(0, 2000);
+    if (meta.oversize) ch.oversize = true;
+    if (looksBinary(before) || looksBinary(after)) ch.binary = true;
     if (task) {
       task.changes.push(ch);
       this.touch(task);
     }
-    this.audit.record(agentId, 'file_change', { path: rel, op: ch.op, beforeHash: ch.beforeHash, afterHash: ch.afterHash }, task?.id);
+    this.audit.record(agentId, 'file_change', { path: rel, op: ch.op, beforeHash: ch.beforeHash, afterHash: ch.afterHash, via: ch.via, ...(ch.command ? { command: truncate(ch.command, 300) } : {}), ...(ch.oversize ? { oversize: true } : {}) }, task?.id);
     this.emit({ type: 'fs_changed', paths: [rel] });
     void this.lsp.notifyFilesChanged([rel]).catch(() => {});
     return ch;
@@ -878,17 +890,102 @@ export class Runtime {
     const ch = t.changes.find((c) => c.id === changeId);
     if (!ch) throw new Error('改动记录不存在');
     if (ch.reverted) throw new Error('该改动已撤回');
-    const ws = this.requireWorkspace();
-    const cur = ws.readBuffer(ch.path);
-    const curHash = cur ? sha256(cur) : null;
-    if (!force && curHash !== ch.afterHash) throw new Error('文件在此改动之后又被修改，撤回可能覆盖新内容（可强制撤回）');
-    if (ch.beforeHash === null) ws.remove(ch.path);
-    else ws.write(ch.path, this.blobs.get(ch.beforeHash)!.toString('utf8'));
-    ch.reverted = true;
-    this.audit.record('emperor', 'revert_change', { path: ch.path, changeId }, taskId);
+    const ws = this.revertWorkspace(t);
+    if (!this.revertable(ch)) throw new Error(ch.oversize ? '该文件超过快照大小上限，改动前的内容没有保存，无法撤回' : '改动前的内容已丢失，无法撤回');
+    if (!force && this.diskHash(ws, ch.path) !== ch.afterHash) throw new Error('文件在此改动之后又被修改，撤回可能覆盖新内容（可强制撤回）');
+    this.undoChange(ws, ch);
+    this.audit.record('emperor', 'revert_change', { path: ch.path, changeId, via: ch.via ?? 'tool', force }, taskId);
     this.activity('human', `皇上撤回改动：${ch.path}`, { taskId });
     this.touch(t);
     this.emit({ type: 'fs_changed', paths: [ch.path] });
+    void this.lsp.notifyFilesChanged([ch.path]).catch(() => {});
+  }
+
+  /** E3: revert every unreverted change one node made, newest first (see revertChanges). */
+  revertNode(taskId: string, nodeId: string, o: { force?: boolean } = {}): RevertResult {
+    const t = this.getTask(taskId);
+    const n = t.nodes.find((x) => x.id === nodeId);
+    if (!n) throw new Error('节点不存在');
+    if (n.status === 'running') throw new Error(`「${n.label}」正在执行，不能撤回它的改动`);
+    return this.revertChanges(t, t.changes.filter((c) => c.nodeId === nodeId), { force: !!o.force, scope: 'node', nodeId, label: n.label });
+  }
+
+  /** E3: revert every unreverted change of the edict, newest first (see revertChanges). */
+  revertTask(taskId: string, o: { force?: boolean } = {}): RevertResult {
+    const t = this.getTask(taskId);
+    const busy = t.nodes.find((n) => n.status === 'running');
+    if (busy) throw new Error(`「${busy.label}」正在执行，请先叫停或等它结束再整旨撤回`);
+    return this.revertChanges(t, t.changes, { force: !!o.force, scope: 'task', label: t.title });
+  }
+
+  /**
+   * Revert `list` newest first through the single-change logic. All-or-nothing on conflicts: a dry run first
+   * replays the reverts against the disk state, and when any file no longer matches what the agent (or its
+   * command) left there, nothing is touched and the conflicting files come back. `force` overwrites them.
+   * Oversize changes (no stored content) are skipped and reported.
+   */
+  private revertChanges(t: Task, list: FileChange[], o: { force: boolean; scope: 'node' | 'task'; nodeId?: string; label: string }): RevertResult {
+    const ws = this.revertWorkspace(t);
+    const todo = list.filter((c) => !c.reverted).reverse(); // records are appended in order: reversed = newest first
+    const uniq = (a: string[]) => [...new Set(a)];
+    const virt = new Map<string, string | null>(); // path → content hash after the reverts planned so far
+    const cur = (p: string) => (virt.has(p) ? virt.get(p)! : this.diskHash(ws, p));
+    const plan: FileChange[] = [];
+    const conflicts: string[] = [];
+    const skipped: string[] = [];
+    for (const ch of todo) {
+      if (!this.revertable(ch)) {
+        skipped.push(ch.path);
+        continue;
+      }
+      if (!o.force && cur(ch.path) !== ch.afterHash) {
+        conflicts.push(ch.path);
+        continue;
+      }
+      virt.set(ch.path, ch.beforeHash);
+      plan.push(ch);
+    }
+    const res: RevertResult = { reverted: [], conflicts: uniq(conflicts), skipped: uniq(skipped) };
+    if (!conflicts.length) {
+      for (const ch of plan) {
+        this.undoChange(ws, ch);
+        this.audit.record('emperor', 'revert_change', { path: ch.path, changeId: ch.id, via: ch.via ?? 'tool', scope: o.scope, force: o.force }, t.id);
+      }
+      res.reverted = uniq(plan.map((c) => c.path));
+    }
+    this.audit.record('emperor', o.scope === 'node' ? 'revert_node' : 'revert_task', { nodeId: o.nodeId ?? null, changes: plan.length, reverted: res.reverted, conflicts: res.conflicts, skipped: res.skipped, force: o.force }, t.id);
+    const what = o.scope === 'node' ? `「${o.label}」的改动` : '本旨意的全部改动';
+    if (res.conflicts.length) this.activity('human', `撤回${what}未执行：${res.conflicts.join('、')} 在之后又被修改（可强制撤回）`, { taskId: t.id, nodeId: o.nodeId });
+    else if (res.reverted.length) this.activity('human', `皇上撤回${what}：${res.reverted.length} 个文件${res.skipped.length ? `；${res.skipped.length} 个大文件无法撤回` : ''}`, { taskId: t.id, nodeId: o.nodeId });
+    if (res.reverted.length) {
+      this.touch(t);
+      this.emit({ type: 'fs_changed', paths: res.reverted });
+      void this.lsp.notifyFilesChanged(res.reverted).catch(() => {});
+    }
+    return res;
+  }
+
+  /** The workspace a revert writes to: the edict's own, which must be the open one. */
+  private revertWorkspace(t: Task): Workspace {
+    const ws = this.requireWorkspace();
+    if (t.workspace && path.resolve(t.workspace) !== ws.root) throw new Error(`本旨意的工作区（${t.workspace}）未打开，无法撤回改动`);
+    return ws;
+  }
+
+  private revertable(ch: FileChange): boolean {
+    return !ch.oversize && (ch.beforeHash === null || this.blobs.has(ch.beforeHash));
+  }
+
+  private diskHash(ws: Workspace, rel: string): string | null {
+    const b = ws.readBuffer(rel);
+    return b ? sha256(b) : null;
+  }
+
+  /** Put back the content from before `ch` (binary-safe) and mark it reverted. */
+  private undoChange(ws: Workspace, ch: FileChange) {
+    if (ch.beforeHash === null) ws.remove(ch.path);
+    else ws.write(ch.path, this.blobs.get(ch.beforeHash)!);
+    ch.reverted = true;
   }
 
   requireWorkspace(): Workspace {
@@ -913,8 +1010,10 @@ export class Runtime {
       for (const c of task.changes) if (!c.reverted) seen.set(c.path, c);
       const arts = [];
       for (const [p, c] of seen) {
-        const buf = this.workspace.readBuffer(p);
-        if (buf) arts.push({ path: p, sha256: sha256(buf), bytes: buf.length, agentId: c.agentId, nodeId: c.nodeId, at: now() });
+        // oversize files (command side effects past the snapshot cap) are hashed in chunks, not loaded whole
+        const buf = c.oversize ? null : this.workspace.readBuffer(p);
+        const d = c.oversize ? fileDigest(this.workspace, p) : buf && { sha256: sha256(buf), bytes: buf.length };
+        if (d) arts.push({ path: p, ...d, agentId: c.agentId, nodeId: c.nodeId, at: now() });
       }
       task.result = { summary: task.result?.summary ?? '', artifacts: arts };
     }
@@ -1183,6 +1282,25 @@ export class Runtime {
     this.store.close();
   }
 }
+
+function fileDigest(ws: Workspace, rel: string): { sha256: string; bytes: number } | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(ws.resolve(rel), 'r');
+    const h = createHash('sha256');
+    const chunk = Buffer.alloc(1 << 20);
+    let bytes = 0;
+    for (let n; (n = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0; bytes += n) h.update(chunk.subarray(0, n));
+    return { sha256: h.digest('hex'), bytes };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/** NUL bytes near the start: treat as binary (no text diff). */
+export const looksBinary = (b: Buffer | null | undefined): boolean => !!b && b.subarray(0, 8000).includes(0);
 
 export function buildMemorial(task: Task): Memorial {
   const nodes = task.nodes;

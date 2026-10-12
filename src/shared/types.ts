@@ -185,6 +185,23 @@ export interface FileChange {
   nodeId?: string;
   at: number;
   reverted?: boolean;
+  /** how the file changed: a file tool (also every record without this field) or a side effect of run_command */
+  via?: 'tool' | 'command';
+  /** the run_command text, when via === 'command' */
+  command?: string;
+  /** over the snapshot size cap: listed without content (hashes null), no diff, cannot be reverted */
+  oversize?: boolean;
+  /** before or after content looks binary (NUL bytes): show sizes, not a text diff */
+  binary?: boolean;
+}
+
+/** Result of reverting a node's or an edict's changes (E3). Paths are workspace-relative. */
+export interface RevertResult {
+  reverted: string[];
+  /** files changed on disk after the agent wrote them: nothing was reverted (unless forced) */
+  conflicts: string[];
+  /** changes that cannot be reverted (content over the size cap was never stored) */
+  skipped: string[];
 }
 
 export interface Annotation {
@@ -579,6 +596,8 @@ export interface Settings {
   askTimeoutMin: number;
   /** 典章: the emperor's standing rules, preferences and lessons, injected into prompts by keyword */
   canon: CanonEntry[];
+  /** record files changed by run_command (shadow git snapshots before / after each command) */
+  commandSnapshots: boolean;
 }
 
 export type CanonKind = 'forbid' | 'rule' | 'preference' | 'lesson';
