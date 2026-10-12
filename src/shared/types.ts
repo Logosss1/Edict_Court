@@ -562,8 +562,12 @@ export interface McpServerEntry {
   cwd?: string;
   url?: string;
   headers?: Record<string, string>;
+  /** Remote servers only. Omitted = OAuth on demand when the server answers 401 (unless a static Authorization header is set). */
+  auth?: McpAuthConfig;
   disabled?: boolean;
 }
+/** `clientSecret` is moved to the SecretStore on save (`${secret:<server>/auth/clientSecret}`). */
+export type McpAuthConfig = { type: 'oauth'; clientId?: string; clientSecret?: string; scopes?: string[] } | { type: 'none' };
 export interface McpConfig { mcpServers: Record<string, McpServerEntry> }
 
 export type McpRisk = 'read' | 'write' | 'high';
@@ -581,12 +585,28 @@ export interface McpToolInfo {
   policy: McpToolPolicy;
 }
 
+/** OAuth login state of a remote server (never carries token values). */
+export interface McpAuthState {
+  type: 'oauth';
+  loggedIn: boolean; // tokens stored for this server URL
+  loggingIn?: boolean; // browser login in progress
+  expiresAt?: number; // access-token expiry (ms epoch), when the server said
+  scopes?: string[];
+  issuer?: string;
+  dynamicClient?: boolean; // client registered via RFC 7591
+}
+
+export interface McpResourceInfo { uri: string; name: string; title?: string; description?: string; mimeType?: string; size?: number }
+export interface McpResourceTemplateInfo { uriTemplate: string; name: string; title?: string; description?: string; mimeType?: string }
+export interface McpPromptArgument { name: string; title?: string; description?: string; required?: boolean }
+export interface McpPromptInfo { name: string; title?: string; description?: string; arguments: McpPromptArgument[] }
+
 export interface McpServerState {
   name: string;
   transport: 'stdio' | 'http' | 'sse';
   target: string; // command line or URL (secrets already masked)
-  status: 'disabled' | 'untrusted' | 'stopped' | 'starting' | 'ok' | 'error';
-  error?: string;
+  status: 'disabled' | 'untrusted' | 'stopped' | 'starting' | 'ok' | 'error' | 'needs_auth';
+  error?: string; // for needs_auth: a hint to log in
   serverInfo?: { name: string; version?: string };
   protocolVersion?: string;
   instructions?: string;
@@ -594,4 +614,18 @@ export interface McpServerState {
   policy: McpServerPolicy;
   logs: { at: number; level: 'info' | 'error' | 'stderr'; text: string }[];
   startedAt?: number;
+  auth?: McpAuthState;
+  capabilities?: { tools: boolean; resources: boolean; prompts: boolean };
+  resources?: McpResourceInfo[]; // first 200; see resourceCount
+  resourceCount?: number;
+  resourceTemplates?: McpResourceTemplateInfo[];
+  prompts?: McpPromptInfo[];
 }
+
+export interface McpResourceListItem extends McpResourceInfo { server: string }
+export interface McpResourceTemplateListItem extends McpResourceTemplateInfo { server: string }
+export interface McpPromptListItem extends McpPromptInfo { server: string }
+/** `blob` = BlobStore hash (binary contents, or the full text when `truncated`). */
+export interface McpResourceContent { uri: string; mimeType?: string; text?: string; blob?: string; bytes?: number; truncated?: boolean }
+export interface McpReadResult { server: string; uri: string; contents: McpResourceContent[]; text: string }
+export interface McpPromptResult { server: string; name: string; description?: string; messages: { role: 'user' | 'assistant'; text: string }[]; text: string }
