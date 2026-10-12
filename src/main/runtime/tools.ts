@@ -9,6 +9,7 @@ import { sha256, truncate } from './util';
 import { PathBoundaryError, type Workspace } from '../services/workspace';
 import { OVERSIZE, type ShadowChange } from '../services/shadowSnapshot';
 import { isAllowedPreviewUrl, previewUrlFor } from '../services/preview';
+import { PREVIEW_LIMITS, parsePreviewPlan, storePreviewShots } from '../services/previewActions';
 import { executeMcpResourceTool, isMcpResourceTool } from '../mcp/resourceTools';
 import { skillRole } from '../../shared/skills';
 import { LSP_TOOL_SPEC, describeLspCall, runLspTool } from '../lsp/tool';
@@ -21,6 +22,32 @@ export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outlin
 
 const S = (props: Record<string, unknown>, required: string[]) => ({ type: 'object', properties: props, required, additionalProperties: false });
 
+/** One preview_page step: exactly one action field per step (parsePreviewActions enforces it). */
+const PREVIEW_STEP_SCHEMA = {
+  type: 'object',
+  description: '每步只写一个动作，如 {"click":"#start"}',
+  properties: {
+    click: { type: 'string', description: 'CSS 选择器：点击' },
+    fill: { type: 'string', description: 'CSS 选择器：向输入框填入 value（触发 input/change）' },
+    select: { type: 'string', description: '<select> 的 CSS 选择器：按 value（选项值或文字）选择' },
+    value: { type: 'string' },
+    check: { type: 'string', description: '复选框/单选框的 CSS 选择器' },
+    checked: { type: 'boolean', description: 'check 的目标状态，默认 true' },
+    press: { type: 'string', description: 'Enter / Tab / Escape / Space / Backspace / ArrowDown 等或单个字符，可加 Shift+ 前缀' },
+    selector: { type: 'string', description: 'press 的目标元素（默认当前焦点）；assertText 的查找范围' },
+    wait: { type: 'integer', description: `等待毫秒，最多 ${PREVIEW_LIMITS.waitMs}` },
+    waitFor: { type: 'string', description: 'CSS 选择器：等它出现且可见' },
+    timeoutMs: { type: 'integer', description: `找元素/断言最多等多久，默认 ${PREVIEW_LIMITS.autoWaitMs}（waitFor 默认 ${PREVIEW_LIMITS.waitForMs}），最多 ${PREVIEW_LIMITS.timeoutMs}` },
+    scroll: { type: 'string', description: 'CSS 选择器（滚到该元素）、纵坐标数字，或 top / bottom' },
+    screenshot: { type: 'boolean', description: '单独一步 = 此刻截图；附在其它动作上 = 该步后截图' },
+    assertText: { type: 'string', description: '断言页面（或 selector 内）包含该文本，否则该步失败' },
+    assertVisible: { type: 'string', description: 'CSS 选择器：断言元素存在且可见' },
+    optional: { type: 'boolean', description: '该步失败时继续执行后续步骤' },
+  },
+  additionalProperties: false,
+};
+const VIEWPORT_SCHEMA = { type: 'object', properties: { width: { type: 'integer' }, height: { type: 'integer' } }, required: ['width', 'height'], additionalProperties: false };
+
 export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   list_dir: { name: 'list_dir', description: '列出工作区内某目录的文件与子目录', parameters: S({ path: { type: 'string', description: '相对工作区的目录，默认 .' } }, []) },
   read_file: { name: 'read_file', description: '读取文件内容（带行号）。大文件请指定行范围。', parameters: S({ path: { type: 'string' }, start_line: { type: 'integer' }, end_line: { type: 'integer' } }, ['path']) },
@@ -31,7 +58,20 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   delete_file: { name: 'delete_file', description: '删除文件（高风险，需要皇上确认）', parameters: S({ path: { type: 'string' } }, ['path']) },
   run_command: { name: 'run_command', description: '在工作区根目录执行 shell 命令（运行测试、构建、检查）。高风险命令需确认。', parameters: S({ command: { type: 'string' }, timeout_sec: { type: 'integer' } }, ['command']) },
   load_skill: { name: 'load_skill', description: '加载一项技能（Skill）的完整说明', parameters: S({ name: { type: 'string' } }, ['name']) },
-  preview_page: { name: 'preview_page', description: '在内置无头浏览器中打开工作区内的 HTML 页面（或本机 localhost 开发服务器）并截图，返回标题、可见文本、控制台错误与加载失败的资源。用于验证网页产物能否正常运行。', parameters: S({ path: { type: 'string', description: '工作区内的 HTML 相对路径，如 index.html' }, url: { type: 'string', description: '或本机开发服务器地址，如 http://localhost:5173/' }, wait_ms: { type: 'integer', description: '加载后额外等待毫秒数（动画/异步渲染），默认 800，最大 10000' }, width: { type: 'integer', description: '视口宽度，默认 1280' }, height: { type: 'integer', description: '视口高度，默认 800' } }, []) },
+  preview_page: {
+    name: 'preview_page',
+    description: '在内置无头浏览器中打开工作区内的 HTML 页面（或本机 localhost 开发服务器）并截图，返回标题、可见文本、控制台错误与加载失败的资源。可用 actions 按顺序点击、填写、按键、选择、断言，真正操作一遍页面（遇到失败的步骤即停，结果逐步列出）；viewports 可在操作后再截手机等尺寸检查响应式布局。用于验证网页产物能否正常运行。',
+    parameters: S({
+      path: { type: 'string', description: '工作区内的 HTML 相对路径，如 index.html' },
+      url: { type: 'string', description: '或本机开发服务器地址，如 http://localhost:5173/' },
+      wait_ms: { type: 'integer', description: '加载后额外等待毫秒数（动画/异步渲染），默认 800，最大 10000' },
+      width: { type: 'integer', description: '视口宽度，默认 1280' },
+      height: { type: 'integer', description: '视口高度，默认 800' },
+      actions: { type: 'array', maxItems: PREVIEW_LIMITS.steps, description: `交互步骤，按顺序执行（最多 ${PREVIEW_LIMITS.steps} 步、共 ${PREVIEW_LIMITS.totalMs / 1000} 秒）。例：[{"fill":"#name","value":"张三"},{"click":"button[type=submit]"},{"assertText":"提交成功"}]`, items: PREVIEW_STEP_SCHEMA },
+      viewport: { ...VIEWPORT_SCHEMA, description: '主视口尺寸（等同 width/height）' },
+      viewports: { type: 'array', maxItems: PREVIEW_LIMITS.viewports, description: '操作完成后再按这些尺寸各截一张图并检查横向溢出，如 [{"width":375,"height":812}]', items: VIEWPORT_SCHEMA },
+    }, []),
+  },
   lsp: LSP_TOOL_SPEC,
   ask_emperor: ASK_EMPEROR_SPEC,
   view_changes: { name: 'view_changes', description: '查看本旨意迄今所有文件改动（统一 diff 摘要，系统记录，非 Agent 自述）', parameters: S({ path: { type: 'string', description: '可选：只看某文件' } }, []) },
@@ -424,8 +464,12 @@ export const describeToolCall = (name: string, args: Record<string, unknown>): s
       return `加载技能 ${String(args.name ?? '')}`;
     case 'view_changes':
       return `查看改动${p ? ' ' + p : ''}`;
-    case 'preview_page':
-      return `预览 ${p || String(args.url ?? '')}`;
+    case 'preview_page': {
+      const n = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+      const steps = n(args.actions);
+      const vps = n(args.viewports);
+      return `预览 ${p || String(args.url ?? '') || 'index.html'}${steps ? ` · 交互 ${steps} 步` : ''}${vps ? ` · 另截 ${vps} 种尺寸` : ''}`;
+    }
     case 'ask_emperor':
       return `请旨：${String(args.question ?? '').slice(0, 80)}`;
     case 'mcp_list_resources':
@@ -441,6 +485,8 @@ export const describeToolCall = (name: string, args: Record<string, unknown>): s
 async function previewPage(ctx: ToolContext, args: Record<string, unknown>): Promise<{ ok: boolean; output: string }> {
   const { rt, task, agentId } = ctx;
   if (!rt.opts.previewPage) return { ok: false, output: '预览不可用：内置浏览器仅在桌面应用中提供（当前为无界面运行环境）。请改用 run_command 做静态检查。' };
+  const plan = parsePreviewPlan(args);
+  if (!plan.ok) return { ok: false, output: `preview_page 参数有误：${plan.error}` };
   let url = typeof args.url === 'string' ? args.url.trim() : '';
   if (!url) {
     const p = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : 'index.html';
@@ -455,28 +501,40 @@ async function previewPage(ctx: ToolContext, args: Record<string, unknown>): Pro
   }
   if (!isAllowedPreviewUrl(url)) return { ok: false, output: `只允许预览工作区文件或本机 localhost 开发服务器：${url}` };
   const waitMs = Math.min(10000, Math.max(0, Number(args.wait_ms) || 800));
-  const width = Math.min(2560, Math.max(320, Number(args.width) || 1280));
-  const height = Math.min(1600, Math.max(320, Number(args.height) || 800));
-  const r = await rt.opts.previewPage(url, { waitMs, width, height });
-  const shot = r.png && r.png.length ? rt.blobs.put(r.png) : undefined;
-  const res: PreviewResult = { ...r, screenshot: shot };
-  delete (res as { png?: Buffer }).png;
+  const width = plan.viewport?.width ?? Math.min(2560, Math.max(320, Number(args.width) || 1280));
+  const height = plan.viewport?.height ?? Math.min(1600, Math.max(320, Number(args.height) || 800));
+  const r = await rt.opts.previewPage(url, { waitMs, width, height, ...(plan.actions.length ? { actions: plan.actions } : {}), ...(plan.viewports.length ? { viewports: plan.viewports } : {}) });
+  const res: PreviewResult = storePreviewShots(r, (png) => rt.blobs.put(png));
+  const shot = res.screenshot;
+  const steps = res.steps ?? [];
+  const stepPassed = steps.filter((s) => s.ok).length;
+  const stepsOk = steps.every((s) => s.ok || (s.optional && !s.skipped));
+  const firstBad = stepsOk ? undefined : steps.find((s) => !s.ok && !s.skipped && !s.optional) ?? steps.find((s) => !s.ok && !s.skipped);
   const errors = r.console.filter((c) => c.level === 'error');
   const warns = r.console.filter((c) => c.level === 'warning' || c.level === 'warn');
-  rt.audit.record(agentId, 'preview_page', { url, ok: r.ok, errors: errors.length, failed: r.failed.length, blocked: r.blocked.length, screenshot: shot ?? null }, task?.id);
-  rt.activity('preview', `${r.ok && !errors.length ? '✅' : '⚠'} 预览 ${url.replace('preview://ws/', '')} · ${r.title || '（无标题）'} · 错误 ${errors.length}`, { taskId: task?.id, agentId, nodeId: ctx.node?.id, data: res as unknown as Record<string, unknown> });
+  const at = (c: { step?: number }) => (c.step ? `（第 ${c.step} 步期间）` : '');
+  const pass = r.ok && !errors.length && stepsOk;
+  rt.audit.record(agentId, 'preview_page', { url, ok: r.ok, errors: errors.length, failed: r.failed.length, blocked: r.blocked.length, screenshot: shot ?? null, ...(steps.length ? { steps: steps.length, stepsPassed: stepPassed, stepsFailed: steps.length - stepPassed } : {}), ...(res.viewports?.length ? { viewports: res.viewports.map((v) => `${v.width}x${v.height}`) } : {}) }, task?.id);
+  rt.activity('preview', `${pass ? '✅' : '⚠'} 预览 ${url.replace('preview://ws/', '')} · ${r.title || '（无标题）'} · 错误 ${errors.length}${steps.length ? ` · 交互 ${stepPassed}/${steps.length} 步通过` : ''}${res.viewports?.length ? ` · 另截 ${res.viewports.length} 种尺寸` : ''}`, { taskId: task?.id, agentId, nodeId: ctx.node?.id, data: res as unknown as Record<string, unknown> });
+  const mark = (s: (typeof steps)[number]) => (s.ok ? '✓' : s.skipped ? '·' : s.optional ? '⚠' : '✗');
   const lines = [
     `URL: ${url}`,
     `加载：${r.ok ? '成功' : '失败'}（${r.loadMs}ms，视口 ${width}×${height}）`,
     `标题：${r.title || '（无）'}`,
-    `控制台错误 ${errors.length} 条${errors.length ? '：\n' + errors.slice(0, 20).map((c) => `  - ${c.message}${c.source ? ` (${c.source.replace('preview://ws/', '')}:${c.line ?? ''})` : ''}`).join('\n') : ''}`,
-    warns.length ? `控制台警告 ${warns.length} 条：\n${warns.slice(0, 8).map((c) => `  - ${c.message}`).join('\n')}` : '',
+    steps.length
+      ? `交互检查：${stepsOk ? '通过' : '未通过'}（${stepPassed}/${steps.length} 步成功${firstBad ? `；第 ${firstBad.index} 步「${firstBad.action}」失败` : ''}${steps.some((s) => s.skipped) ? (firstBad ? '，后续步骤未执行' : '，步骤未执行') : ''}）\n${steps.map((s) => `  ${mark(s)} ${s.index}. ${s.action}${s.optional ? '（可选）' : ''} — ${truncate(s.note, 300)}${s.screenshot ? ' [截图]' : ''}`).join('\n')}`
+      : '',
+    `控制台错误 ${errors.length} 条${errors.length ? '：\n' + errors.slice(0, 20).map((c) => `  - ${c.message}${c.source ? ` (${c.source.replace('preview://ws/', '')}:${c.line ?? ''})` : ''}${at(c)}`).join('\n') : ''}`,
+    warns.length ? `控制台警告 ${warns.length} 条：\n${warns.slice(0, 8).map((c) => `  - ${c.message}${at(c)}`).join('\n')}` : '',
     r.failed.length ? `加载失败的资源：\n${r.failed.slice(0, 20).map((f) => `  - ${f}`).join('\n')}` : '',
     r.blocked.length ? `已拦截的外部网络请求（预览默认仅允许本地资源；如需 CDN 请改用本地文件，或由皇上在预览中允许外部网络）：\n${r.blocked.slice(0, 12).map((f) => `  - ${f}`).join('\n')}` : '',
-    `可见文本（节选）：\n${truncate(r.text, 3000)}`,
+    res.viewports?.length
+      ? `其它尺寸：\n${res.viewports.map((v) => `  - ${v.width}×${v.height}：${v.screenshot ? '已截图' : v.note ?? '未截图'}${v.overflowX ? `；⚠ 出现横向滚动（内容宽 ${v.contentWidth}px，超出视口）` : v.overflowX === false ? '；无横向溢出' : ''}`).join('\n')}`
+      : '',
+    `可见文本（${steps.length ? '操作后，' : ''}节选）：\n${truncate(r.text, 3000)}`,
     shot ? '已截图（皇上可在活动流中查看）。' : '',
   ].filter(Boolean);
-  return { ok: r.ok && errors.length === 0, output: lines.join('\n') };
+  return { ok: pass, output: lines.join('\n') };
 }
 
 /** MCP tool call, gated by the per-tool policy (read / write / high) and the global permission mode. */

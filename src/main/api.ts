@@ -3,6 +3,7 @@ import { dialog, shell, type BrowserWindow } from 'electron';
 import type { AgentId, Plan, ProviderConfig, Settings, Tier, ModelRef } from '../shared/types';
 import type { Runtime } from './runtime/runtime';
 import { previewUrlFor, isAllowedPreviewUrl } from './services/preview';
+import { parsePreviewPlan, storePreviewShots } from './services/previewActions';
 import { submit, decideGate, retryNode, retryNodeWithModel, revertNodeAndRedo, unblock, type SubmitInput } from './runtime/orchestrator';
 import { createDebate, runDebate, interject, pauseDebate, concludeDebate } from './runtime/debate';
 import { readSkill, saveSkill, addRemoteSkill, removeSkill, refreshNews, setSkillEnabled, duplicateSkill, importSkillFolder, equipSkill, setSkillDuty, restoreBuiltinSkill, checkSkillUpdate, updateRemoteSkill } from './runtime/extras';
@@ -300,11 +301,13 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
       rt.audit.record('emperor', 'preview_open_external', { path: p });
       return shell.openPath(abs);
     },
-    previewCapture: async (url: string, width?: number, height?: number) => {
+    /** opts: the same `actions` / `viewports` as the agent tool preview_page (steps run in the same hidden browser). */
+    previewCapture: async (url: string, width?: number, height?: number, opts?: { actions?: unknown; viewports?: unknown }) => {
       if (!isAllowedPreviewUrl(url) || !rt.opts.previewPage) throw new Error('无法预览该地址');
-      const r = await rt.opts.previewPage(url, { waitMs: 600, width: width ?? 1280, height: height ?? 800 });
-      const hash = r.png ? rt.blobs.put(r.png) : undefined;
-      return { ...r, png: undefined, screenshot: hash };
+      const plan = parsePreviewPlan({ actions: opts?.actions, viewports: opts?.viewports });
+      if (!plan.ok) throw new Error(plan.error);
+      const r = await rt.opts.previewPage(url, { waitMs: 600, width: width ?? 1280, height: height ?? 800, ...(plan.actions.length ? { actions: plan.actions } : {}), ...(plan.viewports.length ? { viewports: plan.viewports } : {}) });
+      return storePreviewShots(r, (png) => rt.blobs.put(png));
     },
     blobImage: (hash: string) => {
       if (!/^[a-f0-9]{64}$/.test(hash)) return null;

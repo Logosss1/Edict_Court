@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type {
   Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
-  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo, RevertResult,
+  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo, RevertResult,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENTS, AGENT_MAP, STATE_LABEL, agentName, TERMINAL } from '../../shared/court';
@@ -19,6 +19,7 @@ import { DETECT_CANDIDATES, LEVEL_RANK, STYLE_LABEL, clampLevel, effectiveConfig
 import { classifyLlmError } from '../llm/types';
 import { Workspace } from '../services/workspace';
 import { ShadowSnapshots } from '../services/shadowSnapshot';
+import type { PreviewHostResult, PreviewRenderOptions } from '../services/previewActions';
 import { McpManager } from '../mcp/manager';
 import { LspManager, loadLspConfig, saveLspConfig, type LspConfig } from '../lsp/manager';
 import { DesignStore } from './designs';
@@ -42,7 +43,7 @@ export interface RuntimeOptions {
   resourcesDir: string; // for builtin skills
   notify?: (title: string, body: string) => void;
   /** Render a page in a hidden sandboxed browser (desktop only; undefined in node tests). */
-  previewPage?: (url: string, o: { waitMs: number; width: number; height: number }) => Promise<Omit<PreviewResult, 'screenshot'> & { png?: Buffer }>;
+  previewPage?: (url: string, o: PreviewRenderOptions) => Promise<PreviewHostResult>;
   /** Open an https (or loopback http) URL in the system browser — MCP OAuth login (desktop: shell.openExternal). */
   openExternal?: (url: string) => void | Promise<void>;
 }

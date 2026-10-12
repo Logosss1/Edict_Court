@@ -49,7 +49,7 @@ export interface AgentRunResult {
   model: ModelRef;
   runId: string;
   steps: number;
-  /** tool calls actually executed in this run, by tool name */
+  /** tool calls actually executed in this run, by tool name; `<name>:failed` counts the calls that returned ok: false */
   toolCounts: Record<string, number>;
 }
 
@@ -369,6 +369,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
         batch.forEach((call, i) => {
           const res = results[i];
           toolCounts[call.name] = (toolCounts[call.name] ?? 0) + 1;
+          if (!res.ok) toolCounts[`${call.name}:failed`] = (toolCounts[`${call.name}:failed`] ?? 0) + 1;
           rt.activity('tool_result', truncate(res.output, 5000), { taskId: task?.id, agentId, nodeId: node?.id, data: { ok: res.ok, name: call.name, callId: acts[i].id } });
           messages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: truncate(res.output, 12000) });
         });
