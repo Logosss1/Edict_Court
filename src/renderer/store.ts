@@ -34,7 +34,7 @@ export interface UIState {
   selectedTaskId: string | null;
   tabs: Tab[];
   activeTab: string | null;
-  sideView: 'explorer' | 'search' | 'git' | 'inbox' | 'court' | 'preview' | null;
+  sideView: 'explorer' | 'search' | 'git' | 'inbox' | 'preview' | null;
   settingsSection: SettingsSection;
   /** 旨意看板: board columns or a flat list */
   kanbanView: 'board' | 'list';

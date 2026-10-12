@@ -2,6 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { initStore } from './store';
 import './styles.css';
+import './v2.css';
 
 function applyTheme(pref: string | undefined) {
   const dark = pref === 'dark' || (pref !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
