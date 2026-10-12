@@ -16,7 +16,9 @@ export function takeReveal(path: string): Reveal | undefined {
 
 export function onReveal(fn: (path: string) => void) {
   listeners.add(fn);
-  return () => listeners.delete(fn);
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 // Problems (Monaco markers) aggregated for the problems panel
@@ -39,7 +41,9 @@ export function getProblems() {
 }
 export function onProblems(fn: () => void) {
   pListeners.add(fn);
-  return () => pListeners.delete(fn);
+  return () => {
+    pListeners.delete(fn);
+  };
 }
 
 // save hook registry (Cmd+S)

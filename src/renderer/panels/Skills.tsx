@@ -39,7 +39,7 @@ function parseBody(text: string) {
   return m ? m[1] : text;
 }
 
-function SkillsTab() {
+export function SkillsTab() {
   const skills = useStore((s) => s.skills);
   const [sel, setSel] = useState<string | null>(skills[0]?.name ?? null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -185,7 +185,7 @@ const EXAMPLES: Record<string, { label: string; entry: Record<string, unknown> }
   python: { label: 'Python 服务（stdio · uvx）', entry: { command: 'uvx', args: ['your-mcp-server'], env: { API_KEY: '在此粘贴，保存时自动移入钥匙串' } } },
 };
 
-function McpTab() {
+export function McpTab() {
   const servers = useStore((s) => s.mcp);
   const [text, setText] = useState('');
   const [path, setPath] = useState('');
@@ -340,7 +340,7 @@ function McpServerCard({ s }: { s: McpServerState }) {
 }
 
 // ───────────────────────── 官员视角 ─────────────────────────
-function AgentView() {
+export function AgentView() {
   const [agent, setAgent] = useState<AgentId>('bingbu');
   const [view, setView] = useState<{ system: string; mcpTools: string[] } | null>(null);
   const skills = useStore((s) => s.skills);

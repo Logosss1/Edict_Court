@@ -1,5 +1,5 @@
 // 模型配置 — providers (multi-protocol), routing, per-agent hot switch, runtime policy.
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 import { useStore, toast } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
@@ -17,14 +17,28 @@ const PROTOCOLS: { id: Protocol; label: string }[] = [
 ];
 
 export function Models() {
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h2><Icon name="cpu" size={18} /> 模型配置</h2>
+        <span className="muted small">兼容 OpenAI 协议 · Anthropic Messages · OpenAI Responses；base_url / API Key / 模型 id 均由你填写</span>
+      </div>
+      <ProvidersSection />
+      <Routing />
+      <AgentModels />
+      <Policy />
+    </div>
+  );
+}
+
+/** 模型服务: provider list + editor (settings center · 模型服务). */
+export function ProvidersSection() {
   const providers = useStore((s) => s.providers);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [sel, setSel] = useState<string | null>(providers[0]?.id ?? null);
   const [draft, setDraft] = useState<ProviderConfig | null>(null);
-  const [info, setInfo] = useState<{ dataDir: string; encrypted: boolean; permissionLabels: Record<string, string> } | null>(null);
   useEffect(() => {
     call<Preset[]>('presets').then(setPresets);
-    call('info').then(setInfo);
   }, []);
   useEffect(() => {
     const p = providers.find((x) => x.id === sel);
@@ -39,36 +53,27 @@ export function Models() {
   };
 
   return (
-    <div className="panel">
-      <div className="panel-head">
-        <h2><Icon name="cpu" size={18} /> 模型配置</h2>
-        <span className="muted small">兼容 OpenAI 协议 · Anthropic Messages · OpenAI Responses；base_url / API Key / 模型 id 均由你填写</span>
+    <div className="models-layout">
+      <div className="card provider-list">
+        <h3>模型服务</h3>
+        {providers.map((p) => (
+          <div key={p.id} className={`list-item ${sel === p.id ? 'on' : ''}`} onClick={() => setSel(p.id)}>
+            <b>{p.name}</b> {!p.enabled && <span className="chip chip-sm">停用</span>}
+            <div className="muted small">{PROTOCOLS.find((x) => x.id === p.protocol)?.label} · {p.models.length} 个模型 · {p.hasKey ? '🔑 已存 Key' : '无 Key'}</div>
+          </div>
+        ))}
+        <select className="input" value="" onChange={(e) => addFromPreset(e.target.value)} data-testid="add-provider">
+          <option value="">＋ 添加模型服务（选择预设）…</option>
+          {presets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {presets.length > 0 && draft && !draft.id && <p className="muted small">{presets.find((p) => p.id === draft.preset)?.hint}</p>}
       </div>
-      <div className="models-layout">
-        <div className="card provider-list">
-          <h3>模型服务</h3>
-          {providers.map((p) => (
-            <div key={p.id} className={`list-item ${sel === p.id ? 'on' : ''}`} onClick={() => setSel(p.id)}>
-              <b>{p.name}</b> {!p.enabled && <span className="chip chip-sm">停用</span>}
-              <div className="muted small">{PROTOCOLS.find((x) => x.id === p.protocol)?.label} · {p.models.length} 个模型 · {p.hasKey ? '🔑 已存 Key' : '无 Key'}</div>
-            </div>
-          ))}
-          <select className="input" value="" onChange={(e) => addFromPreset(e.target.value)} data-testid="add-provider">
-            <option value="">＋ 添加模型服务（选择预设）…</option>
-            {presets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-          {presets.length > 0 && draft && !draft.id && <p className="muted small">{presets.find((p) => p.id === draft.preset)?.hint}</p>}
-        </div>
-        {draft ? <ProviderEditor key={draft.id || 'new'} draft={draft} setDraft={setDraft} onSaved={(id) => setSel(id)} /> : <div className="card muted pad">选择或添加一个模型服务</div>}
-      </div>
-      <Routing />
-      <AgentModels />
-      <Policy info={info} />
+      {draft ? <ProviderEditor key={draft.id || 'new'} draft={draft} setDraft={setDraft as Dispatch<SetStateAction<ProviderConfig>>} onSaved={(id) => setSel(id)} /> : <div className="card muted pad">选择或添加一个模型服务</div>}
     </div>
   );
 }
 
-function ProviderEditor({ draft, setDraft, onSaved }: { draft: ProviderConfig; setDraft: (p: ProviderConfig) => void; onSaved: (id: string) => void }) {
+function ProviderEditor({ draft, setDraft, onSaved }: { draft: ProviderConfig; setDraft: Dispatch<SetStateAction<ProviderConfig>>; onSaved: (id: string) => void }) {
   const [key, setKey] = useState('');
   const [testModel, setTestModel] = useState(draft.models[0]?.id ?? '');
   const [testMsg, setTestMsg] = useState<string | null>(null);
@@ -366,7 +371,7 @@ function safeJson(t: string): Record<string, Record<string, unknown>> | null {
   }
 }
 
-function Routing() {
+export function Routing() {
   const s = useStore((st) => st.settings);
   const up = (routing: Settings['routing']) => call('updateSettings', { routing });
   return (
@@ -383,7 +388,7 @@ function Routing() {
   );
 }
 
-function AgentModels() {
+export function AgentModels() {
   const s = useStore((st) => st.settings);
   const short = useModelShort();
 
@@ -409,8 +414,12 @@ function AgentModels() {
   );
 }
 
-function Policy({ info }: { info: { dataDir: string; encrypted: boolean; permissionLabels: Record<string, string> } | null }) {
+export function Policy() {
   const s = useStore((st) => st.settings);
+  const [info, setInfo] = useState<{ dataDir: string; encrypted: boolean; permissionLabels: Record<string, string> } | null>(null);
+  useEffect(() => {
+    call('info').then(setInfo);
+  }, []);
   const up = (p: Partial<Settings>) => call('updateSettings', p);
   return (
     <section className="card">

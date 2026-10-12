@@ -17,6 +17,8 @@
     "e2e:features": "tsx e2e/features.ts"
   },
   "devDependencies": {
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
     "electron": "44.4.5",
     "esbuild": "0.27.7",
     "react": "19.2.6",
