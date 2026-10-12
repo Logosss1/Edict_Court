@@ -18,6 +18,7 @@ import { DETECT_CANDIDATES, LEVEL_RANK, STYLE_LABEL, clampLevel, effectiveConfig
 import { classifyLlmError } from '../llm/types';
 import { Workspace } from '../services/workspace';
 import { McpManager } from '../mcp/manager';
+import { LspManager, loadLspConfig, saveLspConfig, type LspConfig } from '../lsp/manager';
 import { DesignStore } from './designs';
 import type { FetchLike, ProviderRuntime } from '../llm/types';
 import { listRemoteModels, streamLlm } from '../llm/adapters';
@@ -101,6 +102,8 @@ export class Runtime {
   readonly blobs: BlobStore;
   /** edict.db (SQLite); 1.x state.json / settings.json are migrated on first open with a backup */
   readonly store: SqliteStore;
+  /** language servers found on this machine (auto-detected; missing ones show install hints) */
+  readonly lsp: LspManager;
   private listeners = new Set<(e: RuntimeEvent) => void>();
   private activityBuf = new Map<string, Activity[]>(); // taskId|'_global' → recent
   private activityLogs = new Map<string, JsonlLog<Activity>>();
@@ -168,6 +171,21 @@ export class Runtime {
       });
     }
     this.store.bind({ state: () => this.persistedState(), settings: () => ({ settings: this.settings, providers: this.providers }) });
+    let lspTimer: ReturnType<typeof setTimeout> | undefined;
+    this.lsp = new LspManager({
+      workspace: () => this.workspace,
+      config: loadLspConfig(path.join(opts.dataDir, 'lsp.json')),
+      clientVersion: opts.version,
+      onDiagnostics: (e) => this.emit({ type: 'lsp_diagnostics', path: e.path, server: e.server, diagnostics: e.diagnostics }),
+      onStatusChange: () => {
+        if (lspTimer) return;
+        lspTimer = setTimeout(() => {
+          lspTimer = undefined;
+          this.emit({ type: 'lsp_status' });
+        }, 300);
+        lspTimer.unref?.();
+      },
+    });
     const rep = this.store.openReport;
     if (rep?.imported) this.audit.record('system', 'storage_migrated', { from: rep.imported.from, counts: rep.imported.counts as unknown as Record<string, unknown>, backupDir: rep.backupDir ?? null });
     this.designs.load();
@@ -843,7 +861,15 @@ export class Runtime {
     }
     this.audit.record(agentId, 'file_change', { path: rel, op: ch.op, beforeHash: ch.beforeHash, afterHash: ch.afterHash }, task?.id);
     this.emit({ type: 'fs_changed', paths: [rel] });
+    void this.lsp.notifyFilesChanged([rel]).catch(() => {});
     return ch;
+  }
+
+  /** Change LSP settings and persist them (lsp.json). */
+  setLspConfig(patch: Partial<LspConfig>) {
+    this.lsp.setConfig(patch);
+    saveLspConfig(path.join(this.opts.dataDir, 'lsp.json'), this.lsp.config);
+    this.audit.record('emperor', 'lsp_config', { keys: Object.keys(patch) });
   }
 
   revertChange(taskId: string, changeId: string, force = false) {
@@ -1149,6 +1175,7 @@ export class Runtime {
 
   dispose() {
     this.mcp.dispose();
+    void this.lsp.dispose();
     if (this.healthTimer) clearInterval(this.healthTimer);
     for (const c of this.controllers.values()) c.abort();
     this.flushAll();
@@ -1167,12 +1194,15 @@ export function buildMemorial(task: Task): Memorial {
     { key: 'ministries', label: '六部执行', at: firstAt([...byKind('exec'), ...byKind('solo')]), items: [...byKind('exec'), ...byKind('solo')].map((n) => `${agentName(n.agentId)}「${n.label}」：${n.status}${n.output ? ' — ' + n.output.slice(0, 200) : ''}`) },
     { key: 'report', label: '回奏', at: task.updatedAt, items: [task.result?.summary || '（无回奏正文）'] },
   ];
+  // E8: skills the officials actually loaded (with the text hash, so the exact version is on record)
+  if (task.skillsUsed?.length) stages.splice(stages.length - 1, 0, { key: 'skills', label: '所用技能', at: task.skillsUsed[0].at, items: task.skillsUsed.map((u) => `${agentName(u.agentId)} 加载 ${u.name}（sha256:${u.sha256.slice(0, 12)}）`) });
   return {
     taskId: task.id, title: task.title, edict: task.edict, tier: task.tier, finalState: task.state, archivedAt: now(), stages,
     artifacts: task.result?.artifacts ?? [], usage: task.usage,
     models: [...new Set(nodes.map((n) => n.model).filter(Boolean) as string[])],
     runs: nodes.map((n) => ({ nodeId: n.id, label: n.label, runId: n.runId, model: n.model, exitStatus: n.exitStatus, startedAt: n.startedAt, endedAt: n.endedAt })),
     flow: task.flow,
+    skillsUsed: task.skillsUsed,
   };
 }
 

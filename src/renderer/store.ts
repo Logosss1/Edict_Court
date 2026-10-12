@@ -46,6 +46,7 @@ export interface UIState {
   ceremony: boolean;
   lastChat: { sessionId: string; reply: string } | null;
   fsVersion: number;
+  lspVersion?: number;
   changedPaths: string[];
   previewBlocked: { url: string; at: number } | null;
 }
@@ -199,6 +200,12 @@ export function applyEvent(e: RuntimeEvent) {
       break;
     case 'fs_changed':
       setUI((ui) => ({ fsVersion: ui.fsVersion + 1, changedPaths: e.paths }));
+      break;
+    case 'lsp_diagnostics':
+      void import('./workbench/editorBus').then((b) => b.applyLspDiagnostics(e.path, e.server, e.diagnostics));
+      break;
+    case 'lsp_status':
+      setUI((ui) => ({ lspVersion: (ui.lspVersion ?? 0) + 1 }));
       break;
     case 'toast':
       toast(e.message, e.level);

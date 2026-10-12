@@ -15,6 +15,7 @@ const RELEASE_CMD: [RegExp, string][] = [
   [/\bgit\s+push\b/, '推送到远程仓库'],
   [/\b(npm|pnpm|yarn|bun)\s+publish\b|\bcargo\s+publish\b|\btwine\s+upload\b|\bgem\s+push\b|\bpoetry\s+publish\b|\bswift\s+package-registry\s+publish\b/, '发布软件包'],
   [/\bgh\s+release\s+(create|upload|edit|delete)\b/, '发布 GitHub Release'],
+  [/\bgh\s+pr\s+(merge|create)\b/, '对外提交或合并 PR'],
   [/\bdocker\s+(push|buildx\s+build\b.*--push)/, '推送镜像'],
   [/\b(vercel|netlify\s+deploy|flyctl?\s+deploy|firebase\s+deploy|wrangler\s+(deploy|publish)|railway\s+up|heroku\s+(releases|container:release|deploy)|serverless\s+deploy|sls\s+deploy|eas\s+(submit|update)|fastlane|surge)\b/, '部署上线'],
   [/\bkubectl\s+(apply|rollout|set\s+image|delete)\b|\bhelm\s+(install|upgrade|uninstall)\b|\bterraform\s+(apply|destroy)\b|\bpulumi\s+(up|destroy)\b/, '变更线上基础设施'],

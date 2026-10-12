@@ -482,7 +482,7 @@ async function stepAssigned(rt: Runtime, t: Task): Promise<boolean> {
     if (node.status === 'failed' || node.status === 'cancelled') return false;
     if (node.status !== 'done') {
       await runNode(rt, t, node, async () => {
-        const r = await runAgent({ rt, agentId: 'shangshu', task: t, node, prompt: `【旨意】${t.title}\n${t.edict}\n\n【准奏方案】\n${JSON.stringify(plan, null, 1)}\n\n请为每个子任务写执行令，输出 JSON。`, maxTokens: 2500, temperature: 0.2, label: '尚书派发' });
+        const r = await runAgent({ rt, agentId: 'shangshu', task: t, node, prompt: `【旨意】${t.title}\n${t.edict}\n\n【准奏方案】\n${JSON.stringify(plan, null, 1)}\n\n请为每个子任务写执行令，输出 JSON。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2500, temperature: 0.2, label: '尚书派发' });
         const j = extractJson<{ orders?: { subtaskId: string; instruction: string }[]; note?: string }>(r.text);
         const orders = (j?.orders ?? []).filter((o) => plan.subtasks.some((s) => s.id === o.subtaskId));
         return JSON.stringify({ orders, note: j?.note ?? '' });
@@ -591,7 +591,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
     await runNode(rt, t, sNode, async () => {
       const concl = plan.subtasks.map((s) => `- ${s.id}（${AGENT_MAP[s.dept].name}）${s.title}：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1500)}`);
       const changes = summarizeChanges(t);
-      const r = await runAgent({ rt, agentId: 'shangshu', task: t, node: sNode, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【各部结构化结论】\n${concl.join('\n')}\n\n【系统核验的文件改动】\n${changes || '无'}\n\n请撰写回奏折（Markdown）。`, maxTokens: 2000, temperature: 0.3, label: sNode.label });
+      const r = await runAgent({ rt, agentId: 'shangshu', task: t, node: sNode, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【各部结构化结论】\n${concl.join('\n')}\n\n【系统核验的文件改动】\n${changes || '无'}\n\n请撰写回奏折（Markdown）。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2000, temperature: 0.3, label: sNode.label });
       t.result = { summary: r.text.trim(), artifacts: t.result?.artifacts ?? [] };
       return truncate(r.text.trim(), 4000);
     });
@@ -605,7 +605,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       let verdict: ReturnType<typeof parseVerdict> = null;
       await runNode(rt, t, node, async () => {
         const concl = plan.subtasks.map((s) => `- ${s.id} ${s.title}（验收：${s.acceptance}）：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1200)}`);
-        const tools = rt.workspace && t.workspace === rt.workspace.root ? (['view_changes', 'read_file', 'list_dir', 'search'] as const) : (['view_changes'] as const);
+        const tools = rt.workspace && t.workspace === rt.workspace.root ? (['view_changes', 'read_file', 'list_dir', 'search', 'load_skill'] as const) : (['view_changes', 'load_skill'] as const);
         const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
         verdict = parseVerdict(r.text);
         if (!verdict) {

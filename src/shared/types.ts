@@ -241,6 +241,7 @@ export interface Task {
   sessionId?: string; // solo conversation
   templateId?: string;
   allowRules?: AllowRule[]; // 「本旨意内不再询问」 rules granted on approvals
+  skillsUsed?: SkillUse[]; // load_skill calls during this edict
   execRound?: number; // 1 = first execution; >1 = rework rounds
   rework?: { round: number; targets: string[]; feedback: string; by: 'menxia' | 'emperor' };
 }
@@ -381,7 +382,7 @@ export interface Session {
 }
 
 export interface MemorialStage {
-  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'report';
+  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'skills' | 'report';
   label: string;
   at?: number;
   items: string[];
@@ -400,6 +401,7 @@ export interface Memorial {
   models: string[];
   runs: { nodeId: string; label: string; runId?: string; model?: string; exitStatus?: string; startedAt?: number; endedAt?: number }[];
   flow: FlowEntry[];
+  skillsUsed?: SkillUse[];
 }
 
 export interface NewsItem {
@@ -483,11 +485,31 @@ export type PermissionMode = 'readonly' | 'ask' | 'auto-edit' | 'auto';
 export interface SkillInfo {
   name: string;
   description: string;
+  /** extra skills the emperor equipped (like browser extensions); 'all' = every official */
   agents: AgentId[] | 'all';
+  /** officials that hold this as a fixed duty skill (职责技能) */
+  duty: AgentId[];
   path: string;
   source: 'builtin' | 'local' | 'remote';
   sourceUrl?: string;
   enabled: boolean;
+  title?: string; // short Chinese name
+  category?: string; // plan | review | investigate | qa | design | release | deploy | safety | everyday
+  icon?: string;
+  risk?: 'release' | 'deploy';
+  version?: number; // built-in pack version
+  /** sha256 of the skill body as loaded (which text an agent actually read) */
+  sha256: string;
+  /** remote skills: sha256 of the body when it was downloaded */
+  remoteSha256?: string;
+}
+
+/** A load_skill call recorded on the edict (shown in the memorial). */
+export interface SkillUse {
+  name: string;
+  agentId: AgentId;
+  sha256: string;
+  at: number;
 }
 
 export interface Template {
@@ -535,6 +557,10 @@ export interface Settings {
   nodeTimeoutMin: number;
   /** per workspace root: 「本工作区永久允许」 rules */
   workspacePerms: Record<string, WorkspacePerms>;
+  /** editors (Zed …) may connect over ACP through a local socket */
+  acpEnabled: boolean;
+  /** high-risk approvals from ACP edicts are answered in Edict only, never in the editor */
+  acpHighRiskInEdictOnly: boolean;
 }
 
 export interface Snapshot {
@@ -583,7 +609,23 @@ export type RuntimeEvent =
   | { type: 'menu'; command: string; arg?: unknown }
   | { type: 'preview_blocked'; url: string }
   | { type: 'mcp'; servers: McpServerState[] }
-  | { type: 'designs'; designs: DesignInfo[] };
+  | { type: 'designs'; designs: DesignInfo[] }
+  | { type: 'lsp_diagnostics'; path: string; server: string; diagnostics: LspDiagnostic[] }
+  | { type: 'lsp_status' };
+
+/** One diagnostic from a language server (1-based lines / columns, end exclusive). */
+export interface LspDiagnostic {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  severity: 'error' | 'warning' | 'info' | 'hint';
+  message: string;
+  source?: string;
+  code?: string;
+  unnecessary?: boolean;
+  deprecated?: boolean;
+}
 
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 });
 

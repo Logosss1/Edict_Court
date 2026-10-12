@@ -153,7 +153,7 @@ export class Workspace {
     return BINARY_EXT.has(path.extname(rel).toLowerCase());
   }
 
-  search(query: string, opts: { regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean; include?: string; maxResults?: number } = {}) {
+  search(query: string, opts: { regex?: boolean; caseSensitive?: boolean; wholeWord?: boolean; include?: string; maxResults?: number; skipSensitive?: boolean } = {}) {
     const max = opts.maxResults ?? 2000;
     let src = opts.regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (opts.wholeWord) src = `\\b${src}\\b`;
@@ -163,6 +163,7 @@ export class Workspace {
     for (const rel of this.walk()) {
       if (results.length >= max) break;
       if (this.isBinaryPath(rel)) continue;
+      if (opts.skipSensitive && this.isSensitive(rel)) continue;
       if (inc && !inc.test(rel)) continue;
       let text: string;
       try {

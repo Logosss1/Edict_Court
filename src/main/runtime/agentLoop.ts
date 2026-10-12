@@ -9,6 +9,7 @@ import { streamLlm } from '../llm/adapters';
 import { SOULS } from './souls';
 import { executeTool, describeToolCall, TOOL_SPECS, type ToolName } from './tools';
 import { mcpResourceToolSpecsFor } from '../mcp/resourceTools';
+import { skillRole } from '../../shared/skills';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { estimateTokens, sleep, truncate, uid, redactSecrets } from './util';
 
@@ -53,9 +54,14 @@ export interface AgentRunResult {
 }
 
 export function systemPromptFor(rt: Runtime, agentId: AgentId, role?: RoleRun): string {
-  const skills = rt.skills.filter((s) => s.enabled !== false && (s.agents === 'all' || s.agents.includes(agentId)));
-  const skillIdx = skills.length ? `\n\n可用技能（需要时用 load_skill 加载全文）：\n${skills.map((s) => `- ${s.name}：${s.description}`).join('\n')}` : '';
-  return (role ? role.prompt : SOULS[agentId]) + skillIdx;
+  const duty = rt.skills.filter((s) => skillRole(s, agentId) === 'duty');
+  const extra = rt.skills.filter((s) => skillRole(s, agentId) === 'extra');
+  const line = (s: (typeof duty)[number]) => `- ${s.name}${s.title ? `（${s.title}）` : ''}：${s.description}`;
+  const parts = [
+    duty.length ? `职责技能（你的本职，做相关工作时先用 load_skill 加载全文照做）：\n${duty.map(line).join('\n')}` : '',
+    extra.length ? `已配备的其他技能（需要时用 load_skill 加载全文）：\n${extra.map(line).join('\n')}` : '',
+  ].filter(Boolean);
+  return (role ? role.prompt : SOULS[agentId]) + (parts.length ? `\n\n${parts.join('\n\n')}` : '');
 }
 
 export const msgTokens = (ms: LlmMessage[]) => ms.reduce((n, m) => n + estimateTokens(m.content) + (m.toolCalls ? estimateTokens(JSON.stringify(m.toolCalls.map((t) => t.args))) : 0) + 4, 0);

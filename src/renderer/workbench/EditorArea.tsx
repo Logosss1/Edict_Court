@@ -3,7 +3,7 @@ import { useStore, setUI, closeTab, markDirty, onMenu, getState, toast, type Tab
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { loadMonaco, languageFor, monacoTheme } from '../common/loaders';
-import { takeReveal, onReveal, setProblems, registerSave, saveActiveEditor } from './editorBus';
+import { takeReveal, onReveal, setProblems, registerSave, saveActiveEditor, applyLspDiagnostics, paintLspMarkers, forgetLspDiagnostics } from './editorBus';
 import { PanelView } from '../panels/PanelView';
 import { askText } from '../common/Prompt';
 import { TaskDetail } from '../panels/TaskDetail';
@@ -89,6 +89,21 @@ function disposeModel(path: string) {
   if (e) {
     e.model.dispose();
     models.delete(path);
+    forgetLspDiagnostics(path);
+    void call('lspUnwatch', path).catch(() => {});
+  }
+}
+
+type LspWatch = { ok: true; result: { path: string; server: string; diagnostics: Parameters<typeof applyLspDiagnostics>[2] } } | { ok: false; reason: string; message: string };
+
+/** Ask the language server (if one is installed for this file type) to keep diagnostics flowing for an open file. */
+async function watchLsp(path: string) {
+  try {
+    if (!(await call<boolean>('lspHandles', path))) return;
+    const r = await call<LspWatch>('lspWatch', path);
+    if (r.ok) applyLspDiagnostics(path, r.result.server, r.result.diagnostics);
+  } catch {
+    /* language servers are optional */
   }
 }
 
@@ -148,6 +163,8 @@ function FileEditor({ tab }: { tab?: Tab }) {
         entry = { model, saved: model.getAlternativeVersionId(), disk: text };
         models.set(path, entry);
         model.onDidChangeContent(() => markDirty(`file:${path}`, model.getAlternativeVersionId() !== entry!.saved));
+        paintLspMarkers(path);
+        void watchLsp(path);
       }
       const ed = editor.current;
       if (!ed || cancelled) return;

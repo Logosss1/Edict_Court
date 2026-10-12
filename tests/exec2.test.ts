@@ -82,7 +82,7 @@ test('R9 / R8: read-only calls are batched; identical consecutive calls are coun
 });
 
 test('R5: release / deploy classification, rule prefixes by arity, compound commands', () => {
-  for (const c of ['git push origin main', 'npm publish', 'npm test && npm publish', 'vercel --prod', 'gh release create v1', 'kubectl apply -f x.yaml', 'docker push me/app']) {
+  for (const c of ['git push origin main', 'npm publish', 'npm test && npm publish', 'vercel --prod', 'gh release create v1', 'gh pr merge 12 --squash', 'kubectl apply -f x.yaml', 'docker push me/app']) {
     const k = classifyCommand(c);
     assert.ok(k.high && k.release, c);
   }
@@ -188,6 +188,12 @@ test('R3: editing or overwriting an existing file needs a fresh read in this run
   assert.match(r.output, /读取之后已被修改/);
   assert.equal((await executeTool(ctx, 'write_file', { path: 'new.txt', content: 'fresh' })).ok, true, 'new files need no read');
   assert.equal((await executeTool({ rt, agentId: 'bingbu' }, 'write_file', { path: 'a.txt', content: 'no guard without a run' })).ok, true);
+  // agents' search never reads key files (read_file would ask first)
+  fs.writeFileSync(path.join(ws, '.env'), 'API_TOKEN=findme\n');
+  fs.writeFileSync(path.join(ws, 'notes.md'), 'findme here\n');
+  const found = await executeTool(ctx, 'search', { query: 'findme' });
+  assert.match(found.output, /notes\.md/);
+  assert.doesNotMatch(found.output, /\.env/);
   rt.dispose();
   await mock.close();
 });

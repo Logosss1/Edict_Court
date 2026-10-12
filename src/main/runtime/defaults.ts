@@ -26,6 +26,8 @@ export function defaultSettings(): Settings {
     autoResumeSafe: true,
     nodeTimeoutMin: 30,
     workspacePerms: {},
+    acpEnabled: false,
+    acpHighRiskInEdictOnly: true,
   };
 }
 

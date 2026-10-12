@@ -9,11 +9,13 @@ import { sha256, truncate } from './util';
 import { PathBoundaryError } from '../services/workspace';
 import { isAllowedPreviewUrl, previewUrlFor } from '../services/preview';
 import { executeMcpResourceTool, isMcpResourceTool } from '../mcp/resourceTools';
+import { skillRole } from '../../shared/skills';
+import { LSP_TOOL_SPEC, describeLspCall, runLspTool } from '../lsp/tool';
 
-export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page';
+export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'lsp' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page';
 
-export const READ_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'load_skill'];
-export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page'];
+export const READ_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'load_skill'];
+export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page'];
 
 const S = (props: Record<string, unknown>, required: string[]) => ({ type: 'object', properties: props, required, additionalProperties: false });
 
@@ -28,11 +30,12 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   run_command: { name: 'run_command', description: '在工作区根目录执行 shell 命令（运行测试、构建、检查）。高风险命令需确认。', parameters: S({ command: { type: 'string' }, timeout_sec: { type: 'integer' } }, ['command']) },
   load_skill: { name: 'load_skill', description: '加载一项技能（Skill）的完整说明', parameters: S({ name: { type: 'string' } }, ['name']) },
   preview_page: { name: 'preview_page', description: '在内置无头浏览器中打开工作区内的 HTML 页面（或本机 localhost 开发服务器）并截图，返回标题、可见文本、控制台错误与加载失败的资源。用于验证网页产物能否正常运行。', parameters: S({ path: { type: 'string', description: '工作区内的 HTML 相对路径，如 index.html' }, url: { type: 'string', description: '或本机开发服务器地址，如 http://localhost:5173/' }, wait_ms: { type: 'integer', description: '加载后额外等待毫秒数（动画/异步渲染），默认 800，最大 10000' }, width: { type: 'integer', description: '视口宽度，默认 1280' }, height: { type: 'integer', description: '视口高度，默认 800' } }, []) },
+  lsp: LSP_TOOL_SPEC,
   view_changes: { name: 'view_changes', description: '查看本旨意迄今所有文件改动（统一 diff 摘要，系统记录，非 Agent 自述）', parameters: S({ path: { type: 'string', description: '可选：只看某文件' } }, []) },
 };
 
 const CLASS: Record<ToolName, ToolClass> = {
-  list_dir: 'read', read_file: 'read', search: 'read', outline: 'read', load_skill: 'meta', view_changes: 'meta',
+  list_dir: 'read', read_file: 'read', search: 'read', outline: 'read', lsp: 'read', load_skill: 'meta', view_changes: 'meta',
   write_file: 'write', edit_file: 'write', delete_file: 'write', run_command: 'command', preview_page: 'read',
 };
 
@@ -108,11 +111,19 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   const str = (k: string) => (typeof args[k] === 'string' ? (args[k] as string) : args[k] === undefined ? '' : String(args[k]));
 
   if (tool === 'load_skill') {
-    const sk = rt.skills.find((s) => s.name === str('name') && s.enabled !== false && (s.agents === 'all' || s.agents.includes(agentId)));
-    if (!sk) return { ok: false, output: `技能不存在：${str('name')}；可用：${rt.skills.map((s) => s.name).join(', ')}` };
+    const sk = rt.skills.find((s) => s.name === str('name') && skillRole(s, agentId));
+    if (!sk) return { ok: false, output: `技能不存在或未配备给你：${str('name')}；你可用的：${rt.skills.filter((s) => skillRole(s, agentId)).map((s) => s.name).join(', ') || '（无）'}` };
     try {
       const fs = await import('node:fs');
-      return { ok: true, output: truncate(fs.readFileSync(sk.path, 'utf8'), 12000) };
+      const text = fs.readFileSync(sk.path, 'utf8');
+      // E8: which skill text (by hash) each official actually loaded during this edict
+      if (task) {
+        const used = task.skillsUsed ?? [];
+        if (!used.some((u) => u.name === sk.name && u.agentId === agentId && u.sha256 === sk.sha256)) task.skillsUsed = [...used, { name: sk.name, agentId, sha256: sk.sha256, at: Date.now() }];
+        rt.touch(task);
+      }
+      rt.audit.record(agentId, 'skill_loaded', { name: sk.name, sha256: sk.sha256, role: skillRole(sk, agentId) }, task?.id);
+      return { ok: true, output: truncate(text, 12000) };
     } catch (e) {
       return { ok: false, output: String(e) };
     }
@@ -163,7 +174,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   } catch (e) {
     return { ok: false, output: String(e) };
   }
-  const summary = tool === 'run_command' ? `执行命令：${cmd.slice(0, 160)}` : tool === 'delete_file' ? `删除文件：${target}` : `${tool === 'read_file' ? '读取' : '写入'}文件：${target}`;
+  const summary = tool === 'run_command' ? `执行命令：${cmd.slice(0, 160)}` : tool === 'delete_file' ? `删除文件：${target}` : `${cls === 'read' ? '读取' : '写入'}文件：${target}`;
   const detail = tool === 'write_file' ? truncate(str('content'), 4000) : tool === 'edit_file' ? `- ${truncate(str('old_string'), 1500)}\n+ ${truncate(str('new_string'), 1500)}` : JSON.stringify(args, null, 2).slice(0, 3000);
   // does this call change anything? (writes, and commands beyond plain looking)
   const acting = cls === 'write' || (cls === 'command' && !isLookCommand(cmd));
@@ -223,12 +234,17 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
         return { ok: true, output: truncate(body, 14000) + more };
       }
       case 'search': {
-        const res = ws.search(str('query'), { regex: !!args.regex, include: str('include') || undefined, maxResults: 80 });
-        return { ok: true, output: res.length ? res.map((r) => `${r.path}:${r.line}: ${r.preview.trim()}`).join('\n') : '无匹配' };
+        // key files are never searched by agents (read_file asks first; search must not leak them silently)
+        const res = ws.search(str('query'), { regex: !!args.regex, include: str('include') || undefined, maxResults: 80, skipSensitive: true });
+        return { ok: true, output: res.length ? res.map((r) => `${r.path}:${r.line}: ${r.preview.trim()}`).join('\n') : '无匹配（.env、密钥等敏感文件不在搜索范围内）' };
       }
       case 'outline': {
         const o = ws.outline(target);
         return { ok: true, output: o.length ? o.join('\n') : '（未识别到符号）' };
+      }
+      case 'lsp': {
+        if (target) ws.resolve(target); // boundary check (audited below on violation)
+        return runLspTool(rt.lsp, ws, args);
       }
       case 'write_file': {
         const stale = staleGuard(ctx, ws, target);
@@ -345,6 +361,8 @@ export const describeToolCall = (name: string, args: Record<string, unknown>): s
       return `列目录 ${p || '.'}`;
     case 'outline':
       return `大纲 ${p}`;
+    case 'lsp':
+      return describeLspCall(args);
     case 'delete_file':
       return `删除 ${p}`;
     case 'load_skill':

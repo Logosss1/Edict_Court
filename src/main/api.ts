@@ -5,7 +5,8 @@ import type { Runtime } from './runtime/runtime';
 import { previewUrlFor, isAllowedPreviewUrl } from './services/preview';
 import { submit, decideGate, retryNode, retryNodeWithModel, unblock, type SubmitInput } from './runtime/orchestrator';
 import { createDebate, runDebate, interject, pauseDebate, concludeDebate } from './runtime/debate';
-import { readSkill, saveSkill, addRemoteSkill, removeSkill, refreshNews, setSkillEnabled, duplicateSkill, importSkillFolder } from './runtime/extras';
+import { readSkill, saveSkill, addRemoteSkill, removeSkill, refreshNews, setSkillEnabled, duplicateSkill, importSkillFolder, equipSkill, setSkillDuty, restoreBuiltinSkill, checkSkillUpdate, updateRemoteSkill } from './runtime/extras';
+import { BUILTIN_SKILL_PACK, SKILL_CATEGORY_LABEL } from './runtime/builtinSkills';
 import { systemPromptFor } from './runtime/agentLoop';
 import { parseMcpConfig } from './mcp/manager';
 import type { McpServerPolicy, McpToolPolicy, CollabDesign } from '../shared/types';
@@ -16,8 +17,26 @@ import path from 'node:path';
 import { gitStatus, gitShowHead, gitStage, gitUnstage, gitCommit, gitLog, gitInit } from './services/git';
 import type { TerminalManager } from './services/terminal';
 import { PERMISSION_LABEL } from './runtime/permissions';
+import { LspUnavailableError } from './lsp/manager';
 
-export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFolderDialog: () => Promise<string | null>; getWindow: () => BrowserWindow | null }) {
+/** Editor-side LSP calls: a missing / disabled server is a normal answer (with install hints), not an error. */
+async function lspSoft<T>(fn: () => Promise<T>): Promise<{ ok: true; result: T } | { ok: false; reason: string; message: string; candidates: { id: string; name: string; hint: string; homepage: string; note?: string }[] }> {
+  try {
+    return { ok: true, result: await fn() };
+  } catch (e) {
+    if (e instanceof LspUnavailableError) return { ok: false, reason: e.reason, message: e.message, candidates: e.candidates };
+    throw e;
+  }
+}
+
+export interface ApiHost {
+  openFolderDialog: () => Promise<string | null>;
+  getWindow: () => BrowserWindow | null;
+  acpStatus?: () => unknown;
+  acpEditorConfig?: () => unknown;
+}
+
+export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost) {
   const ws = () => rt.requireWorkspace();
   return {
     // ── state
@@ -37,6 +56,8 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFo
     decideGate: (id: string, d: { approve: boolean; comment?: string; plan?: Plan; reworkTargets?: string[] }) => decideGate(rt, id, d),
     decideApproval: (id: string, approve: boolean, choice?: string, comment?: string) => rt.decideApproval(id, approve, 'emperor', choice, comment),
     removeAllowRule: (root: string, key: string) => rt.removeAllowRule(root, key),
+    acpStatus: () => host.acpStatus?.() ?? { enabled: false, listening: false, socketPath: '', connections: 0, approvedClients: [], sessions: [] },
+    acpEditorConfig: () => host.acpEditorConfig?.() ?? null,
     setReleaseAlways: (root: string, on: boolean) => rt.setReleaseAlways(root, on),
     annotate: (agentId: AgentId, text: string, taskId?: string) => rt.annotate(agentId, text, taskId),
     revertChange: (taskId: string, changeId: string, force?: boolean) => rt.revertChange(taskId, changeId, force),
@@ -80,6 +101,12 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFo
     skillSave: (o: { name: string; description: string; agents: AgentId[] | 'all'; content: string; enabled?: boolean; originalName?: string }) => saveSkill(rt, o),
     skillSetEnabled: (name: string, enabled: boolean) => setSkillEnabled(rt, name, enabled),
     skillDuplicate: (name: string) => duplicateSkill(rt, name),
+    skillEquip: (name: string, agentId: AgentId, on: boolean) => equipSkill(rt, name, agentId, on),
+    skillSetDuty: (name: string, duty: AgentId[]) => setSkillDuty(rt, name, duty),
+    skillRestoreBuiltin: (name: string) => restoreBuiltinSkill(rt, name),
+    skillCheckUpdate: (name: string) => checkSkillUpdate(rt, name),
+    skillUpdateRemote: (name: string) => updateRemoteSkill(rt, name),
+    skillPackInfo: () => ({ categories: SKILL_CATEGORY_LABEL, builtins: BUILTIN_SKILL_PACK.map((b) => ({ name: b.name, title: b.title, category: b.category, icon: b.icon, duty: b.duty, version: b.version })) }),
     skillImportFolder: async () => {
       const win = host.getWindow();
       const r = await dialog.showOpenDialog(win!, { title: '选择技能文件夹（包含 SKILL.md）', properties: ['openDirectory'] });
@@ -172,6 +199,7 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFo
       w.write(p, content);
       rt.audit.record('emperor', 'human_file_save', { path: p, bytes: Buffer.byteLength(content), created: !existed });
       rt.emit({ type: 'fs_changed', paths: [p] });
+      void rt.lsp.notifyFilesChanged([p]).catch(() => {});
     },
     createFile: (p: string) => {
       const w = ws();
@@ -205,6 +233,21 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFo
       return changed.map((c) => ({ path: c.path, count: c.count }));
     },
     listFiles: () => [...ws().walk(20000)],
+
+    // ── language servers (LSP)
+    lspStatus: (refresh?: boolean) => rt.lsp.status({ refresh }),
+    lspSetEnabled: (on: boolean) => rt.setLspConfig({ enabled: on }),
+    lspSetServerEnabled: (id: string, on: boolean) => rt.setLspConfig({ servers: { [id]: { enabled: on } } }),
+    lspSetServerPath: (id: string, exe: string | null, args?: string[]) => rt.setLspConfig({ servers: { [id]: { path: exe?.trim() || undefined, args: exe?.trim() ? args : undefined } } }),
+    lspRestart: (id?: string) => rt.lsp.restart(id),
+    lspLogs: (id: string) => rt.lsp.logs(id).slice(-500),
+    lspHandles: (p: string) => rt.lsp.handles(p),
+    lspWatch: (p: string) => lspSoft(() => rt.lsp.watchFile(p, 1500)),
+    lspUnwatch: (p: string) => rt.lsp.unwatchFile(p),
+    lspHover: (p: string, line: number, column: number) => lspSoft(() => rt.lsp.hover(p, line, column)),
+    lspDefinition: (p: string, line: number, column: number) => lspSoft(() => rt.lsp.definition(p, line, column)),
+    lspReferences: (p: string, line: number, column: number) => lspSoft(() => rt.lsp.references(p, line, column)),
+    lspSymbols: (p: string) => lspSoft(() => rt.lsp.documentSymbols(p)),
 
     // ── git
     gitStatus: () => gitStatus(ws().root),

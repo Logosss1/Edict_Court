@@ -11,6 +11,7 @@ import { buildApi } from './api';
 import { installPreview, hardenContents, previewPage } from './previewHost';
 import { TerminalManager } from './services/terminal';
 import type { RuntimeEvent } from '../shared/types';
+import { createAcpService, zedAgentServerConfig, type AcpService } from './acp';
 
 const APP_NAME = 'Edict';
 app.setName(APP_NAME);
@@ -31,6 +32,7 @@ protocol.registerSchemesAsPrivileged([
 let win: BrowserWindow | null = null;
 let rt: Runtime;
 let terminals: TerminalManager;
+let acp: AcpService | null = null;
 let fsWatcher: fs.FSWatcher | null = null;
 
 if (!smokeTest && !app.requestSingleInstanceLock()) app.quit();
@@ -67,7 +69,9 @@ function watchWorkspace(dir: string | null) {
       pending.add(f);
       if (!timer)
         timer = setTimeout(() => {
-          send({ type: 'fs_changed', paths: [...pending] });
+          const paths = [...pending];
+          send({ type: 'fs_changed', paths });
+          void rt?.lsp.notifyFilesChanged(paths).catch(() => {});
           pending = new Set();
           timer = null;
         }, 300);
@@ -243,6 +247,10 @@ app.whenReady().then(async () => {
   rt.mcp.load();
   nativeTheme.themeSource = rt.settings.theme;
   terminals = new TerminalManager((id, kind, payload) => win?.webContents.send('term:event', { id, kind, payload }));
+  // ACP: editors (Zed …) drive Edict over a 0600 local socket; off until the emperor turns it on
+  acp = createAcpService(rt, { confirmClient: confirmAcpClient, confirmWorkspace: confirmAcpWorkspace, highRiskInEdictOnly: rt.settings.acpHighRiskInEdictOnly !== false, log: (l) => console.log(l) });
+  const followAcp = (on: boolean) => void acp?.setEnabled(on).catch((err) => send({ type: 'toast', level: 'error', message: `编辑器接入（ACP）无法启动：${(err as Error).message}` }));
+  followAcp(!!rt.settings.acpEnabled);
   rt.on((e) => {
     send(e);
     if (e.type === 'workspace') {
@@ -250,9 +258,17 @@ app.whenReady().then(async () => {
       // servers whose config depends on the workspace are restarted for the new folder
       for (const [n, entry] of Object.entries(rt.mcp.config.mcpServers)) if (JSON.stringify(entry).includes('workspaceFolder') || entry.command) rt.mcp.restart(n);
     }
-    if (e.type === 'settings') nativeTheme.themeSource = e.settings.theme;
+    if (e.type === 'settings') {
+      nativeTheme.themeSource = e.settings.theme;
+      followAcp(!!e.settings.acpEnabled);
+    }
   });
-  const api = buildApi(rt, terminals, { openFolderDialog, getWindow: () => win });
+  const api = buildApi(rt, terminals, {
+    openFolderDialog,
+    getWindow: () => win,
+    acpStatus: () => ({ enabled: !!rt.settings.acpEnabled, listening: !!acp?.server.listening, socketPath: acp?.socketPath ?? '', connections: acp?.server.connections ?? 0, approvedClients: acp?.server.approvedClients() ?? [], sessions: acp?.host.listSessions() ?? [] }),
+    acpEditorConfig: () => zedAgentServerConfig({ appExecutable: process.execPath, bridgeScript: path.join(DIST, 'acp-bridge.js') }),
+  });
   ipcMain.handle('rt:invoke', async (_e, method: string, args: unknown[]) => {
     const fn = (api as Record<string, (...a: unknown[]) => unknown>)[method];
     if (typeof fn !== 'function') throw new Error(`未知 API：${method}`);
@@ -274,6 +290,31 @@ app.whenReady().then(async () => {
   });
 });
 
+async function confirmAcpClient(info: { name?: string; title?: string; version?: string }): Promise<boolean> {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
+  const name = info.title || info.name || '未知编辑器';
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['允许', '拒绝'],
+    defaultId: 1,
+    cancelId: 1,
+    message: `编辑器「${name}」请求接入 Edict（ACP）`,
+    detail: `${info.name ?? ''} ${info.version ?? ''}\n允许后，该编辑器可以在当前工作区下达旨意、驱动各部执行并回应权限请求（高风险操作仍须在 Edict 里确认）。仅本次运行期间有效。`,
+  };
+  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  return r.response === 0;
+}
+
+async function confirmAcpWorkspace({ cwd, current }: { cwd: string; current: string | null }): Promise<boolean> {
+  const opts = { type: 'question' as const, buttons: ['切换', '不切换'], defaultId: 1, cancelId: 1, message: '编辑器要在另一个文件夹工作', detail: `编辑器要求的工作区：${cwd}\n当前打开的：${current ?? '（无）'}\n切换后 Edict 的工作区也会随之改变。` };
+  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  return r.response === 0;
+}
+
 app.on('web-contents-created', (_e, contents) => {
   hardenContents(contents);
   contents.session.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'clipboard-sanitized-write' || permission === 'notifications'));
@@ -281,6 +322,7 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.on('before-quit', () => {
   try {
+    void acp?.dispose();
     terminals?.killAll();
     rt?.dispose();
   } catch (e) {
