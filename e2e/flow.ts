@@ -240,7 +240,7 @@ const ok = (step: string, cond: boolean, note?: string) => {
   await shot('26-dark-court');
   await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
   // secrets must not leak
-  const leak = [path.join(dataDir, 'EdictData/audit.jsonl'), path.join(dataDir, 'EdictData/state.json'), path.join(dataDir, 'EdictData/settings.json')].some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));
+  const leak = [path.join(dataDir, 'EdictData/audit.jsonl'), path.join(dataDir, 'EdictData/state.json'), path.join(dataDir, 'EdictData/settings.json'), path.join(dataDir, 'EdictData/edict.db'), path.join(dataDir, 'EdictData/edict.db-wal')].some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));
   ok('API Key 未出现在审计/状态/设置文件中', !leak);
   ok('无前端运行时错误', errors.filter((e) => !/ResizeObserver|Autofocus|Electron Security|favicon/.test(e)).length === 0, errors.slice(0, 3).join(' | '));
   await app.close();

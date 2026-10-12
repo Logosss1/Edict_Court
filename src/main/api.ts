@@ -134,6 +134,13 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: { openFo
       const r = await dialog.showMessageBox(win!, { type: 'warning', message: `信任并运行 MCP 服务「${name}」？`, detail: `命令：${rt.mcp.states.get(name)?.target ?? e.command}\n\n该命令会以你的用户身份在本机运行。`, buttons: ['取消', '信任并运行'], defaultId: 0, cancelId: 0 });
       if (r.response === 1) rt.mcp.trust(name);
     },
+    mcpLogin: (name: string) => rt.mcp.login(name),
+    mcpLogout: (name: string) => rt.mcp.logout(name),
+    mcpListResources: (server?: string) => rt.mcp.listResources(server),
+    mcpListResourceTemplates: (server?: string) => rt.mcp.listResourceTemplates(server),
+    mcpReadResource: (server: string, uri: string) => rt.mcp.readResource(server, uri),
+    mcpListPrompts: () => rt.mcp.listPrompts(),
+    mcpGetPrompt: (server: string, name: string, args: Record<string, string>) => rt.mcp.getPrompt(server, name, args),
     mcpStart: (name: string) => rt.mcp.start(name),
     mcpStop: (name: string) => rt.mcp.stop(name),
     mcpRestart: (name: string) => rt.mcp.restart(name),

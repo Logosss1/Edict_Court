@@ -9,7 +9,8 @@ import type {
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENTS, AGENT_MAP, STATE_LABEL, agentName, TERMINAL } from '../../shared/court';
-import { AuditLog, BlobStore, JsonFile, JsonlLog } from './persist';
+import { AuditLog, BlobStore, JsonlLog } from './persist';
+import { openStateStore, type DocKind, type PersistedSettingsLike, type PersistedStateLike, type SqliteStore } from './sqliteStore';
 import { assertTransition, IllegalTransitionError } from './stateMachine';
 import { addUsage, estimateTokens, now, sha256, uid, ymd, redactSecrets } from './util';
 import { defaultSettings, TEMPLATES } from './defaults';
@@ -43,22 +44,9 @@ export interface RuntimeOptions {
   openExternal?: (url: string) => void | Promise<void>;
 }
 
-interface PersistedState {
-  tasks: Task[];
-  debates: Debate[];
-  sessions: Session[];
-  memorials: Memorial[];
-  annotations: Annotation[];
-  news: NewsItem[];
-  agentStats: Partial<Record<AgentId, Pick<AgentRuntime, 'usage' | 'completed' | 'sessions' | 'errors'>>>;
-  totals: Usage;
-  seqByDay: Record<string, number>;
-}
+type PersistedState = PersistedStateLike;
 
-interface PersistedSettings {
-  settings: Settings;
-  providers: ProviderConfig[];
-}
+type PersistedSettings = PersistedSettingsLike;
 
 export interface ApprovalDecision {
   approve: boolean;
@@ -111,8 +99,8 @@ export class Runtime {
 
   readonly audit: AuditLog;
   readonly blobs: BlobStore;
-  private stateFile: JsonFile<PersistedState>;
-  private settingsFile: JsonFile<PersistedSettings>;
+  /** edict.db (SQLite); 1.x state.json / settings.json are migrated on first open with a backup */
+  readonly store: SqliteStore;
   private listeners = new Set<(e: RuntimeEvent) => void>();
   private activityBuf = new Map<string, Activity[]>(); // taskId|'_global' → recent
   private activityLogs = new Map<string, JsonlLog<Activity>>();
@@ -159,14 +147,11 @@ export class Runtime {
     fs.mkdirSync(opts.dataDir, { recursive: true });
     this.audit = new AuditLog(path.join(opts.dataDir, 'audit.jsonl'));
     this.blobs = new BlobStore(path.join(opts.dataDir, 'blobs'));
-    this.stateFile = new JsonFile<PersistedState>(path.join(opts.dataDir, 'state.json'), () => ({
-      tasks: [], debates: [], sessions: [], memorials: [], annotations: [], news: [], agentStats: {}, totals: emptyUsage(), seqByDay: {},
-    }));
-    this.settingsFile = new JsonFile<PersistedSettings>(path.join(opts.dataDir, 'settings.json'), () => ({ settings: defaultSettings(), providers: [] }));
-    const s = this.settingsFile.load();
+    this.store = openStateStore(opts.dataDir);
+    const s: PersistedSettings = this.store.loadSettings() ?? { settings: defaultSettings(), providers: [] };
     this.settings = { ...defaultSettings(), ...s.settings };
     this.providers = (s.providers ?? []).map((p) => ({ ...p, hasKey: !!opts.secrets.get(`provider:${p.id}`) }));
-    const st = this.stateFile.load();
+    const st = this.store.loadState();
     for (const t of st.tasks ?? []) this.tasks.set(t.id, t);
     for (const d of st.debates ?? []) this.debates.set(d.id, d);
     for (const x of st.sessions ?? []) this.sessions.set(x.id, x);
@@ -182,8 +167,12 @@ export class Runtime {
         usage: stats?.usage ?? emptyUsage(), completed: stats?.completed ?? 0, sessions: stats?.sessions ?? 0, errors: stats?.errors ?? 0,
       });
     }
+    this.store.bind({ state: () => this.persistedState(), settings: () => ({ settings: this.settings, providers: this.providers }) });
+    const rep = this.store.openReport;
+    if (rep?.imported) this.audit.record('system', 'storage_migrated', { from: rep.imported.from, counts: rep.imported.counts as unknown as Record<string, unknown>, backupDir: rep.backupDir ?? null });
     this.designs.load();
     this.recoverInterrupted();
+    this.persist();
     if (this.settings.lastWorkspace && fs.existsSync(this.settings.lastWorkspace)) {
       try {
         this.workspace = new Workspace(this.settings.lastWorkspace);
@@ -215,8 +204,12 @@ export class Runtime {
     this.emit({ type: 'toast', level, message });
   }
 
-  persist() {
-    this.stateFile.saveDebounced(() => this.persistedState());
+  /** Write-behind: one row when `kind`/`id` are given, otherwise everything that changed. */
+  persist(kind?: DocKind, id?: string) {
+    if (kind) return this.store.markDirty(kind, id);
+    this.store.markStateDirty();
+    // tasks are compared by identity; live ones are re-checked by content (cheap: few are active)
+    for (const t of this.tasks.values()) if (!TERMINAL.includes(t.state)) this.store.markDirty('tasks', t.id);
   }
 
   private persistedState(): PersistedState {
@@ -236,16 +229,16 @@ export class Runtime {
   }
 
   saveSettings() {
-    this.settingsFile.saveDebounced(() => ({ settings: this.settings, providers: this.providers }));
+    this.store.markSettingsDirty();
   }
 
   flushAll() {
-    this.stateFile.flush(() => this.persistedState());
-    this.settingsFile.flush(() => ({ settings: this.settings, providers: this.providers }));
+    this.store.flush({ full: true });
   }
 
   touch(task: Task) {
     task.updatedAt = now();
+    this.store.markDirty('tasks', task.id);
     this.dirtyTasks.add(task.id);
     if (!this.flushScheduled) {
       this.flushScheduled = true;
@@ -1137,6 +1130,7 @@ export class Runtime {
         n.endedAt = now();
         interrupted = true;
       }
+      if (resumed.length || interrupted) this.store.markDirty('tasks', t.id);
       if (resumed.length) {
         this.audit.record('system', 'node_auto_resume', { nodes: resumed }, t.id);
         this.activity('log', `应用重启：${resumed.join('、')} 中断时没有改动过文件，已自动续跑`, { taskId: t.id });
@@ -1158,6 +1152,7 @@ export class Runtime {
     if (this.healthTimer) clearInterval(this.healthTimer);
     for (const c of this.controllers.values()) c.abort();
     this.flushAll();
+    this.store.close();
   }
 }
 

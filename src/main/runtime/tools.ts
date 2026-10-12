@@ -8,6 +8,7 @@ import { runCommand } from '../services/exec';
 import { sha256, truncate } from './util';
 import { PathBoundaryError } from '../services/workspace';
 import { isAllowedPreviewUrl, previewUrlFor } from '../services/preview';
+import { executeMcpResourceTool, isMcpResourceTool } from '../mcp/resourceTools';
 
 export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page';
 
@@ -100,6 +101,7 @@ export function simpleDiff(before: string, after: string, maxLines = 120): strin
 export async function executeTool(ctx: ToolContext, name: string, args: Record<string, unknown>): Promise<{ ok: boolean; output: string }> {
   const { rt, task, agentId } = ctx;
   const tool = name as ToolName;
+  if (isMcpResourceTool(name)) return args.__unparsed ? { ok: false, output: `参数不是合法 JSON：${String(args.__unparsed).slice(0, 200)}` } : executeMcpResourceTool(ctx, name, args);
   if (name.startsWith('mcp__')) return args.__unparsed ? { ok: false, output: `参数不是合法 JSON：${String(args.__unparsed).slice(0, 200)}` } : mcpTool(ctx, name, args);
   if (!TOOL_SPECS[tool]) return { ok: false, output: `未知工具：${name}` };
   if (args.__unparsed) return { ok: false, output: `参数不是合法 JSON：${String(args.__unparsed).slice(0, 200)}` };
@@ -351,6 +353,10 @@ export const describeToolCall = (name: string, args: Record<string, unknown>): s
       return `查看改动${p ? ' ' + p : ''}`;
     case 'preview_page':
       return `预览 ${p || String(args.url ?? '')}`;
+    case 'mcp_list_resources':
+      return '列出 MCP 资源';
+    case 'mcp_read_resource':
+      return `读取 MCP 资源 ${String(args.server ?? '')}/${String(args.uri ?? '')}`;
     default:
       if (name.startsWith('mcp__')) return `MCP ${name.slice(5).replace('__', ' / ')}`;
       return `${name} ${path.basename(p)}`;

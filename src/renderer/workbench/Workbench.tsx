@@ -99,7 +99,7 @@ function ActivityBar() {
   const bottomOpen = useStore((s) => s.ui.bottomOpen);
   const git = useStore((s) => s.ui.fsVersion);
   void git;
-  const mcpBad = useStore((s) => s.mcp.filter((m) => m.status === 'error' || m.status === 'untrusted').length);
+  const mcpBad = useStore((s) => s.mcp.filter((m) => m.status === 'error' || m.status === 'untrusted' || m.status === 'needs_auth').length);
   const [, bump] = useState(0);
   const item = (id: 'explorer' | 'search' | 'git' | 'court' | 'preview', icon: string, label: string, desc: string, kbd?: string) => (
     <button className={`ab-item ${sideView === id ? 'on' : ''}`} {...tip(label, desc, kbd)} onClick={() => setUI({ sideView: sideView === id ? null : id })} data-testid={`ab-${id}`}>

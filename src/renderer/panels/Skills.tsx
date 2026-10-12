@@ -176,7 +176,7 @@ function RemoteSkillForm({ onDone }: { onDone: (name: string) => void }) {
 }
 
 // ───────────────────────── MCP ─────────────────────────
-const STATUS: Record<McpServerState['status'], string> = { ok: '已连接', starting: '连接中…', error: '连接失败', untrusted: '待信任', disabled: '已停用', stopped: '已停止' };
+const STATUS: Record<McpServerState['status'], string> = { ok: '已连接', starting: '连接中…', error: '连接失败', untrusted: '待信任', disabled: '已停用', stopped: '已停止', needs_auth: '需要登录' };
 const RISK: Record<McpRisk, string> = { read: '只读', write: '有副作用', high: '高风险' };
 
 const EXAMPLES: Record<string, { label: string; entry: Record<string, unknown> }> = {

@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { openStateStore } from '../src/main/runtime/sqliteStore';
 import { startMockLlm, defaultBrain } from './mockLlm';
 import { makeRuntime, tmpDir, waitFor, stateOf } from './helpers';
 import { submit, decideGate, retryNode } from '../src/main/runtime/orchestrator';
@@ -109,13 +110,15 @@ test('pinning: switching / rolling back a design never changes a running edict; 
   rt.cancel(r.taskId, '测试结束');
   // legacy task (no design fields) loads and is treated as built-in
   rt.dispose();
-  const state = JSON.parse(fs.readFileSync(path.join(dataDir, 'state.json'), 'utf8'));
+  const store = openStateStore(dataDir, { log: () => {} });
+  const state = store.loadState();
   for (const x of state.tasks) {
     delete x.design;
     delete x.designSpec;
     delete x.flowRun;
   }
-  fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify(state));
+  store.upsertTasks(state.tasks);
+  store.close();
   const rt2 = makeRuntime(mock.url, 'openai-chat', dataDir);
   assert.equal(rt2.tasks.get(r.taskId)!.design, undefined);
   assert.ok(rt2.snapshot().tasks.length >= 1);

@@ -232,6 +232,10 @@ app.whenReady().then(async () => {
     resourcesDir: DIST,
     notify,
     previewPage,
+    // MCP OAuth login opens the system browser (http/https only)
+    openExternal: (url) => {
+      if (/^https?:\/\//.test(url)) return shell.openExternal(url);
+    },
   });
   installPreview(rt, (url) => send({ type: 'preview_blocked', url }));
   installOrchestrator(rt);
