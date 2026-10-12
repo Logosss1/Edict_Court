@@ -46,6 +46,9 @@ rl.on('line', async (line) => {
     case 'ping':
       return reply({});
     default:
-      if (m.id !== undefined) send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'method not found' } });
+      if (m.id !== undefined) {
+        process.stderr.write(`unsupported method ${m.method}\n`);
+        send({ jsonrpc: '2.0', id: m.id, error: { code: -32601, message: 'method not found' } });
+      }
   }
 });

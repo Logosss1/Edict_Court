@@ -2,7 +2,8 @@
 //   · stdio            — newline-delimited JSON on the child's stdin/stdout, stderr = logs
 //   · Streamable HTTP  — POST per message; response is JSON or an SSE stream; Mcp-Session-Id header
 //   · HTTP+SSE (legacy)— GET event stream announces an `endpoint`; POST messages there; replies arrive on the stream
-// Only what agents need: initialize, tools/list (paginated), tools/call; answers ping and roots/list.
+// Features: initialize, tools (list/call), resources (list/templates/read), prompts (list/get), list_changed
+// notifications; answers ping and roots/list. HTTP transports take an optional bearer provider (OAuth, see oauth.ts).
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { FetchLike } from '../llm/types';
 
@@ -20,6 +21,30 @@ export interface Transport {
 }
 
 export type Logger = (level: 'info' | 'error' | 'stderr', text: string) => void;
+
+/** Bearer provider for the HTTP transports (MCP authorization; implemented by McpOAuth). */
+export interface HttpAuth {
+  /** `Bearer …` for the next request, or null when not logged in. May refresh a token that is about to expire. */
+  header(): Promise<string | null>;
+  /** HTTP 401 seen. Resolves true when the request should be retried once with a new token (never when `retried`). */
+  unauthorized(wwwAuthenticate: string | null, sent: string | null, retried: boolean): Promise<boolean>;
+}
+
+/** fetch with the bearer attached (replacing any static Authorization header); one retry after a 401 when a fresh token is available. */
+async function authedFetch(fetch: FetchLike, url: string, init: { method: string; headers: Record<string, string>; body?: string; signal?: AbortSignal }, auth?: HttpAuth): Promise<Response> {
+  for (let retried = false; ; retried = true) {
+    const headers = { ...init.headers };
+    const sent = auth ? await auth.header() : null;
+    if (sent) {
+      for (const k of Object.keys(headers)) if (k.toLowerCase() === 'authorization') delete headers[k];
+      headers.authorization = sent;
+    }
+    const res = await fetch(url, { ...init, headers });
+    if (res.status !== 401 || !auth) return res;
+    if (!(await auth.unauthorized(res.headers.get('www-authenticate'), sent, retried)) || retried) return res;
+    await res.text().catch(() => undefined);
+  }
+}
 
 // ───────────────────────── stdio ─────────────────────────
 export class StdioTransport implements Transport {
@@ -111,7 +136,7 @@ export class StreamableHttpTransport implements Transport {
   private version: string | null = null;
   private onMessage: (m: JsonRpcMessage) => void = () => undefined;
   private ctrl = new AbortController();
-  constructor(private o: { url: string; headers: Record<string, string>; fetch: FetchLike; log: Logger }) {}
+  constructor(private o: { url: string; headers: Record<string, string>; fetch: FetchLike; log: Logger; auth?: HttpAuth }) {}
 
   async start(onMessage: (m: JsonRpcMessage) => void) {
     this.onMessage = onMessage;
@@ -124,13 +149,13 @@ export class StreamableHttpTransport implements Transport {
     const headers: Record<string, string> = { 'content-type': 'application/json', accept: 'application/json, text/event-stream', ...this.o.headers };
     if (this.session) headers['mcp-session-id'] = this.session;
     if (this.version) headers['mcp-protocol-version'] = this.version;
-    const res = await this.o.fetch(this.o.url, { method: 'POST', headers, body: JSON.stringify(m), signal: this.ctrl.signal });
+    const res = await authedFetch(this.o.fetch, this.o.url, { method: 'POST', headers, body: JSON.stringify(m), signal: this.ctrl.signal }, this.o.auth);
     const sid = res.headers.get('mcp-session-id');
     if (sid) this.session = sid;
     if (res.status === 202 || res.status === 204) return;
     if (!res.ok) {
       const t = await res.text().catch(() => '');
-      throw new McpHttpError(res.status, t.slice(0, 500));
+      throw new McpHttpError(res.status, t.slice(0, 500), res.headers.get('www-authenticate'));
     }
     const ct = res.headers.get('content-type') ?? '';
     if (ct.includes('text/event-stream') && res.body) {
@@ -160,14 +185,23 @@ export class StreamableHttpTransport implements Transport {
     this.ctrl.abort();
     if (this.session) {
       const headers: Record<string, string> = { 'mcp-session-id': this.session, ...this.o.headers };
-      void this.o.fetch(this.o.url, { method: 'DELETE', headers }).catch(() => undefined);
+      void (async () => {
+        const auth = await this.o.auth?.header().catch(() => null);
+        if (auth) {
+          for (const k of Object.keys(headers)) if (k.toLowerCase() === 'authorization') delete headers[k];
+          headers.authorization = auth;
+        }
+        await this.o.fetch(this.o.url, { method: 'DELETE', headers });
+      })().catch(() => undefined);
     }
   }
 }
 
 export class McpHttpError extends Error {
-  constructor(public status: number, body: string) {
+  readonly wwwAuthenticate?: string;
+  constructor(public status: number, body: string, wwwAuthenticate?: string | null) {
     super(`HTTP ${status}${body ? `：${body}` : ''}`);
+    if (wwwAuthenticate) this.wwwAuthenticate = wwwAuthenticate;
   }
 }
 
@@ -175,11 +209,11 @@ export class McpHttpError extends Error {
 export class SseTransport implements Transport {
   private endpoint: string | null = null;
   private ctrl = new AbortController();
-  constructor(private o: { url: string; headers: Record<string, string>; fetch: FetchLike; log: Logger }) {}
+  constructor(private o: { url: string; headers: Record<string, string>; fetch: FetchLike; log: Logger; auth?: HttpAuth }) {}
 
   async start(onMessage: (m: JsonRpcMessage) => void, onClose: (why: string) => void) {
-    const res = await this.o.fetch(this.o.url, { method: 'GET', headers: { accept: 'text/event-stream', ...this.o.headers }, signal: this.ctrl.signal });
-    if (!res.ok || !res.body) throw new McpHttpError(res.status, await res.text().catch(() => ''));
+    const res = await authedFetch(this.o.fetch, this.o.url, { method: 'GET', headers: { accept: 'text/event-stream', ...this.o.headers }, signal: this.ctrl.signal }, this.o.auth);
+    if (!res.ok || !res.body) throw new McpHttpError(res.status, await res.text().catch(() => ''), res.headers.get('www-authenticate'));
     let gotEndpoint: () => void = () => undefined;
     const ready = new Promise<void>((r) => (gotEndpoint = r));
     void (async () => {
@@ -206,8 +240,8 @@ export class SseTransport implements Transport {
 
   async send(m: JsonRpcMessage) {
     if (!this.endpoint) throw new Error('SSE endpoint 未就绪');
-    const res = await this.o.fetch(this.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', ...this.o.headers }, body: JSON.stringify(m), signal: this.ctrl.signal });
-    if (!res.ok && res.status !== 202) throw new McpHttpError(res.status, await res.text().catch(() => ''));
+    const res = await authedFetch(this.o.fetch, this.endpoint, { method: 'POST', headers: { 'content-type': 'application/json', ...this.o.headers }, body: JSON.stringify(m), signal: this.ctrl.signal }, this.o.auth);
+    if (!res.ok && res.status !== 202) throw new McpHttpError(res.status, await res.text().catch(() => ''), res.headers.get('www-authenticate'));
   }
 
   close() {
@@ -217,7 +251,13 @@ export class SseTransport implements Transport {
 
 // ───────────────────────── client ─────────────────────────
 export interface McpTool { name: string; title?: string; description?: string; inputSchema?: Json; annotations?: Json }
-export interface CallResult { content: Array<{ type: string; text?: string; data?: string; mimeType?: string; resource?: { uri?: string; text?: string; mimeType?: string }; uri?: string; name?: string }>; isError?: boolean; structuredContent?: unknown }
+export interface McpContentBlock { type: string; text?: string; data?: string; mimeType?: string; resource?: { uri?: string; text?: string; blob?: string; mimeType?: string }; uri?: string; name?: string }
+export interface CallResult { content: McpContentBlock[]; isError?: boolean; structuredContent?: unknown }
+export interface McpResource { uri: string; name: string; title?: string; description?: string; mimeType?: string; size?: number; annotations?: Json }
+export interface McpResourceTemplate { uriTemplate: string; name: string; title?: string; description?: string; mimeType?: string }
+export interface McpResourceContents { uri: string; mimeType?: string; text?: string; blob?: string }
+export interface McpPrompt { name: string; title?: string; description?: string; arguments?: { name: string; title?: string; description?: string; required?: boolean }[] }
+export interface GetPromptResult { description?: string; messages: { role: string; content: McpContentBlock | McpContentBlock[] }[] }
 
 export class McpClient {
   private nextId = 1;
@@ -228,6 +268,8 @@ export class McpClient {
   instructions?: string;
   capabilities: Json = {};
   onToolsChanged?: () => void;
+  onResourcesChanged?: () => void;
+  onPromptsChanged?: () => void;
   onClose?: (why: string) => void;
 
   constructor(private t: Transport, private o: { roots: () => { uri: string; name: string }[]; version: string; log: Logger }) {}
@@ -243,20 +285,62 @@ export class McpClient {
     await this.notify('notifications/initialized');
   }
 
-  async listTools(): Promise<McpTool[]> {
-    const out: McpTool[] = [];
+  /** Follows `nextCursor` (≤ 20 pages, stops on a repeated cursor). */
+  private async paginate<T>(method: string, key: string): Promise<T[]> {
+    const out: T[] = [];
     let cursor: string | undefined;
+    const seen = new Set<string>();
     for (let page = 0; page < 20; page++) {
-      const r = await this.request('tools/list', cursor ? { cursor } : {});
-      out.push(...((r.tools as McpTool[]) ?? []));
-      cursor = r.nextCursor as string | undefined;
-      if (!cursor) break;
+      const r = await this.request(method, cursor ? { cursor } : {});
+      if (Array.isArray(r[key])) out.push(...(r[key] as T[]));
+      cursor = typeof r.nextCursor === 'string' && r.nextCursor ? r.nextCursor : undefined;
+      if (!cursor || seen.has(cursor)) break;
+      seen.add(cursor);
     }
     return out;
   }
 
+  get hasResources() {
+    return !!this.capabilities.resources;
+  }
+  get hasPrompts() {
+    return !!this.capabilities.prompts;
+  }
+
+  listTools(): Promise<McpTool[]> {
+    return this.paginate<McpTool>('tools/list', 'tools');
+  }
+
   async callTool(name: string, args: Json, timeoutMs = 120000, signal?: AbortSignal): Promise<CallResult> {
     return (await this.request('tools/call', { name, arguments: args }, timeoutMs, signal)) as unknown as CallResult;
+  }
+
+  // Resources and prompts are only requested when the server declared the capability.
+  async listResources(): Promise<McpResource[]> {
+    if (!this.hasResources) return [];
+    return (await this.paginate<McpResource>('resources/list', 'resources')).filter((r) => r && typeof r.uri === 'string');
+  }
+
+  async listResourceTemplates(): Promise<McpResourceTemplate[]> {
+    if (!this.hasResources) return [];
+    return (await this.paginate<McpResourceTemplate>('resources/templates/list', 'resourceTemplates')).filter((r) => r && typeof r.uriTemplate === 'string');
+  }
+
+  async readResource(uri: string, timeoutMs = 60000, signal?: AbortSignal): Promise<{ contents: McpResourceContents[] }> {
+    if (!this.hasResources) throw new Error('该 MCP 服务未提供资源（resources）');
+    const r = await this.request('resources/read', { uri }, timeoutMs, signal);
+    return { contents: Array.isArray(r.contents) ? (r.contents as McpResourceContents[]) : [] };
+  }
+
+  async listPrompts(): Promise<McpPrompt[]> {
+    if (!this.hasPrompts) return [];
+    return (await this.paginate<McpPrompt>('prompts/list', 'prompts')).filter((p) => p && typeof p.name === 'string');
+  }
+
+  async getPrompt(name: string, args: Record<string, string>, timeoutMs = 30000): Promise<GetPromptResult> {
+    if (!this.hasPrompts) throw new Error('该 MCP 服务未提供提示词（prompts）');
+    const r = await this.request('prompts/get', { name, arguments: args }, timeoutMs);
+    return { description: typeof r.description === 'string' ? r.description : undefined, messages: Array.isArray(r.messages) ? (r.messages as GetPromptResult['messages']) : [] };
   }
 
   request(method: string, params: Json = {}, timeoutMs = 30000, signal?: AbortSignal): Promise<Json> {
@@ -306,6 +390,8 @@ export class McpClient {
       return void reply(undefined, { code: -32601, message: `Edict 不支持 ${m.method}` });
     }
     if (m.method === 'notifications/tools/list_changed') this.onToolsChanged?.();
+    else if (m.method === 'notifications/resources/list_changed') this.onResourcesChanged?.();
+    else if (m.method === 'notifications/prompts/list_changed') this.onPromptsChanged?.();
     else if (m.method === 'notifications/message') {
       const p = m.params ?? {};
       this.o.log(p.level === 'error' ? 'error' : 'info', `[${String(p.logger ?? 'server')}] ${typeof p.data === 'string' ? p.data : JSON.stringify(p.data)}`.slice(0, 500));

@@ -39,6 +39,8 @@ export interface RuntimeOptions {
   notify?: (title: string, body: string) => void;
   /** Render a page in a hidden sandboxed browser (desktop only; undefined in node tests). */
   previewPage?: (url: string, o: { waitMs: number; width: number; height: number }) => Promise<Omit<PreviewResult, 'screenshot'> & { png?: Buffer }>;
+  /** Open an https (or loopback http) URL in the system browser — MCP OAuth login (desktop: shell.openExternal). */
+  openExternal?: (url: string) => void | Promise<void>;
 }
 
 interface PersistedState {
