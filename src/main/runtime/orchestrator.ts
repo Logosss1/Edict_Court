@@ -2,7 +2,7 @@
 // RunNode, so an interrupted/failed node can be retried locally without replaying the
 // whole agent tree. 门下省 review is structural — there is no code path from Zhongshu to
 // Assigned that does not pass a Menxia verdict (or the emperor's explicit decision).
-import type { CollabDesign, DesignPin, MinistryId, ModelRef, Plan, Review, RunNode, Session, Subtask, Task, Tier } from '../../shared/types';
+import type { CollabDesign, DesignPin, MinistryId, ModelRef, Plan, RevertResult, Review, RunNode, Session, Subtask, Task, Tier } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL, agentName } from '../../shared/court';
 import { runAgent } from './agentLoop';
@@ -653,7 +653,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
 
 export function summarizeChanges(t: Task): string {
   const m = new Map<string, string>();
-  for (const c of t.changes) if (!c.reverted) m.set(c.path, `${c.op} ${c.path} (${c.afterHash ? c.afterHash.slice(0, 12) : '已删除'}) by ${AGENT_MAP[c.agentId]?.name ?? c.agentId}`);
+  for (const c of t.changes) if (!c.reverted) m.set(c.path, `${c.op} ${c.path} (${c.op === 'delete' ? '已删除' : c.oversize ? '大文件，未记录内容' : c.afterHash?.slice(0, 12) ?? '—'}) by ${AGENT_MAP[c.agentId]?.name ?? c.agentId}${c.via === 'command' ? ` · 命令 ${(c.command ?? '').slice(0, 80)}` : ''}`);
   return [...m.values()].join('\n');
 }
 
@@ -814,6 +814,32 @@ export function retryNodeWithModel(rt: Runtime, taskId: string, nodeId: string, 
   rt.audit.record('emperor', 'node_model_switch', { nodeId, agentId: n.agentId, providerId: ref.providerId, model: ref.model }, taskId);
   rt.activity('human', `皇上改用 ${ref.model} 重试：${n.label}`, { taskId, nodeId });
   retryNode(rt, taskId, nodeId);
+}
+
+/**
+ * E3 「撤回此部改动并重做」(门下封驳 / 奏折批阅): undo every file change of one node, then redo it. A failed or
+ * interrupted node is retried in place; a finished exec node at a 封驳 / 御批 gate is sent back as rework of its
+ * subtask (the gate is answered with a rejection). A conflict reverts nothing and redoes nothing.
+ */
+export function revertNodeAndRedo(rt: Runtime, taskId: string, nodeId: string, o: { comment?: string; force?: boolean } = {}): RevertResult & { redo: 'retry' | 'rework' | null } {
+  const t = rt.getTask(taskId);
+  if (TERMINAL.includes(t.state)) throw new Error('任务已终结，无法重做');
+  const n = t.nodes.find((x) => x.id === nodeId);
+  if (!n) throw new Error('节点不存在');
+  const atGate = !!t.gate && (t.gate.kind === 'final' || t.gate.kind === 'reject_limit') && (t.state === 'PendingConfirm' || t.state === 'Review');
+  const mode = n.status === 'failed' || n.status === 'cancelled' ? 'retry' : n.status === 'done' && n.kind === 'exec' && n.subtaskId && atGate ? 'rework' : null;
+  if (!mode) throw new Error('只能对失败或中断的节点，或在封驳 / 御批关卡处对六部执行节点「撤回并重做」');
+  const r = rt.revertNode(taskId, nodeId, { force: o.force });
+  rt.audit.record('emperor', 'revert_redo', { nodeId, mode, reverted: r.reverted.length, conflicts: r.conflicts, skipped: r.skipped }, taskId);
+  if (r.conflicts.length) return { ...r, redo: null };
+  const note = `皇上已撤回「${n.label}」此前的文件改动${r.skipped.length ? `（${r.skipped.join('、')} 为大文件，未能撤回）` : ''}，请在原状态上重做`;
+  try {
+    if (mode === 'retry') retryNode(rt, taskId, nodeId);
+    else decideGate(rt, taskId, { approve: false, comment: [o.comment?.trim(), note].filter(Boolean).join('\n'), reworkTargets: [n.subtaskId!] });
+  } catch (e) {
+    throw new Error(`已撤回 ${r.reverted.length} 个文件，但重做未能开始：${(e as Error).message}`);
+  }
+  return { ...r, redo: mode };
 }
 
 function inferState(n: RunNode, t?: Task) {

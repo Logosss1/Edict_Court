@@ -150,6 +150,9 @@ export class BlobStore {
     }
     return h;
   }
+  has(hash: string): boolean {
+    return /^[a-f0-9]{64}$/.test(hash) && fs.existsSync(path.join(this.dir, hash.slice(0, 2), hash));
+  }
   get(hash: string): Buffer | null {
     if (!/^[a-f0-9]{64}$/.test(hash)) return null;
     try {

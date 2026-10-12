@@ -3,7 +3,7 @@ import { dialog, shell, type BrowserWindow } from 'electron';
 import type { AgentId, Plan, ProviderConfig, Settings, Tier, ModelRef } from '../shared/types';
 import type { Runtime } from './runtime/runtime';
 import { previewUrlFor, isAllowedPreviewUrl } from './services/preview';
-import { submit, decideGate, retryNode, retryNodeWithModel, unblock, type SubmitInput } from './runtime/orchestrator';
+import { submit, decideGate, retryNode, retryNodeWithModel, revertNodeAndRedo, unblock, type SubmitInput } from './runtime/orchestrator';
 import { createDebate, runDebate, interject, pauseDebate, concludeDebate } from './runtime/debate';
 import { readSkill, saveSkill, addRemoteSkill, removeSkill, refreshNews, setSkillEnabled, duplicateSkill, importSkillFolder, equipSkill, setSkillDuty, restoreBuiltinSkill, checkSkillUpdate, updateRemoteSkill } from './runtime/extras';
 import { BUILTIN_SKILL_PACK, SKILL_CATEGORY_LABEL } from './runtime/builtinSkills';
@@ -61,6 +61,11 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     setReleaseAlways: (root: string, on: boolean) => rt.setReleaseAlways(root, on),
     annotate: (agentId: AgentId, text: string, taskId?: string) => rt.annotate(agentId, text, taskId),
     revertChange: (taskId: string, changeId: string, force?: boolean) => rt.revertChange(taskId, changeId, force),
+    /** E3: all of one node's changes, newest first → { reverted, conflicts, skipped }; a conflict reverts nothing */
+    revertNode: (taskId: string, nodeId: string, force?: boolean) => rt.revertNode(taskId, nodeId, { force }),
+    revertTask: (taskId: string, force?: boolean) => rt.revertTask(taskId, { force }),
+    /** E3: revert a node's changes, then retry it (failed) or send its subtask back as rework (at a 封驳 / 御批 gate) */
+    revertNodeAndRedo: (taskId: string, nodeId: string, comment?: string, force?: boolean) => revertNodeAndRedo(rt, taskId, nodeId, { comment, force }),
     blob: (hash: string) => rt.blobs.get(hash)?.toString('utf8') ?? null,
     memorialMarkdown: (taskId: string) => rt.memorialMarkdown(taskId),
     deleteTask: (id: string) => {

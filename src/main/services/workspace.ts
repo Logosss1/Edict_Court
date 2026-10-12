@@ -77,7 +77,7 @@ export class Workspace {
     return fs.existsSync(abs) ? fs.readFileSync(abs) : null;
   }
 
-  write(p: string, content: string): void {
+  write(p: string, content: string | Buffer): void {
     const abs = this.resolve(p);
     const prot = this.isProtectedWrite(p);
     if (prot) throw new PathBoundaryError(prot);

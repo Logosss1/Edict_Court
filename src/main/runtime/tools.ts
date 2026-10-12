@@ -1,12 +1,13 @@
 // Agent tools with permission control and workspace path boundaries.
 import path from 'node:path';
-import type { AgentId, ApprovalChoice, PermissionMode, PreviewResult, RunNode, Task } from '../../shared/types';
+import type { AgentId, ApprovalChoice, FileChange, PermissionMode, PreviewResult, RunNode, Task } from '../../shared/types';
 import type { ToolSpec } from '../llm/types';
 import type { Runtime } from './runtime';
 import { allowedByRules, classifyCommand, decide, effectiveMode, isLookCommand, PERMISSION_LABEL, ruleFor, type RiskVerdict, type ToolClass } from './permissions';
 import { runCommand } from '../services/exec';
 import { sha256, truncate } from './util';
-import { PathBoundaryError } from '../services/workspace';
+import { PathBoundaryError, type Workspace } from '../services/workspace';
+import { OVERSIZE, type ShadowChange } from '../services/shadowSnapshot';
 import { isAllowedPreviewUrl, previewUrlFor } from '../services/preview';
 import { executeMcpResourceTool, isMcpResourceTool } from '../mcp/resourceTools';
 import { skillRole } from '../../shared/skills';
@@ -49,12 +50,15 @@ export interface ToolContext {
   reads?: Map<string, string>;
 }
 
-/** Last content this edict itself wrote to `rel` (unreverted), or undefined. */
+/**
+ * Last content this edict itself wrote to `rel` with a file tool (unreverted), or undefined. Command side
+ * effects (R7) do not count: the agent never saw what `sed -i` or a formatter left there.
+ */
 function ownHash(task: Task | undefined, rel: string): string | null | undefined {
   if (!task) return undefined;
   for (let i = task.changes.length - 1; i >= 0; i--) {
     const c = task.changes[i];
-    if (c.path === rel && !c.reverted) return c.afterHash;
+    if (c.path === rel && !c.reverted && c.via !== 'command') return c.afterHash;
   }
   return undefined;
 }
@@ -131,20 +135,28 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   if (tool === 'view_changes') {
     if (!task) return { ok: true, output: '（无旨意上下文）' };
     const filter = str('path');
-    const latest = new Map<string, { first: string | null; last: string | null }>();
+    const chains = new Map<string, FileChange[]>();
     for (const c of task.changes) {
       if (c.reverted) continue;
       if (filter && c.path !== filter) continue;
-      const e = latest.get(c.path);
-      if (!e) latest.set(c.path, { first: c.beforeHash, last: c.afterHash });
-      else e.last = c.afterHash;
+      chains.set(c.path, [...(chains.get(c.path) ?? []), c]);
     }
-    if (!latest.size) return { ok: true, output: '本旨意尚无文件改动记录。' };
+    if (!chains.size) return { ok: true, output: '本旨意尚无文件改动记录。' };
     const parts: string[] = [];
-    for (const [p, { first, last }] of latest) {
-      const before = first ? rt.blobs.get(first)?.toString('utf8') ?? '' : '';
-      const after = last ? rt.blobs.get(last)?.toString('utf8') ?? '' : '';
-      parts.push(`### ${p} ${first ? (last ? '(修改)' : '(删除)') : '(新建)'}\n${simpleDiff(before, after, 80)}`);
+    for (const [p, list] of chains) {
+      const first = list[0];
+      const last = list[list.length - 1];
+      const label = first.op === 'create' ? (last.op === 'delete' ? '(新建后又删除)' : '(新建)') : last.op === 'delete' ? '(删除)' : '(修改)';
+      const cmds = [...new Set(list.filter((c) => c.via === 'command').map((c) => `\`${clip(c.command ?? '', 80)}\``))];
+      const head = `### ${p} ${label}${cmds.length ? ` · 由命令 ${cmds.join('、')} 改动` : ''}`;
+      if (list.some((c) => c.oversize)) {
+        parts.push(`${head}\n（超过 ${fmtSize(rt.snapshots.limits.maxFileBytes)}，只记录了文件名，没有内容与差异）`);
+        continue;
+      }
+      const before = first.beforeHash ? rt.blobs.get(first.beforeHash) : null;
+      const after = last.afterHash ? rt.blobs.get(last.afterHash) : null;
+      if (list.some((c) => c.binary)) parts.push(`${head}\n（二进制文件：${before?.length ?? 0} → ${after?.length ?? 0} 字节）`);
+      else parts.push(`${head}\n${simpleDiff(before?.toString('utf8') ?? '', after?.toString('utf8') ?? '', 80)}`);
     }
     return { ok: true, output: truncate(parts.join('\n\n'), 14000) };
   }
@@ -284,10 +296,23 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
       case 'run_command': {
         const cmd = str('command');
         const timeout = Math.min(600, Math.max(5, Number(args.timeout_sec) || 120)) * 1000;
-        const r = await runCommand(cmd, ws.root, { timeoutMs: timeout, signal: ctx.signal });
-        rt.audit.record(agentId, 'command', { command: cmd, exitCode: r.exitCode, timedOut: r.timedOut, durationMs: r.durationMs }, task?.id);
+        const exec = () => runCommand(cmd, ws.root, { timeoutMs: timeout, signal: ctx.signal });
+        // R7: a command that may change files runs between two shadow snapshots; what differs is recorded like a
+        // file-tool change (revertable). The edict's write lock is held here, so its own writes never interleave.
+        const track = rt.settings.commandSnapshots !== false && !isLookCommand(cmd);
+        const s = track ? await rt.snapshots.around(ws.root, exec) : null;
+        const r = s ? s.result : await exec();
+        const rec = s?.tracked ? recordCommandChanges(ctx, ws, cmd, s.changes) : null;
+        rt.audit.record(agentId, 'command', { command: cmd, exitCode: r.exitCode, timedOut: r.timedOut, durationMs: r.durationMs, ...(rec ? { changed: rec.count } : {}) }, task?.id);
+        if (s && !s.tracked) rt.audit.record('system', 'command_snapshot_skipped', { command: truncate(cmd, 300), reason: s.note ?? '' }, task?.id);
         rt.emit({ type: 'fs_changed', paths: [] });
-        const out = [`$ ${cmd}`, `exit=${r.exitCode}${r.timedOut ? '（超时被终止）' : ''} · ${r.durationMs}ms`, r.stdout && `stdout:\n${truncate(r.stdout, 8000)}`, r.stderr && `stderr:\n${truncate(r.stderr, 4000)}`].filter(Boolean).join('\n');
+        let note = '';
+        if (s && !s.tracked) note = `（未能记录命令的文件改动：${s.note ?? '快照不可用'}）`;
+        else if (s && rec?.count) {
+          const big = rec.oversize ? `；其中 ${rec.oversize} 个超过 ${fmtSize(rt.snapshots.limits.maxFileBytes)}，只记了文件名，不能撤回` : '';
+          note = `（命令改动了 ${rec.count} 个文件，已记录，可撤回${big}${s.truncated ? `；实际改动 ${s.total} 个，只记录了前 ${rec.count} 个` : ''}）`;
+        }
+        const out = [`$ ${cmd}`, `exit=${r.exitCode}${r.timedOut ? '（超时被终止）' : ''} · ${r.durationMs}ms`, r.stdout && `stdout:\n${truncate(r.stdout, 8000)}`, r.stderr && `stderr:\n${truncate(r.stderr, 4000)}`, note].filter(Boolean).join('\n');
         return { ok: r.exitCode === 0 && !r.timedOut, output: out };
       }
     }
@@ -297,6 +322,33 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   }
   return { ok: false, output: '未处理的工具' };
 }
+
+/**
+ * Record what a command changed (R7): before = the shadow snapshot, after = disk now, marked via 'command'.
+ * Edits a human made on disk while the command ran land here too (the snapshot pair cannot tell them apart).
+ */
+function recordCommandChanges(ctx: ToolContext, ws: Workspace, cmd: string, changes: ShadowChange[]): { count: number; oversize: number } {
+  let count = 0;
+  let oversize = 0;
+  for (const c of changes) {
+    let rel: string;
+    try {
+      rel = ws.rel(ws.resolve(c.path));
+    } catch {
+      continue; // outside the boundary (symlink swap): never recorded, never reverted
+    }
+    const big = c.before === OVERSIZE || c.after === OVERSIZE;
+    const op: FileChange['op'] = c.before === null ? 'create' : c.after === null ? 'delete' : 'modify';
+    const buf = (x: ShadowChange['before']) => (Buffer.isBuffer(x) ? x : null);
+    ctx.rt.recordChange(ctx.task, ctx.agentId, ctx.node?.id, rel, buf(c.before), buf(c.after), { via: 'command', command: cmd, op, oversize: big });
+    count++;
+    if (big) oversize++;
+  }
+  return { count, oversize };
+}
+
+const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
+const fmtSize = (n: number) => (n >= 1024 * 1024 ? `${+(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
 
 const readOnlyNode = (n: RunNode) => n.kind === 'exec' && (n.effect ?? 'read') === 'read' && !n.grant;
 
