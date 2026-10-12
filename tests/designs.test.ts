@@ -214,7 +214,10 @@ test('interpreter: restart mid-step → interrupted node → local retry resumes
   rt.updateSettings({ finalGate: false });
   const d = rt.designs.copy(BUILTIN_DESIGN_ID, { tier: 'lite' });
   const r = (await submit(rt, { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true, designId: d.id })) as { taskId: string };
-  await waitFor(() => rt.tasks.get(r.taskId)!.nodes.some((n) => n.kind === 'exec' && n.status === 'running'), 20000, 'exec running');
+  await waitFor(() => {
+    const t = rt.tasks.get(r.taskId)!;
+    return t.nodes.some((n) => n.kind === 'exec' && n.status === 'running' && t.changes.some((c) => c.nodeId === n.id));
+  }, 20000, 'exec running after a write');
   const planCalls = mock.calls.filter((c) => c.system.includes('你是中书省')).length;
   rt.flushAll();
   for (const c of rt.controllers.values()) c.abort();

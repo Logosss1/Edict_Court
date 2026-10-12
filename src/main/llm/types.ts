@@ -59,6 +59,8 @@ export class LlmHttpError extends Error {
     public status: number,
     public body: string,
     public url: string,
+    /** server-requested wait (Retry-After / retry-after-ms), in ms */
+    public retryAfterMs?: number,
   ) {
     super(`LLM HTTP ${status}: ${body.slice(0, 400)}`);
     this.name = 'LlmHttpError';
@@ -70,6 +72,27 @@ export class LlmHttpError extends Error {
 
 import type { ErrorInfo } from '../../shared/types';
 
+/** Parse Retry-After (seconds or HTTP date) / retry-after-ms / x-ratelimit-reset-after into ms. */
+export function parseRetryAfter(headers: { get(name: string): string | null } | undefined, nowMs = Date.now()): number | undefined {
+  if (!headers) return undefined;
+  const ms = headers.get('retry-after-ms');
+  if (ms && /^\d+(\.\d+)?$/.test(ms.trim())) return Math.round(Number(ms));
+  const ra = headers.get('retry-after') ?? headers.get('x-ratelimit-reset-after');
+  if (!ra) return undefined;
+  const v = ra.trim();
+  if (/^\d+(\.\d+)?$/.test(v)) return Math.round(Number(v) * 1000);
+  const at = Date.parse(v);
+  return Number.isFinite(at) ? Math.max(0, at - nowMs) : undefined;
+}
+
+/** Wait before retry `attempt` (0-based): honour the server's Retry-After (≤60s), else 2s·2ⁿ (≤30s). */
+export function backoffMs(attempt: number, retryAfterMs?: number): number {
+  if (retryAfterMs !== undefined && retryAfterMs >= 0) return Math.min(60_000, Math.max(500, retryAfterMs));
+  return Math.min(30_000, 2000 * 2 ** attempt);
+}
+
+const CONTEXT_PATTERNS = /context[_ ]?length|context window|maximum context|too many tokens|prompt is too long|input is too long|request too large|exceeds? (the )?(model'?s? )?(maximum|max)[\s\S]{0,30}(tokens|length|context)|上下文.*(超|过长|长度)|超出.*(上下文|最大长度|token)/i;
+
 const CONFIG_PATTERNS = /不支持.*(模型|接入|方式)|分组|无可用渠道|no available (channel|distributor)|model[_ ]?not[_ ]?found|model .*(does not exist|not (found|supported|available))|unsupported model|invalid model|模型.*(不存在|不可用|未开放)|not supported (for|by) this|not allowed to use|does not have access to (the )?model/i;
 const PARAM_PATTERNS = /(reasoning|effort|thinking|enable_thinking|output_config|budget_tokens)[\s\S]{0,80}(unsupported|not supported|unknown|invalid|not permitted|unrecognized|extra)|(unsupported|unknown|unrecognized|invalid|extra)[\s\S]{0,40}(parameter|field|argument)[\s\S]{0,60}(reasoning|effort|thinking|output_config)/i;
 const BILLING_PATTERNS = /insufficient|quota|余额|额度|billing|credit/i;
@@ -79,6 +102,7 @@ export function classifyLlmError(e: unknown): ErrorInfo & { retryable: boolean }
   if (e instanceof LlmHttpError) {
     const raw = e.body.slice(0, 1500);
     const s = e.status;
+    if ((s === 400 || s === 413 || s === 422) && CONTEXT_PATTERNS.test(raw)) return { kind: 'context', status: s, retryable: false, raw, hint: '对话超出模型上下文长度：已自动压缩上下文重试；仍失败可调小「上下文窗口」或换长上下文模型。' };
     if (PARAM_PATTERNS.test(raw)) return { kind: 'param', status: s, retryable: false, raw, hint: '服务不接受思考程度参数：请在「模型配置」中把该模型的思考方式改为「不发送思考参数」或调低档位。' };
     if (CONFIG_PATTERNS.test(raw) || s === 404) return { kind: 'config', status: s, retryable: false, raw, hint: s === 404 ? '接口地址或模型不存在：检查 base_url（是否需要 /v1）、协议选择与模型 id。' : '服务（或中转站当前分组）不支持该模型或接入方式：核对模型 id；在「模型配置 → 协议探测」中试试 Chat / Responses / Messages 哪种可用；或在中转站后台切换分组。' };
     if (s === 401 || s === 403) return { kind: 'auth', status: s, retryable: false, raw, hint: 'API Key 无效、过期或无此模型权限：在「模型配置」中重新填写 Key。' };

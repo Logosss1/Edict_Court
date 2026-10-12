@@ -70,6 +70,9 @@ export interface FlowEntry {
   state?: TaskState;
 }
 
+/** What a subtask does to the workspace: read (research / review, runs in parallel), write (changes files), verify (runs tests / builds). */
+export type SubtaskEffect = 'read' | 'write' | 'verify';
+
 export interface Subtask {
   id: string;
   title: string;
@@ -77,7 +80,12 @@ export interface Subtask {
   detail: string;
   acceptance: string;
   dependsOn: string[];
+  /** missing = read */
+  effect?: SubtaskEffect;
 }
+
+/** What the emperor granted one exec node: write (normal permission mode), write_free (no asks except high risk), readonly. */
+export type NodeGrant = 'write' | 'write_free' | 'readonly';
 
 export interface Plan {
   summary: string;
@@ -142,6 +150,10 @@ export interface RunNode {
   roleName?: string;
   output?: string; // structured conclusion (JSON string or text)
   usage?: Usage;
+  effect?: SubtaskEffect; // exec nodes: the subtask's declared effect
+  grant?: NodeGrant; // exec nodes: what the emperor allowed (write-task dialog / escalation)
+  grantNote?: string; // the emperor's note given with the grant
+  sideEffects?: boolean; // a write, command or non-read MCP call ran in this node (not auto-resumed after restart)
 }
 
 export type GateKind = 'plan' | 'final' | 'budget' | 'reject_limit' | 'risk';
@@ -200,6 +212,7 @@ export interface Task {
   createdAt: number;
   updatedAt: number;
   workspace: string | null;
+  repoRoot?: string | null; // worktree edicts: the repository the worktree was made from (permissions, merge)
   flow: FlowEntry[];
   plan?: Plan;
   planHistory: PlanVersion[];
@@ -227,6 +240,7 @@ export interface Task {
   lastActivityAt: number;
   sessionId?: string; // solo conversation
   templateId?: string;
+  allowRules?: AllowRule[]; // 「本旨意内不再询问」 rules granted on approvals
   execRound?: number; // 1 = first execution; >1 = rework rounds
   rework?: { round: number; targets: string[]; feedback: string; by: 'menxia' | 'emperor' };
 }
@@ -274,6 +288,19 @@ export interface Activity {
   streaming?: boolean;
 }
 
+export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop';
+
+/** One button on an approval card (Codex-style: proceed / proceed and don't ask again / no, and say what to do instead). */
+export interface ApprovalChoice {
+  id: string;
+  label: string;
+  hint?: string;
+  approve: boolean;
+  tone?: 'primary' | 'danger' | 'default';
+  /** 'optional' shows a note box; 'required' needs one */
+  comment?: 'optional' | 'required';
+}
+
 export interface ApprovalRequest {
   id: string;
   taskId?: string;
@@ -287,6 +314,25 @@ export interface ApprovalRequest {
   at: number;
   status: 'pending' | 'approved' | 'denied';
   decidedAt?: number;
+  kind?: ApprovalKind;
+  /** when present the card shows these instead of 准许 / 驳回 */
+  choices?: ApprovalChoice[];
+  choice?: string; // picked choice id
+  comment?: string; // the emperor's note
+  ruleLabel?: string; // what an always-allow choice would allow, e.g. 「npm test」
+}
+
+/** An always-allow rule: `key` like cmd:npm test · tool:write · mcp:server/tool. */
+export interface AllowRule {
+  key: string;
+  label: string;
+  at: number;
+}
+
+export interface WorkspacePerms {
+  rules: AllowRule[];
+  /** release / deploy commands (git push, npm publish, deploy CLIs) run without asking in this workspace */
+  releaseAlways?: boolean;
 }
 
 export interface DebateMessage {
@@ -410,7 +456,7 @@ export interface ReasoningDetectResult {
 }
 
 export interface ErrorInfo {
-  kind: 'auth' | 'config' | 'param' | 'billing' | 'rate' | 'server' | 'network' | 'timeout' | 'other';
+  kind: 'auth' | 'config' | 'param' | 'billing' | 'rate' | 'server' | 'network' | 'timeout' | 'context' | 'other';
   status?: number;
   hint: string;
   raw: string;
@@ -481,6 +527,14 @@ export interface Settings {
   defaultDesign?: string; // design id preselected in the composer
   previewAllowNetwork?: boolean; // HTML 预览可加载外部网络资源（默认仅本地） // last 思考程度 slider value ('default' | 'top' | level)
   language: 'zh';
+  /** ask before each write subtask starts (Codex-style), unless permissionMode is auto */
+  confirmWriteTasks: boolean;
+  /** after a restart, resume interrupted nodes that had no side effects instead of blocking */
+  autoResumeSafe: boolean;
+  /** wall-clock limit per node, minutes (0 = none) */
+  nodeTimeoutMin: number;
+  /** per workspace root: 「本工作区永久允许」 rules */
+  workspacePerms: Record<string, WorkspacePerms>;
 }
 
 export interface Snapshot {

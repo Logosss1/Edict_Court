@@ -267,7 +267,7 @@ export function useSelectedTask() {
   return useStore((s) => (id ? s.tasks.find((t) => t.id === id) : undefined));
 }
 
-const ERR_KIND: Record<string, string> = { auth: 'API Key / 权限问题', config: '模型或接入方式不被支持', param: '思考参数不被接受', billing: '余额或额度不足', rate: '触发限流', server: '模型服务错误', network: '网络不通', timeout: '请求超时', other: '模型调用失败' };
+const ERR_KIND: Record<string, string> = { auth: 'API Key / 权限问题', config: '模型或接入方式不被支持', param: '思考参数不被接受', billing: '余额或额度不足', rate: '触发限流', server: '模型服务错误', network: '网络不通', timeout: '请求超时', context: '超出上下文长度', other: '模型调用失败' };
 const PROTO_SHORT: Record<string, string> = { 'openai-chat': 'Chat Completions', 'openai-responses': 'Responses', 'anthropic-messages': 'Messages' };
 
 /** Actionable card for a node that failed on a model call: what went wrong, what to do, one-click fixes. */

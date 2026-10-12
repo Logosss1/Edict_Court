@@ -3,7 +3,7 @@
 // sent to the user-configured base URL — never logged.
 import { readSse } from './sse';
 import { deepMerge } from '../../shared/reasoning';
-import { LlmHttpError, type FetchLike, type LlmMessage, type LlmRequest, type LlmResult, type ProviderRuntime, type ToolCall } from './types';
+import { LlmHttpError, parseRetryAfter, type FetchLike, type LlmMessage, type LlmRequest, type LlmResult, type ProviderRuntime, type ToolCall } from './types';
 
 const trimSlash = (s: string) => s.replace(/\/+$/, '');
 
@@ -51,7 +51,7 @@ async function post(fetchImpl: FetchLike, url: string, headers: Record<string, s
     } catch {
       /* ignore */
     }
-    throw new LlmHttpError(res.status, text, url);
+    throw new LlmHttpError(res.status, text, url, parseRetryAfter(res.headers));
   }
   if (!res.body) throw new Error('LLM 响应缺少正文流');
   return res;

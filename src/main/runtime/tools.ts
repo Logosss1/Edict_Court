@@ -1,11 +1,11 @@
 // Agent tools with permission control and workspace path boundaries.
 import path from 'node:path';
-import type { AgentId, PreviewResult, RunNode, Task } from '../../shared/types';
+import type { AgentId, ApprovalChoice, PermissionMode, PreviewResult, RunNode, Task } from '../../shared/types';
 import type { ToolSpec } from '../llm/types';
 import type { Runtime } from './runtime';
-import { decide, type ToolClass } from './permissions';
+import { allowedByRules, classifyCommand, decide, effectiveMode, isLookCommand, PERMISSION_LABEL, ruleFor, type RiskVerdict, type ToolClass } from './permissions';
 import { runCommand } from '../services/exec';
-import { truncate } from './util';
+import { sha256, truncate } from './util';
 import { PathBoundaryError } from '../services/workspace';
 import { isAllowedPreviewUrl, previewUrlFor } from '../services/preview';
 
@@ -41,6 +41,35 @@ export interface ToolContext {
   node?: RunNode;
   agentId: AgentId;
   signal?: AbortSignal;
+  /** files this run has read: workspace-relative path → sha256 when read (read-before-overwrite guard) */
+  reads?: Map<string, string>;
+}
+
+/** Last content this edict itself wrote to `rel` (unreverted), or undefined. */
+function ownHash(task: Task | undefined, rel: string): string | null | undefined {
+  if (!task) return undefined;
+  for (let i = task.changes.length - 1; i >= 0; i--) {
+    const c = task.changes[i];
+    if (c.path === rel && !c.reverted) return c.afterHash;
+  }
+  return undefined;
+}
+
+/**
+ * Editing or overwriting an existing file requires that this run read it first and that it has not
+ * changed since — unless the file is still exactly what this edict last wrote. Returns an error or null.
+ */
+function staleGuard(ctx: ToolContext, ws: { readBuffer(p: string): Buffer | null; rel(p: string): string; resolve(p: string): string }, target: string): string | null {
+  if (!ctx.reads) return null;
+  const buf = ws.readBuffer(target);
+  if (!buf) return null;
+  const rel = ws.rel(ws.resolve(target));
+  const cur = sha256(buf);
+  const seen = ctx.reads.get(rel);
+  if (seen === cur || ownHash(ctx.task, rel) === cur) return null;
+  return seen
+    ? `${rel} 在你读取之后已被修改（可能是皇上或其他官员改的）。请重新 read_file 看最新内容后再改。`
+    : `${rel} 已存在，本轮还没读过它。编辑或覆盖已有文件前请先 read_file，免得改坏没看过的内容。`;
 }
 
 function numbered(text: string, start: number): string {
@@ -118,26 +147,60 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
 
   // permission decision
   const target = str('path');
-  let verdict;
+  const cls = CLASS[tool];
+  const node = ctx.node;
+  const base = rt.settings.permissionMode;
+  const cmd = tool === 'run_command' ? str('command') : '';
+  let verdict: RiskVerdict;
   try {
-    verdict = decide(rt.settings.permissionMode, CLASS[tool], {
-      command: tool === 'run_command' ? str('command') : undefined,
+    verdict = decide(effectiveMode(base, node?.grant), cls, {
+      command: tool === 'run_command' ? cmd : undefined,
       sensitive: target ? ws.isSensitive(target) : false,
       deleting: tool === 'delete_file',
     });
   } catch (e) {
     return { ok: false, output: String(e) };
   }
-  if (verdict.decision === 'deny') {
-    rt.audit.record(agentId, 'tool_denied', { tool, reason: verdict.reason, path: target || undefined }, task?.id);
-    return { ok: false, output: `权限拒绝：${verdict.reason}` };
+  const summary = tool === 'run_command' ? `执行命令：${cmd.slice(0, 160)}` : tool === 'delete_file' ? `删除文件：${target}` : `${tool === 'read_file' ? '读取' : '写入'}文件：${target}`;
+  const detail = tool === 'write_file' ? truncate(str('content'), 4000) : tool === 'edit_file' ? `- ${truncate(str('old_string'), 1500)}\n+ ${truncate(str('new_string'), 1500)}` : JSON.stringify(args, null, 2).slice(0, 3000);
+  // does this call change anything? (writes, and commands beyond plain looking)
+  const acting = cls === 'write' || (cls === 'command' && !isLookCommand(cmd));
+  let preApproved = false;
+  // R1: a subtask that started read-only asks to be upgraded the first time it wants to write or run a non-safe
+  // command (high-risk actions skip this and go straight to their own confirmation)
+  if (acting && node && readOnlyNode(node) && base !== 'auto' && verdict.risk !== 'high' && !(cls === 'command' && classifyCommand(cmd).safe)) {
+    const d = await rt.requestDecision({
+      kind: 'escalate', taskId: task?.id, agentId, nodeId: node.id, tool,
+      summary: `只读子任务要${cls === 'write' ? '改文件' : '执行命令'}：${summary.replace(/^[^：]+：/, '')}`,
+      detail, risk: 'normal', reason: `「${node.label}」按只读子任务开工，现在要${cls === 'write' ? '写入文件' : '执行命令'}。`,
+      choices: escalateChoices(base),
+    });
+    rt.setAgent(agentId, { status: 'tool', activity: d.approve ? `已获准：${summary}` : `被驳回：${summary}` });
+    if (!d.approve) return { ok: false, output: deniedText('只读子任务未获准写入', d.comment) };
+    if (d.choice === 'write' || d.choice === 'write_free') {
+      node.grant = d.choice;
+      node.grantNote = d.comment;
+      rt.audit.record('emperor', 'node_grant', { node: node.id, grant: d.choice, via: 'escalate', comment: d.comment ?? null }, task?.id);
+      if (task) rt.touch(task);
+    }
+    preApproved = true;
   }
-  if (verdict.decision === 'ask') {
-    const summary = tool === 'run_command' ? `执行命令：${str('command').slice(0, 160)}` : tool === 'delete_file' ? `删除文件：${target}` : `${tool === 'read_file' ? '读取' : '写入'}文件：${target}`;
-    const detail = tool === 'write_file' ? truncate(str('content'), 4000) : tool === 'edit_file' ? `- ${truncate(str('old_string'), 1500)}\n+ ${truncate(str('new_string'), 1500)}` : JSON.stringify(args, null, 2).slice(0, 3000);
-    const ok = await rt.requestApproval({ taskId: task?.id, agentId, nodeId: ctx.node?.id, tool, summary, detail, risk: verdict.risk, reason: verdict.reason });
-    rt.setAgent(agentId, { status: 'tool', activity: ok ? `已获准：${summary}` : `被驳回：${summary}` });
-    if (!ok) return { ok: false, output: `皇上未批准此操作（${verdict.reason}）。请调整方案（例如改用更安全的做法）或在结论中说明。` };
+  if (!preApproved) {
+    if (verdict.decision === 'deny') {
+      rt.audit.record(agentId, 'tool_denied', { tool, reason: verdict.reason, path: target || undefined }, task?.id);
+      if (node?.grant === 'readonly') return { ok: false, output: '皇上要求本子任务只读执行：不能写文件或执行会改动东西的命令。请只做分析，在结论里给出修改建议。' };
+      return { ok: false, output: `权限拒绝：${verdict.reason}` };
+    }
+    if (verdict.decision === 'ask') {
+      const d = await askAction(ctx, tool, args, verdict, summary, detail);
+      rt.setAgent(agentId, { status: 'tool', activity: d.approve ? `已获准：${summary}` : `被驳回：${summary}` });
+      if (!d.approve) return { ok: false, output: deniedText(verdict.reason, d.comment) };
+    }
+  }
+  // one writer per edict at a time; nodes that change things are not auto-resumed after a restart
+  if (acting && node) {
+    node.sideEffects = true;
+    if (task) await rt.acquireWriteLock(task.id, node.id, ctx.signal);
   }
 
   try {
@@ -153,6 +216,8 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
         const end = Math.min(lines.length, Number(args.end_line) || start + 399);
         const body = numbered(lines.slice(start - 1, end).join('\n'), start);
         const more = end < lines.length ? `\n…（共 ${lines.length} 行，已显示 ${start}-${end}，可指定 start_line 继续）` : '';
+        const buf = ws.readBuffer(target);
+        if (buf) ctx.reads?.set(ws.rel(ws.resolve(target)), sha256(buf));
         return { ok: true, output: truncate(body, 14000) + more };
       }
       case 'search': {
@@ -164,13 +229,19 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
         return { ok: true, output: o.length ? o.join('\n') : '（未识别到符号）' };
       }
       case 'write_file': {
+        const stale = staleGuard(ctx, ws, target);
+        if (stale) return { ok: false, output: stale };
         const before = ws.readBuffer(target);
         const content = str('content');
         ws.write(target, content);
-        rt.recordChange(task, agentId, ctx.node?.id, ws.rel(ws.resolve(target)), before, Buffer.from(content));
+        const rel = ws.rel(ws.resolve(target));
+        rt.recordChange(task, agentId, ctx.node?.id, rel, before, Buffer.from(content));
+        ctx.reads?.set(rel, sha256(Buffer.from(content)));
         return { ok: true, output: `已写入 ${target}（${Buffer.byteLength(content)} 字节，${before ? '覆盖' : '新建'}）` };
       }
       case 'edit_file': {
+        const stale = staleGuard(ctx, ws, target);
+        if (stale) return { ok: false, output: stale };
         const before = ws.read(target);
         const oldS = str('old_string');
         const newS = str('new_string');
@@ -180,7 +251,9 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
         if (count > 1 && !args.replace_all) return { ok: false, output: `old_string 出现 ${count} 次，不唯一；请扩大上下文或设置 replace_all` };
         const after = args.replace_all ? before.split(oldS).join(newS) : before.replace(oldS, () => newS);
         ws.write(target, after);
-        rt.recordChange(task, agentId, ctx.node?.id, ws.rel(ws.resolve(target)), Buffer.from(before), Buffer.from(after));
+        const rel = ws.rel(ws.resolve(target));
+        rt.recordChange(task, agentId, ctx.node?.id, rel, Buffer.from(before), Buffer.from(after));
+        ctx.reads?.set(rel, sha256(Buffer.from(after)));
         return { ok: true, output: `已编辑 ${target}（替换 ${args.replace_all ? count : 1} 处）\n${simpleDiff(before, after, 40)}` };
       }
       case 'delete_file': {
@@ -205,6 +278,52 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
     return { ok: false, output: `错误：${(e as Error).message}` };
   }
   return { ok: false, output: '未处理的工具' };
+}
+
+const readOnlyNode = (n: RunNode) => n.kind === 'exec' && (n.effect ?? 'read') === 'read' && !n.grant;
+
+const deniedText = (reason: string, comment?: string) => `皇上未批准此操作（${reason}）。${comment ? `皇上的话：${comment}\n` : ''}请调整方案（例如改用更安全的做法）或在结论中说明。`;
+
+function escalateChoices(base: PermissionMode): ApprovalChoice[] {
+  return [
+    { id: 'write', label: '准许，本子任务改为写任务', hint: `之后按当前权限「${PERMISSION_LABEL[base === 'readonly' ? 'ask' : base]}」处理`, approve: true, tone: 'primary', comment: 'optional' },
+    { id: 'write_free', label: '准许，本子任务内写入与命令免询问', hint: '高风险操作仍会询问', approve: true, comment: 'optional' },
+    { id: 'once', label: '只准这一次', approve: true },
+    { id: 'deny', label: '驳回', hint: '可写明要它怎么做', approve: false, tone: 'danger', comment: 'optional' },
+  ];
+}
+
+/**
+ * Ask about one action (Codex-style). Release / deploy commands run without asking only when the workspace
+ * opted in; other normal-risk actions can be allowed for this edict or this workspace. High risk always asks.
+ */
+async function askAction(ctx: ToolContext, tool: string, args: Record<string, unknown>, verdict: RiskVerdict, summary: string, detail: string): Promise<{ approve: boolean; comment?: string }> {
+  const { rt, task, agentId, node } = ctx;
+  const release = tool === 'run_command' && classifyCommand(String(args.command ?? '')).release;
+  if (release && rt.releaseAllowed(task)) {
+    rt.audit.record(agentId, 'approval_auto', { tool, summary, by: 'releaseAlways' }, task?.id);
+    rt.activity('log', `本工作区已设为发版/部署永久允许，直接执行：${summary}`, { taskId: task?.id, agentId, nodeId: node?.id });
+    return { approve: true };
+  }
+  const rule = verdict.risk === 'high' ? null : ruleFor(tool, args);
+  if (rule && allowedByRules(rule.keys, rt.rulesFor(task))) {
+    rt.audit.record(agentId, 'approval_auto', { tool, summary, keys: rule.keys }, task?.id);
+    return { approve: true };
+  }
+  const root = rt.permRoot(task);
+  const choices: ApprovalChoice[] = [
+    { id: 'once', label: '准许', approve: true, tone: 'primary' },
+    ...(rule && task ? [{ id: 'task', label: '准许，本旨意内不再询问', hint: rule.label, approve: true }] : []),
+    ...(rule && root ? [{ id: 'workspace', label: '准许，本工作区永久允许', hint: rule.label, approve: true }] : []),
+    { id: 'deny', label: '驳回', hint: '可写明要它怎么做', approve: false, tone: 'danger', comment: 'optional' },
+  ];
+  const d = await rt.requestDecision({
+    kind: 'action', taskId: task?.id, agentId, nodeId: node?.id, tool, summary, detail, risk: verdict.risk,
+    reason: release ? `${verdict.reason}（发版/部署每次确认；可在「权限」里为本工作区开启永久允许）` : verdict.reason,
+    choices, ruleLabel: rule?.label,
+  });
+  if (d.approve && rule && (d.choice === 'task' || d.choice === 'workspace')) rt.addAllowRules(d.choice, task, rule.keys, rule.label);
+  return d;
 }
 
 export const describeToolCall = (name: string, args: Record<string, unknown>): string => {
@@ -289,18 +408,20 @@ async function mcpTool(ctx: ToolContext, name: string, args: Record<string, unkn
   if (st.policy.agents !== 'all' && !st.policy.agents.includes(agentId)) return { ok: false, output: `该官员未获授权使用 MCP 服务 ${server}` };
   if (!tool.policy.enabled) return { ok: false, output: `MCP 工具已停用：${server}/${tool.name}` };
   const risk = tool.policy.risk;
-  const mode = rt.settings.permissionMode;
+  const mode = effectiveMode(rt.settings.permissionMode, ctx.node?.grant);
   const summary = `调用 MCP 工具 ${server} / ${tool.name}`;
   if (mode === 'readonly' && risk !== 'read') {
     rt.audit.record(agentId, 'tool_denied', { tool: name, reason: '只读模式' }, task?.id);
-    return { ok: false, output: '权限拒绝：只读模式下只能使用标记为「只读」的 MCP 工具' };
+    return { ok: false, output: ctx.node?.grant === 'readonly' ? '皇上要求本子任务只读执行：只能使用标记为「只读」的 MCP 工具' : '权限拒绝：只读模式下只能使用标记为「只读」的 MCP 工具' };
   }
   const needAsk = risk === 'high' || (risk === 'write' && !tool.policy.autoApprove && mode !== 'auto');
   if (needAsk) {
-    const ok = await rt.requestApproval({ taskId: task?.id, agentId, nodeId: ctx.node?.id, tool: name, summary, detail: truncate(JSON.stringify(args, null, 2), 3000), risk: risk === 'high' ? 'high' : 'normal', reason: risk === 'high' ? 'MCP 工具标记为高风险（外部副作用）' : 'MCP 工具可能产生外部副作用' });
-    rt.setAgent(agentId, { status: 'tool', activity: ok ? `已获准：${summary}` : `被驳回：${summary}` });
-    if (!ok) return { ok: false, output: `皇上未批准此 MCP 调用（${server}/${tool.name}）。请调整方案或在结论中说明。` };
+    const verdict: RiskVerdict = { decision: 'ask', risk: risk === 'high' ? 'high' : 'normal', reason: risk === 'high' ? 'MCP 工具标记为高风险（外部副作用）' : 'MCP 工具可能产生外部副作用' };
+    const d = await askAction(ctx, name, args, verdict, summary, truncate(JSON.stringify(args, null, 2), 3000));
+    rt.setAgent(agentId, { status: 'tool', activity: d.approve ? `已获准：${summary}` : `被驳回：${summary}` });
+    if (!d.approve) return { ok: false, output: `皇上未批准此 MCP 调用（${server}/${tool.name}）。${d.comment ? `皇上的话：${d.comment}\n` : ''}请调整方案或在结论中说明。` };
   }
+  if (risk !== 'read' && ctx.node) ctx.node.sideEffects = true;
   const started = Date.now();
   try {
     const res = await rt.mcp.call(server, tool.name, args, ctx.signal);

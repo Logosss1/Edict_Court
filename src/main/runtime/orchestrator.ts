@@ -12,6 +12,8 @@ import { ALL_TOOLS, READ_TOOLS } from './tools';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { extractJson, now, sha256, truncate, uid } from './util';
 import { createDebate, runDebate, concludeDebate } from './debate';
+import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt, nodeConclusion, parseConclusion, scheduleExec, toolsForNode } from './execPolicy';
+export { parseConclusion, type ExecConclusion } from './execPolicy';
 import { flowDecideGate, flowStep } from './flow';
 import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
 
@@ -178,8 +180,26 @@ export async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Pro
   node.endedAt = undefined;
   node.error = undefined;
   node.errorInfo = undefined;
+  node.sideEffects = false;
   rt.touch(t);
   rt.activity('log', `▶ ${node.label}（${agentName(node.agentId)}）${node.attempts > 1 ? ` 第 ${node.attempts} 次` : ''}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
+  // wall-clock limit per node (time spent waiting on the emperor does not count)
+  const key = `${t.id}/${node.id}`;
+  const ctl = new AbortController();
+  rt.nodeControllers.set(key, ctl);
+  const limitMin = Math.max(0, rt.settings.nodeTimeoutMin ?? 30);
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = (ms: number) => {
+    timer = setTimeout(() => {
+      if (waitingOnEmperor(rt, t, node)) return arm(60_000);
+      timedOut = true;
+      rt.audit.record('system', 'node_timeout', { node: node.id, minutes: limitMin }, t.id);
+      ctl.abort();
+    }, ms);
+    timer.unref?.();
+  };
+  if (limitMin) arm(limitMin * 60_000);
   try {
     const out = await fn();
     node.output = out;
@@ -190,9 +210,12 @@ export async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Pro
     if (a) a.completed++;
     rt.touch(t);
     return out;
-  } catch (e) {
+  } catch (err) {
+    let e = err;
     node.endedAt = now();
-    if (e instanceof TaskAbortedError || rt.controllers.get(t.id)?.signal.aborted) {
+    const taskAborted = rt.controllers.get(t.id)?.signal.aborted;
+    if (timedOut && !taskAborted) e = new Error(`超过单节点时限 ${limitMin} 分钟，已终止。可局部重试，或在「设置」里调整时限`);
+    else if (e instanceof TaskAbortedError || taskAborted) {
       node.status = 'cancelled';
       node.exitStatus = 'cancelled';
       rt.touch(t);
@@ -206,8 +229,14 @@ export async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Pro
     rt.audit.record(node.agentId, 'node_failed', { node: node.id, error: truncate(node.error, 300), kind: node.errorInfo?.kind ?? null, runId: node.runId }, t.id);
     rt.touch(t);
     throw new NodeFailedError(`${node.label} 失败：${node.error}`);
+  } finally {
+    if (timer) clearTimeout(timer);
+    rt.nodeControllers.delete(key);
+    rt.releaseWriteLock(t.id, node.id);
   }
 }
+
+const waitingOnEmperor = (rt: Runtime, t: Task, node: RunNode) => t.paused || !!t.gate || [...rt.approvals.values()].some((a) => a.status === 'pending' && a.taskId === t.id && (!a.nodeId || a.nodeId === node.id));
 
 export function ensureNode(t: Task, id: string, init: Omit<RunNode, 'id' | 'status' | 'attempts'>): RunNode {
   let n = t.nodes.find((x) => x.id === id);
@@ -287,7 +316,7 @@ export function validatePlan(p: unknown, allowed?: Record<string, string>): { pl
       if (byName) dept = byName as MinistryId;
       else return { error: `子任务 ${id} 的${allowed ? '执行角色' : '部门'}无效：${s.dept}（应为 ${deptIds.join('/')}）` };
     }
-    subs.push({ id, title: String(s.title ?? '').trim() || `子任务 ${id}`, dept, detail: String(s.detail ?? ''), acceptance: String(s.acceptance ?? ''), dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn.map(String) : [] });
+    subs.push({ id, title: String(s.title ?? '').trim() || `子任务 ${id}`, dept, detail: String(s.detail ?? ''), acceptance: String(s.acceptance ?? ''), dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn.map(String) : [], effect: effectOf(s) });
   }
   for (const s of subs) for (const d of s.dependsOn) if (!ids.has(d)) return { error: `子任务 ${s.id} 依赖不存在的 ${d}` };
   // cycle check
@@ -465,23 +494,6 @@ async function stepAssigned(rt: Runtime, t: Task): Promise<boolean> {
 }
 
 // ───────────────────────── 六部执行 ─────────────────────────
-export interface ExecConclusion {
-  status: 'done' | 'partial' | 'failed';
-  summary: string;
-  artifacts: string[];
-  verification: string;
-  issues: string[];
-}
-
-export function parseConclusion(text: string): ExecConclusion {
-  const j = extractJson<Partial<ExecConclusion>>(text);
-  if (j && typeof j === 'object' && 'summary' in j) {
-    const st = String(j.status ?? 'done');
-    return { status: (['done', 'partial', 'failed'].includes(st) ? st : 'done') as ExecConclusion['status'], summary: String(j.summary ?? ''), artifacts: Array.isArray(j.artifacts) ? j.artifacts.map(String) : [], verification: String(j.verification ?? '未说明'), issues: Array.isArray(j.issues) ? j.issues.map(String) : [] };
-  }
-  return { status: 'done', summary: truncate(text.trim(), 600), artifacts: [], verification: '未提供结构化结论', issues: ['未按格式输出结构化结论'] };
-}
-
 function latestExecNode(t: Task, subId: string): RunNode | undefined {
   return [...t.nodes].reverse().find((n) => n.kind === 'exec' && n.subtaskId === subId);
 }
@@ -499,34 +511,24 @@ async function stepDoing(rt: Runtime, t: Task): Promise<boolean> {
   }
   const nodes = targets.map((id) => {
     const sub = plan.subtasks.find((s) => s.id === id)!;
-    return ensureNode(t, `exec-${id}-r${round}`, { kind: 'exec', agentId: sub.dept, label: `${AGENT_MAP[sub.dept].name}·${sub.title}${round > 1 ? `（返工 ${round - 1}）` : ''}`, subtaskId: id });
+    const n = ensureNode(t, `exec-${id}-r${round}`, { kind: 'exec', agentId: sub.dept, label: `${AGENT_MAP[sub.dept].name}·${sub.title}${round > 1 ? `（返工 ${round - 1}）` : ''}`, subtaskId: id, effect: effectOf(sub) });
+    n.effect ??= effectOf(sub);
+    return n;
   });
   rt.touch(t);
   const isDone = (subId: string) => latestExecNode(t, subId)?.status === 'done';
-  const running = new Map<string, Promise<void>>();
-  const limit = Math.max(1, rt.settings.parallelism);
-  const failed: string[] = [];
-  while (true) {
-    const pending = nodes.filter((n) => n.status === 'pending');
-    const ready = pending.filter((n) => plan.subtasks.find((s) => s.id === n.subtaskId)!.dependsOn.every(isDone));
-    for (const n of ready) {
-      if (running.size >= limit) break;
-      if (running.has(n.id)) continue;
-      const p = runExec(rt, t, n, orders[n.subtaskId!])
-        .catch((e) => {
-          if (e instanceof TaskAbortedError) throw e;
-          failed.push(n.label);
-        })
-        .finally(() => running.delete(n.id));
-      running.set(n.id, p);
-    }
-    if (!running.size) break;
-    await Promise.race(running.values());
-  }
+  await scheduleExec(nodes, {
+    limit: Math.max(1, rt.settings.parallelism),
+    ready: (n) => plan.subtasks.find((s) => s.id === n.subtaskId)!.dependsOn.every(isDone),
+    run: (n) =>
+      runExec(rt, t, n, orders[n.subtaskId!]).catch((e) => {
+        if (e instanceof TaskAbortedError) throw e;
+      }),
+  });
   const stuck = nodes.filter((n) => n.status === 'pending');
   const bad = nodes.filter((n) => n.status === 'failed' || n.status === 'cancelled');
   if (bad.length || stuck.length) {
-    block(rt, t, `${bad.length ? `${bad.map((n) => n.label).join('、')} 执行失败` : ''}${stuck.length ? `；${stuck.length} 个子任务因依赖未完成而未启动` : ''}。可对失败节点「局部重试」`);
+    block(rt, t, execBlockReason(bad, stuck));
     return false;
   }
   rt.transition(t, 'Review', 'shangshu', round > 1 ? `返工完成（第 ${round - 1} 次），汇总回奏` : '六部执行完毕，汇总回奏');
@@ -536,6 +538,8 @@ async function stepDoing(rt: Runtime, t: Task): Promise<boolean> {
 async function runExec(rt: Runtime, t: Task, node: RunNode, order?: string): Promise<void> {
   const plan = t.plan!;
   const sub = plan.subtasks.find((s) => s.id === node.subtaskId)!;
+  const hasWs = !!rt.workspace && t.workspace === rt.workspace.root;
+  await confirmWriteTask(rt, t, node, sub, AGENT_MAP[sub.dept].name, hasWs);
   await runNode(rt, t, node, async () => {
     const deps = sub.dependsOn.map((d) => {
       const n = latestExecNode(t, d);
@@ -549,31 +553,33 @@ async function runExec(rt: Runtime, t: Task, node: RunNode, order?: string): Pro
       order ? `【尚书省执行令】${order}` : '',
       deps.length ? `【上游子任务结论】\n${deps.join('\n')}` : '',
       node.id.endsWith('-r1') ? '' : `【返工要求（${t.rework?.by === 'emperor' ? '皇上' : '门下省'}）】\n${t.rework?.feedback ?? ''}\n【你上一轮的结论】${truncate(prev?.output ?? '无', 1500)}`,
-      rt.workspace && t.workspace === rt.workspace.root ? repoContext(rt, t) : '（未打开工作区：无法读写文件，请直接在结论中给出成果文本）',
+      hasWs ? grantPrompt(node) : '',
+      hasWs ? repoContext(rt, t) : '（未打开工作区：无法读写文件，请直接在结论中给出成果文本）',
       EXEC_OUTPUT_RULE,
     ].filter(Boolean);
-    const tools = rt.workspace && t.workspace === rt.workspace.root ? ALL_TOOLS : undefined;
+    const tools = toolsForNode(node, hasWs ? ALL_TOOLS : undefined);
     const r = await runAgent({ rt, agentId: sub.dept, task: t, node, prompt: parts.join('\n\n'), tools, maxSteps: 30, maxTokens: 8000, temperature: 0.2, label: node.label });
-    const c = parseConclusion(r.text);
-    // system verification of claimed artifacts (never trust self-reports)
-    const checks: string[] = [];
-    if (rt.workspace && t.workspace === rt.workspace.root) {
-      for (const a of c.artifacts) {
-        try {
-          const buf = rt.workspace.readBuffer(a);
-          checks.push(buf ? `${a} ✓ sha256:${sha256(buf).slice(0, 12)}` : `${a} ✗ 不存在`);
-        } catch (e) {
-          checks.push(`${a} ✗ ${(e as Error).message}`);
-        }
-      }
-      const touched = t.changes.filter((ch) => ch.nodeId === node.id).map((ch) => `${ch.op}:${ch.path}`);
-      checks.push(`系统记录的改动：${touched.length ? touched.join(', ') : '无'}`);
+    let c = parseConclusion(r.text);
+    if (!c.structured) {
+      // one format-repair turn: same conversation, no tools, conclusion only
+      const r2 = await runAgent({ rt, agentId: sub.dept, task: t, node, history: r.messages, prompt: `请只输出结构化结论，不要再调用工具。\n${EXEC_OUTPUT_RULE}`, maxTokens: 1500, temperature: 0, label: `${node.label}（结论格式修正）` });
+      const c2 = parseConclusion(r2.text);
+      if (c2.structured) c = c2;
     }
-    const out = { ...c, systemCheck: checks };
-    if (c.status === 'failed') throw new Error(`${AGENT_MAP[sub.dept].name}自报失败：${c.summary}`);
-    return JSON.stringify(out);
+    const { conclusion, systemCheck } = checkEvidence(t, node, c, r.toolCounts, hasWs ? rt.workspace! : undefined);
+    if (conclusion.status === 'failed') throw new Error(`${AGENT_MAP[sub.dept].name}自报失败：${conclusion.summary}`);
+    if (conclusion.status === 'partial') rt.activity('log', `⚠ ${node.label} 成果存疑：${conclusion.issues.join('；') || '自报部分完成'}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
+    const { structured: _s, ...plain } = conclusion as typeof conclusion & { structured?: boolean };
+    return JSON.stringify({ ...plain, systemCheck });
   });
 }
+
+/** Latest exec nodes whose conclusion is partial (成果存疑). */
+function doubtfulNodes(t: Task): RunNode[] {
+  return (t.plan?.subtasks ?? []).map((s) => latestExecNode(t, s.id)).filter((n): n is RunNode => !!n && nodeConclusion(n)?.status === 'partial');
+}
+
+const doubtText = (nodes: RunNode[]) => nodes.map((n) => `${n.label}（${(nodeConclusion(n)?.issues ?? []).slice(0, 2).join('；') || '自报部分完成'}）`).join('；');
 
 // ───────────────────────── 回奏 & 成果审议 ─────────────────────────
 async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
@@ -630,9 +636,15 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       return false; // waiting for emperor (gate) — handled by decideGate
     }
   }
+  // Court Lite has no 门下 result review: doubtful conclusions must not close the edict unseen
+  const doubtful = t.tier === 'lite' ? doubtfulNodes(t) : [];
   if (rt.settings.finalGate) {
     rt.transition(t, 'PendingConfirm', 'shangshu', '回奏待皇上御批');
-    rt.setGate(t, { kind: 'final', message: '请御览回奏与改动：准奏则结案，封驳则发回返工' });
+    rt.setGate(t, { kind: 'final', message: doubtful.length ? `成果存疑：${doubtText(doubtful)}。请御览回奏与改动：准奏则结案，封驳则发回返工` : '请御览回奏与改动：准奏则结案，封驳则发回返工' });
+    return false;
+  }
+  if (doubtful.length && !t.reviews.some((r) => r.stage === 'result' && r.round === round && r.reviewer === 'emperor')) {
+    rt.setGate(t, { kind: 'reject_limit', message: `成果存疑：${doubtText(doubtful)}。请皇上裁决：准奏则结案，封驳则发回返工`, nodeId: doubtful[0].id });
     return false;
   }
   rt.transition(t, 'Done', 'shangshu', '回奏结案');

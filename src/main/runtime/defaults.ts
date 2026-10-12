@@ -22,6 +22,10 @@ export function defaultSettings(): Settings {
     lastWorkspace: null,
     composerHidden: false,
     language: 'zh',
+    confirmWriteTasks: true,
+    autoResumeSafe: true,
+    nodeTimeoutMin: 30,
+    workspacePerms: {},
   };
 }
 

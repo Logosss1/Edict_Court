@@ -4,7 +4,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
-  Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
+  Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
   ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
@@ -56,6 +56,12 @@ interface PersistedState {
 interface PersistedSettings {
   settings: Settings;
   providers: ProviderConfig[];
+}
+
+export interface ApprovalDecision {
+  approve: boolean;
+  choice: string;
+  comment?: string;
 }
 
 export class TaskAbortedError extends Error {
@@ -113,7 +119,11 @@ export class Runtime {
   private dirtyTasks = new Set<string>();
   private flushScheduled = false;
   private waiters = new Map<string, Set<() => void>>();
-  private approvalResolvers = new Map<string, (ok: boolean) => void>();
+  private approvalResolvers = new Map<string, (d: ApprovalDecision) => void>();
+  /** per-node abort (wall-clock timeout) — key taskId/nodeId */
+  readonly nodeControllers = new Map<string, AbortController>();
+  /** one writer per edict: taskId → holder nodeId + waiters */
+  private writeLocks = new Map<string, { holder: string; queue: { nodeId: string; resolve: () => void }[] }>();
   readonly controllers = new Map<string, AbortController>();
   healthTimer: NodeJS.Timeout | null = null;
   private alerted = new Set<string>();
@@ -650,29 +660,44 @@ export class Runtime {
 
   // ───────────────────────── approvals (high-risk confirmation) ─────────────────────────
   requestApproval(req: Omit<ApprovalRequest, 'id' | 'at' | 'status'>): Promise<boolean> {
+    return this.requestDecision(req).then((d) => d.approve);
+  }
+
+  /** Ask the emperor; with `choices` the card offers those buttons (Codex-style) and the note box. */
+  requestDecision(req: Omit<ApprovalRequest, 'id' | 'at' | 'status'>): Promise<ApprovalDecision> {
     const ap: ApprovalRequest = { ...req, id: uid('ap'), at: now(), status: 'pending' };
     this.approvals.set(ap.id, ap);
-    this.audit.record(req.agentId, 'approval_requested', { tool: req.tool, summary: req.summary, risk: req.risk, reason: req.reason }, req.taskId);
+    this.audit.record(req.agentId, 'approval_requested', { tool: req.tool, summary: req.summary, risk: req.risk, reason: req.reason, kind: req.kind ?? 'action' }, req.taskId);
     this.emit({ type: 'approval', approval: ap });
-    this.opts.notify?.(req.risk === 'high' ? '高风险操作待确认' : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
+    this.opts.notify?.(req.risk === 'high' ? '高风险操作待确认' : req.kind === 'write_task' ? '写任务待批准' : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
     if (req.taskId) this.setAgent(req.agentId, { status: 'waiting', activity: `等待批准：${req.summary}` });
     const signal = req.taskId ? this.controllers.get(req.taskId)?.signal : undefined;
-    return new Promise<boolean>((resolve) => {
+    return new Promise<ApprovalDecision>((resolve) => {
       this.approvalResolvers.set(ap.id, resolve);
       signal?.addEventListener('abort', () => this.decideApproval(ap.id, false, 'system'), { once: true });
     });
   }
 
-  decideApproval(id: string, approve: boolean, actor = 'emperor') {
+  decideApproval(id: string, approve: boolean, actor = 'emperor', choice?: string, comment?: string) {
     const ap = this.approvals.get(id);
     if (!ap || ap.status !== 'pending') return;
+    const note = (comment ?? '').trim() || undefined;
+    if (ap.choices?.length && choice && actor !== 'system') {
+      const c = ap.choices.find((x) => x.id === choice);
+      if (!c) throw new Error(`无效的选项：${choice}`);
+      if (c.comment === 'required' && !note) throw new Error('请先写明理由或要求');
+      approve = c.approve;
+    }
+    const picked = choice && ap.choices?.some((x) => x.id === choice) && actor !== 'system' ? choice : approve ? 'once' : 'deny';
     ap.status = approve ? 'approved' : 'denied';
     ap.decidedAt = now();
-    this.audit.record(actor, approve ? 'approval_granted' : 'approval_denied', { tool: ap.tool, summary: ap.summary }, ap.taskId);
+    ap.choice = picked;
+    ap.comment = note;
+    this.audit.record(actor, approve ? 'approval_granted' : 'approval_denied', { tool: ap.tool, summary: ap.summary, choice: picked, comment: note ?? null }, ap.taskId);
     this.emit({ type: 'approval', approval: ap });
     const r = this.approvalResolvers.get(id);
     this.approvalResolvers.delete(id);
-    r?.(approve);
+    r?.({ approve, choice: picked, comment: note });
     // keep list bounded
     if (this.approvals.size > 300) {
       for (const [k, v] of this.approvals) if (v.status !== 'pending') {
@@ -680,6 +705,99 @@ export class Runtime {
         if (this.approvals.size <= 200) break;
       }
     }
+  }
+
+  // ───────────────────────── always-allow rules (R5) ─────────────────────────
+  /** The workspace root permission rules are keyed by (a worktree maps back to its repository). */
+  permRoot(task?: Task): string | null {
+    return task?.repoRoot ?? task?.workspace ?? this.workspace?.root ?? null;
+  }
+
+  rulesFor(task?: Task): AllowRule[] {
+    const root = this.permRoot(task);
+    return [...(task?.allowRules ?? []), ...((root && this.settings.workspacePerms?.[root]?.rules) || [])];
+  }
+
+  releaseAllowed(task?: Task): boolean {
+    const root = this.permRoot(task);
+    return !!(root && this.settings.workspacePerms?.[root]?.releaseAlways);
+  }
+
+  addAllowRules(scope: 'task' | 'workspace', task: Task | undefined, keys: string[], label: string) {
+    const rules = keys.map((key) => ({ key, label, at: now() }));
+    if (scope === 'task') {
+      if (!task) return;
+      task.allowRules = [...(task.allowRules ?? []).filter((r) => !keys.includes(r.key)), ...rules];
+      this.touch(task);
+    } else {
+      const root = this.permRoot(task);
+      if (!root) return;
+      const perms = { ...(this.settings.workspacePerms ?? {}) };
+      const cur = perms[root] ?? { rules: [] };
+      perms[root] = { ...cur, rules: [...cur.rules.filter((r) => !keys.includes(r.key)), ...rules] };
+      this.settings = { ...this.settings, workspacePerms: perms };
+      this.saveSettings();
+      this.emit({ type: 'settings', settings: this.settings });
+    }
+    this.audit.record('emperor', 'allow_rule_added', { scope, keys, label, root: scope === 'workspace' ? this.permRoot(task) : null }, task?.id);
+  }
+
+  removeAllowRule(root: string, key: string) {
+    const perms = { ...(this.settings.workspacePerms ?? {}) };
+    const cur = perms[root];
+    if (!cur) return;
+    perms[root] = { ...cur, rules: cur.rules.filter((r) => r.key !== key) };
+    this.settings = { ...this.settings, workspacePerms: perms };
+    this.audit.record('emperor', 'allow_rule_removed', { root, key });
+    this.saveSettings();
+    this.emit({ type: 'settings', settings: this.settings });
+  }
+
+  setReleaseAlways(root: string, on: boolean) {
+    const perms = { ...(this.settings.workspacePerms ?? {}) };
+    perms[root] = { rules: perms[root]?.rules ?? [], releaseAlways: on };
+    this.settings = { ...this.settings, workspacePerms: perms };
+    this.audit.record('emperor', 'release_policy', { root, releaseAlways: on });
+    this.saveSettings();
+    this.emit({ type: 'settings', settings: this.settings });
+  }
+
+  // ───────────────────────── node signals & write lock ─────────────────────────
+  /** Abort signal for work inside a node: the edict's cancel plus the node's own timeout. */
+  signalFor(taskId: string, nodeId?: string): AbortSignal {
+    const t = this.controller(taskId).signal;
+    const n = nodeId ? this.nodeControllers.get(`${taskId}/${nodeId}`)?.signal : undefined;
+    return n ? AbortSignal.any([t, n]) : t;
+  }
+
+  /** Wait until `nodeId` is the only writer of this edict (released when the node ends). */
+  async acquireWriteLock(taskId: string, nodeId: string, signal?: AbortSignal): Promise<void> {
+    const l = this.writeLocks.get(taskId);
+    if (!l) {
+      this.writeLocks.set(taskId, { holder: nodeId, queue: [] });
+      return;
+    }
+    if (l.holder === nodeId) return;
+    await new Promise<void>((resolve, reject) => {
+      const entry = { nodeId, resolve };
+      l.queue.push(entry);
+      signal?.addEventListener('abort', () => {
+        l.queue = l.queue.filter((q) => q !== entry);
+        reject(new TaskAbortedError());
+      }, { once: true });
+    });
+  }
+
+  releaseWriteLock(taskId: string, nodeId: string) {
+    const l = this.writeLocks.get(taskId);
+    if (!l) return;
+    l.queue = l.queue.filter((q) => q.nodeId !== nodeId);
+    if (l.holder !== nodeId) return;
+    const next = l.queue.shift();
+    if (next) {
+      l.holder = next.nodeId;
+      next.resolve();
+    } else this.writeLocks.delete(taskId);
   }
 
   // ───────────────────────── annotations (朱批) ─────────────────────────
@@ -994,23 +1112,38 @@ export class Runtime {
 
   // ───────────────────────── recovery ─────────────────────────
   private recoverInterrupted() {
+    // nodes that only read or talk can simply run again; anything that may have changed files waits for the emperor
+    const NO_TOOLS_KINDS = ['triage', 'debate', 'plan', 'review', 'dispatch', 'summary', 'result_review'];
+    const resumable = (n: RunNode) => this.settings.autoResumeSafe !== false && (n.sideEffects === false || (n.sideEffects === undefined && NO_TOOLS_KINDS.includes(n.kind)));
     for (const t of this.tasks.values()) {
       if (TERMINAL.includes(t.state)) continue;
       let interrupted = false;
+      const resumed: string[] = [];
       for (const n of t.nodes) {
-        if (n.status === 'running') {
-          n.status = 'failed';
-          n.exitStatus = 'interrupted';
-          n.error = '应用退出导致运行中断';
-          n.endedAt = now();
-          interrupted = true;
+        // an exec node waiting on its write-task dialog had not started: ask again after the restart
+        if (n.status === 'waiting' && n.kind === 'exec') n.status = 'pending';
+        if (n.status !== 'running') continue;
+        if (resumable(n)) {
+          n.status = 'pending';
+          n.endedAt = undefined;
+          resumed.push(n.label);
+          continue;
         }
+        n.status = 'failed';
+        n.exitStatus = 'interrupted';
+        n.error = '应用退出导致运行中断';
+        n.endedAt = now();
+        interrupted = true;
+      }
+      if (resumed.length) {
+        this.audit.record('system', 'node_auto_resume', { nodes: resumed }, t.id);
+        this.activity('log', `应用重启：${resumed.join('、')} 中断时没有改动过文件，已自动续跑`, { taskId: t.id });
       }
       if (interrupted && t.state !== 'Blocked') {
         t.resumeState = t.state;
         const from = t.state;
         t.state = 'Blocked';
-        t.blockedReason = '应用重启：运行中的节点已中断，可「重试失败节点」局部恢复';
+        t.blockedReason = '应用重启：运行中的节点可能已改动文件，已中断；可「重试失败节点」局部恢复';
         t.flow.push({ at: now(), from: STATE_LABEL[from], to: STATE_LABEL.Blocked, remark: t.blockedReason, state: 'Blocked' });
         this.audit.record('system', 'transition', { from, to: 'Blocked', remark: t.blockedReason }, t.id);
       }
