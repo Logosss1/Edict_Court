@@ -11,7 +11,7 @@ import { ALL_TOOLS, READ_TOOLS, type ToolName } from './tools';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { extractJson, now, sha256, truncate } from './util';
 import {
-  block, ensureNode, otherDoing, parseConclusion, parseVerdict, repoContext, runNode, summarizeChanges, validatePlan, drive,
+  block, ensureNode, guidance, otherDoing, parseConclusion, parseVerdict, repoContext, runNode, summarizeChanges, validatePlan, drive,
   type GateDecision,
 } from './orchestrator';
 import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt, scheduleExec, toolsForNode } from './execPolicy';
@@ -199,6 +199,7 @@ async function agentStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
     const parts = [...header(t, s), context(t, s)];
     if (s.type === 'summary') parts.push(`【系统核验的文件改动】\n${summarizeChanges(t) || '无'}`);
     if (tools) parts.push(repoContext(rt, t));
+    parts.push(guidance(rt, t));
     if (s.output === 'conclusion') parts.push(EXEC_OUTPUT_RULE);
     const r = await runAgent({ rt, agentId: role.avatar, role: roleRun(t, role), task: t, node, prompt: parts.filter(Boolean).join('\n\n'), tools, maxSteps: tools ? 24 : 1, maxTokens: s.output === 'conclusion' ? 8000 : 4000, temperature: 0.2, label: node.label });
     if (s.type === 'summary') t.result = { summary: r.text.trim(), artifacts: t.result?.artifacts ?? [] };
@@ -223,7 +224,7 @@ async function planStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
     const prev = t.planHistory.at(-1);
     const lastRej = [...t.reviews].reverse().find((x) => x.stage === 'plan' && x.verdict === 'reject');
     const tools = toolsFor(rt, t, role);
-    const parts = [...header(t, s), context(t, s), tools ? repoContext(rt, t) : ''];
+    const parts = [...header(t, s), context(t, s), tools ? repoContext(rt, t) : '', guidance(rt, t)];
     if (prev && lastRej && lastRej.at > prev.at) {
       parts.push(`【上一版方案 v${prev.version}】\n${JSON.stringify(prev.plan, null, 1)}`);
       parts.push(`【${lastRej.reviewer === 'emperor' ? '皇上' : '审议'}封驳意见（第 ${lastRej.round} 轮）】\n${lastRej.comment}\n${lastRej.issues.map((i, k) => `${k + 1}. ${i}`).join('\n')}\n必须逐条修正。`);
@@ -271,6 +272,7 @@ async function reviewStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
         ...header(t, s),
         context(t, s),
         prior.length ? `【此前审议】\n${prior.map((x) => `第${x.round}轮 ${x.verdict === 'approve' ? '准奏' : '封驳'}：${x.comment}`).join('\n')}` : '',
+        guidance(rt, t),
         stage === 'result' ? `【系统核验的文件改动】\n${summarizeChanges(t) || '无'}` : '',
         `这是第 ${iterOf(t, s.id)} 轮审议（封驳上限 ${s.onReject!.max} 次，超限将升级皇上裁决）。只输出 JSON：{"verdict":"approve"|"reject","issues":[],"comment":"","rework":[${stage === 'result' ? '"需返工的子任务 id"' : ''}]}`,
       ];
@@ -368,6 +370,7 @@ async function execSubtask(rt: Runtime, t: Task, s: StepSpec, plan: Plan, node: 
       (node.iter ?? 1) > 1 ? `【返工要求】\n${t.rework?.feedback ?? ''}\n【你上一轮的结论】${truncate(prev?.output ?? '无', 1500)}` : '',
       tools ? grantPrompt(node) : '',
       tools ? repoContext(rt, t) : '（无文件工具：请直接在结论中给出成果文本）',
+      guidance(rt, t),
       s.instruction || EXEC_OUTPUT_RULE,
       s.instruction === EXEC_OUTPUT_RULE ? '' : EXEC_OUTPUT_RULE,
     ].filter(Boolean);

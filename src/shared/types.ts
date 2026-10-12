@@ -242,6 +242,8 @@ export interface Task {
   templateId?: string;
   allowRules?: AllowRule[]; // 「本旨意内不再询问」 rules granted on approvals
   skillsUsed?: SkillUse[]; // load_skill calls during this edict
+  canonUsed?: string[]; // 典章 entries injected into this edict's prompts
+  questions?: EdictQuestion[]; // 请旨 (ask_emperor) asked during this edict
   execRound?: number; // 1 = first execution; >1 = rework rounds
   rework?: { round: number; targets: string[]; feedback: string; by: 'menxia' | 'emperor' };
 }
@@ -289,7 +291,19 @@ export interface Activity {
   streaming?: boolean;
 }
 
-export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop';
+export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question';
+
+export interface EdictQuestion {
+  id: string;
+  agentId: AgentId;
+  nodeId?: string;
+  question: string;
+  options: string[];
+  answer?: string;
+  how?: 'option' | 'free' | 'self' | 'timeout' | 'none';
+  at: number;
+  answeredAt?: number;
+}
 
 /** One button on an approval card (Codex-style: proceed / proceed and don't ask again / no, and say what to do instead). */
 export interface ApprovalChoice {
@@ -382,7 +396,7 @@ export interface Session {
 }
 
 export interface MemorialStage {
-  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'skills' | 'report';
+  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'questions' | 'skills' | 'report';
   label: string;
   at?: number;
   items: string[];
@@ -561,6 +575,25 @@ export interface Settings {
   acpEnabled: boolean;
   /** high-risk approvals from ACP edicts are answered in Edict only, never in the editor */
   acpHighRiskInEdictOnly: boolean;
+  /** 全自动 mode only: an unanswered 请旨 (ask_emperor) continues on the default after this many minutes (0 = wait) */
+  askTimeoutMin: number;
+  /** 典章: the emperor's standing rules, preferences and lessons, injected into prompts by keyword */
+  canon: CanonEntry[];
+}
+
+export type CanonKind = 'forbid' | 'rule' | 'preference' | 'lesson';
+export interface CanonEntry {
+  id: string;
+  kind: CanonKind;
+  text: string;
+  /** injected when the edict mentions any of these; empty = every edict */
+  keywords: string[];
+  /** workspace root it applies to; absent = every workspace */
+  root?: string;
+  enabled: boolean;
+  at: number;
+  /** where it came from (e.g. a 门下 rejection collected into the canon) */
+  source?: { taskId: string; label: string };
 }
 
 export interface Snapshot {

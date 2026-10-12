@@ -18,6 +18,7 @@ import { gitStatus, gitShowHead, gitStage, gitUnstage, gitCommit, gitLog, gitIni
 import type { TerminalManager } from './services/terminal';
 import { PERMISSION_LABEL } from './runtime/permissions';
 import { LspUnavailableError } from './lsp/manager';
+import { addCanon, canonFromReview, projectRules, removeCanon, updateCanon } from './runtime/canon';
 
 /** Editor-side LSP calls: a missing / disabled server is a normal answer (with install hints), not an error. */
 async function lspSoft<T>(fn: () => Promise<T>): Promise<{ ok: true; result: T } | { ok: false; reason: string; message: string; candidates: { id: string; name: string; hint: string; homepage: string; note?: string }[] }> {
@@ -59,6 +60,12 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     acpStatus: () => host.acpStatus?.() ?? { enabled: false, listening: false, socketPath: '', connections: 0, approvedClients: [], sessions: [] },
     acpEditorConfig: () => host.acpEditorConfig?.() ?? null,
     setReleaseAlways: (root: string, on: boolean) => rt.setReleaseAlways(root, on),
+    // ── 典章 (E2)
+    canonAdd: (o: Parameters<typeof addCanon>[1]) => addCanon(rt, o),
+    canonUpdate: (id: string, patch: Parameters<typeof updateCanon>[2]) => updateCanon(rt, id, patch),
+    canonRemove: (id: string) => removeCanon(rt, id),
+    canonFromReview: (taskId: string, index: number, o?: Parameters<typeof canonFromReview>[3]) => canonFromReview(rt, taskId, index, o),
+    projectRules: () => (rt.workspace ? projectRules(rt.workspace) : { files: [], text: '' }),
     annotate: (agentId: AgentId, text: string, taskId?: string) => rt.annotate(agentId, text, taskId),
     revertChange: (taskId: string, changeId: string, force?: boolean) => rt.revertChange(taskId, changeId, force),
     blob: (hash: string) => rt.blobs.get(hash)?.toString('utf8') ?? null,

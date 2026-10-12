@@ -28,6 +28,8 @@ export function defaultSettings(): Settings {
     workspacePerms: {},
     acpEnabled: false,
     acpHighRiskInEdictOnly: true,
+    askTimeoutMin: 10,
+    canon: [],
   };
 }
 

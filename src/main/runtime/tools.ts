@@ -11,11 +11,12 @@ import { isAllowedPreviewUrl, previewUrlFor } from '../services/preview';
 import { executeMcpResourceTool, isMcpResourceTool } from '../mcp/resourceTools';
 import { skillRole } from '../../shared/skills';
 import { LSP_TOOL_SPEC, describeLspCall, runLspTool } from '../lsp/tool';
+import { ASK_EMPEROR_SPEC, askEmperor } from './askEmperor';
 
-export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'lsp' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page';
+export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'lsp' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page' | 'ask_emperor';
 
 export const READ_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'load_skill'];
-export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page'];
+export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page', 'ask_emperor'];
 
 const S = (props: Record<string, unknown>, required: string[]) => ({ type: 'object', properties: props, required, additionalProperties: false });
 
@@ -31,11 +32,12 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   load_skill: { name: 'load_skill', description: '加载一项技能（Skill）的完整说明', parameters: S({ name: { type: 'string' } }, ['name']) },
   preview_page: { name: 'preview_page', description: '在内置无头浏览器中打开工作区内的 HTML 页面（或本机 localhost 开发服务器）并截图，返回标题、可见文本、控制台错误与加载失败的资源。用于验证网页产物能否正常运行。', parameters: S({ path: { type: 'string', description: '工作区内的 HTML 相对路径，如 index.html' }, url: { type: 'string', description: '或本机开发服务器地址，如 http://localhost:5173/' }, wait_ms: { type: 'integer', description: '加载后额外等待毫秒数（动画/异步渲染），默认 800，最大 10000' }, width: { type: 'integer', description: '视口宽度，默认 1280' }, height: { type: 'integer', description: '视口高度，默认 800' } }, []) },
   lsp: LSP_TOOL_SPEC,
+  ask_emperor: ASK_EMPEROR_SPEC,
   view_changes: { name: 'view_changes', description: '查看本旨意迄今所有文件改动（统一 diff 摘要，系统记录，非 Agent 自述）', parameters: S({ path: { type: 'string', description: '可选：只看某文件' } }, []) },
 };
 
 const CLASS: Record<ToolName, ToolClass> = {
-  list_dir: 'read', read_file: 'read', search: 'read', outline: 'read', lsp: 'read', load_skill: 'meta', view_changes: 'meta',
+  list_dir: 'read', read_file: 'read', search: 'read', outline: 'read', lsp: 'read', load_skill: 'meta', view_changes: 'meta', ask_emperor: 'meta',
   write_file: 'write', edit_file: 'write', delete_file: 'write', run_command: 'command', preview_page: 'read',
 };
 
@@ -150,6 +152,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   }
 
   if (tool === 'preview_page') return previewPage(ctx, args);
+  if (tool === 'ask_emperor') return askEmperor(ctx, args);
 
   let ws;
   try {
@@ -371,6 +374,8 @@ export const describeToolCall = (name: string, args: Record<string, unknown>): s
       return `查看改动${p ? ' ' + p : ''}`;
     case 'preview_page':
       return `预览 ${p || String(args.url ?? '')}`;
+    case 'ask_emperor':
+      return `请旨：${String(args.question ?? '').slice(0, 80)}`;
     case 'mcp_list_resources':
       return '列出 MCP 资源';
     case 'mcp_read_resource':

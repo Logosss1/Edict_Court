@@ -677,8 +677,9 @@ export class Runtime {
   }
 
   /** Ask the emperor; with `choices` the card offers those buttons (Codex-style) and the note box. */
-  requestDecision(req: Omit<ApprovalRequest, 'id' | 'at' | 'status'>): Promise<ApprovalDecision> {
+  requestDecision(req: Omit<ApprovalRequest, 'id' | 'at' | 'status'>, o: { onId?: (id: string) => void } = {}): Promise<ApprovalDecision> {
     const ap: ApprovalRequest = { ...req, id: uid('ap'), at: now(), status: 'pending' };
+    o.onId?.(ap.id);
     this.approvals.set(ap.id, ap);
     this.audit.record(req.agentId, 'approval_requested', { tool: req.tool, summary: req.summary, risk: req.risk, reason: req.reason, kind: req.kind ?? 'action' }, req.taskId);
     this.emit({ type: 'approval', approval: ap });
@@ -1196,6 +1197,8 @@ export function buildMemorial(task: Task): Memorial {
   ];
   // E8: skills the officials actually loaded (with the text hash, so the exact version is on record)
   if (task.skillsUsed?.length) stages.splice(stages.length - 1, 0, { key: 'skills', label: '所用技能', at: task.skillsUsed[0].at, items: task.skillsUsed.map((u) => `${agentName(u.agentId)} 加载 ${u.name}（sha256:${u.sha256.slice(0, 12)}）`) });
+  // E1: what the officials asked the emperor, and the answers they worked from
+  if (task.questions?.length) stages.splice(stages.length - 1, 0, { key: 'questions', label: '请旨记录', at: task.questions[0].at, items: task.questions.map((q) => `${agentName(q.agentId)} 问：${q.question} —— ${q.answer ? `答：${q.answer}` : '未答复'}`) });
   return {
     taskId: task.id, title: task.title, edict: task.edict, tier: task.tier, finalState: task.state, archivedAt: now(), stages,
     artifacts: task.result?.artifacts ?? [], usage: task.usage,

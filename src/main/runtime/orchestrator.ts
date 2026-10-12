@@ -15,6 +15,7 @@ import { createDebate, runDebate, concludeDebate } from './debate';
 import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt, nodeConclusion, parseConclusion, scheduleExec, toolsForNode } from './execPolicy';
 export { parseConclusion, type ExecConclusion } from './execPolicy';
 import { flowDecideGate, flowStep } from './flow';
+import { canonBlock } from './canon';
 import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
 
 const drivingByRt = new WeakMap<Runtime, Set<string>>();
@@ -298,6 +299,11 @@ export function repoContext(rt: Runtime, t: Task): string {
   }
 }
 
+/** E2: the workspace's rule files plus the emperor's 典章, for every prompt that plans, reviews or does the work. */
+export function guidance(rt: Runtime, t: Task): string {
+  return canonBlock(rt, t, rt.workspace && t.workspace === rt.workspace.root ? rt.workspace : null);
+}
+
 /** `allowed` = executor roles of a 协同设计 (id → name); default = the six ministries. */
 export function validatePlan(p: unknown, allowed?: Record<string, string>): { plan?: Plan; error?: string } {
   const j = p as Partial<Plan> | null;
@@ -365,7 +371,7 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
   const node = ensureNode(t, `plan-${version}`, { kind: 'plan', agentId: 'zhongshu', label: version === 1 ? '中书规划' : `中书重拟 v${version}` });
   if (node.status === 'failed' || node.status === 'cancelled') return false;
   await runNode(rt, t, node, async () => {
-    const parts = [`【旨意】${t.title}\n${t.edict}`, repoContext(rt, t)];
+    const parts = [`【旨意】${t.title}\n${t.edict}`, repoContext(rt, t), guidance(rt, t)].filter(Boolean);
     const debate = t.debateId ? rt.debates.get(t.debateId) : undefined;
     if (debate?.conclusion) parts.push(`【朝堂议政结论】\n${truncate(debate.conclusion, 3000)}`);
     if (latest && lastRej) {
@@ -430,6 +436,7 @@ async function stepMenxia(rt: Runtime, t: Task): Promise<boolean> {
       `【旨意】${t.title}\n${t.edict}`,
       `【中书省方案 v${latest.version}${latest.author === 'emperor' ? '（皇上涂改版）' : ''}】\n${JSON.stringify(latest.plan, null, 1)}`,
       reviews.length ? `【此前审议】\n${reviews.map((r) => `第${r.round}轮 ${r.verdict === 'approve' ? '准奏' : '封驳'}：${r.comment}`).join('\n')}` : '',
+      guidance(rt, t),
       `这是第 ${round} 轮审议（封驳上限 ${t.budget.maxRejections} 次，超限将升级皇上裁决）。请从可行性、完整性、风险、资源四个维度审议，输出 JSON。`,
     ].filter(Boolean).join('\n\n');
     const tools = rt.workspace && t.workspace === rt.workspace.root ? READ_TOOLS : undefined;
@@ -555,6 +562,7 @@ async function runExec(rt: Runtime, t: Task, node: RunNode, order?: string): Pro
       node.id.endsWith('-r1') ? '' : `【返工要求（${t.rework?.by === 'emperor' ? '皇上' : '门下省'}）】\n${t.rework?.feedback ?? ''}\n【你上一轮的结论】${truncate(prev?.output ?? '无', 1500)}`,
       hasWs ? grantPrompt(node) : '',
       hasWs ? repoContext(rt, t) : '（未打开工作区：无法读写文件，请直接在结论中给出成果文本）',
+      guidance(rt, t),
       EXEC_OUTPUT_RULE,
     ].filter(Boolean);
     const tools = toolsForNode(node, hasWs ? ALL_TOOLS : undefined);
@@ -606,7 +614,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       await runNode(rt, t, node, async () => {
         const concl = plan.subtasks.map((s) => `- ${s.id} ${s.title}（验收：${s.acceptance}）：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1200)}`);
         const tools = rt.workspace && t.workspace === rt.workspace.root ? (['view_changes', 'read_file', 'list_dir', 'search', 'load_skill'] as const) : (['view_changes', 'load_skill'] as const);
-        const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
+        const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}${(() => { const g = guidance(rt, t); return g ? `\n\n${g}` : ''; })()}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
         verdict = parseVerdict(r.text);
         if (!verdict) {
           const r2 = await runAgent({ rt, agentId: 'menxia', task: t, node, history: r.messages, prompt: '请只输出审议结论 JSON：{"verdict":"approve"|"reject","issues":[],"comment":"","rework":[]}', maxTokens: 800, temperature: 0, label: '门下省修正格式' });
@@ -675,7 +683,7 @@ async function stepSolo(rt: Runtime, t: Task): Promise<boolean> {
     await runNode(rt, t, node, async () => {
       const hist = (session?.messages ?? []).slice(0, -1).slice(-16).map((m) => ({ role: m.role, content: m.content }));
       const tools = rt.workspace && t.workspace === rt.workspace.root ? ALL_TOOLS : undefined;
-      const ctx = tools ? `\n\n${repoContext(rt, t)}` : '';
+      const ctx = [tools ? repoContext(rt, t) : '', guidance(rt, t)].filter(Boolean).map((x) => `\n\n${x}`).join('');
       const r = await runAgent({ rt, agentId: 'solo', task: t, node, session, history: hist, prompt: `${t.edict}${hist.length ? '' : ctx}`, tools, maxSteps: 40, maxTokens: 8000, temperature: 0.2, label: 'Solo 执行', model: t.strongModel });
       if (session) {
         session.messages.push({ role: 'assistant', content: r.text, at: now() });

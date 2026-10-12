@@ -92,7 +92,7 @@ export function grantPrompt(node: RunNode): string {
 /** Tools for an exec node: a read-only grant only gets the read tools. */
 export function toolsForNode(node: RunNode, tools: ToolName[] | undefined): ToolName[] | undefined {
   if (!tools) return undefined;
-  return node.grant === 'readonly' ? tools.filter((x) => READ_TOOLS.includes(x)) : tools;
+  return node.grant === 'readonly' ? tools.filter((x) => READ_TOOLS.includes(x) || x === 'ask_emperor') : tools;
 }
 
 // ───────────────────────── conclusions & evidence ─────────────────────────
