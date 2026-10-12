@@ -15,6 +15,8 @@ const common = { bundle: true, sourcemap: prod ? false : 'linked', minify: prod,
 
 await build({ ...common, entryPoints: [path.join(root, 'src/main/main.ts')], outfile: path.join(dist, 'main.js'), platform: 'node', format: 'cjs', target: 'node22', external: ['electron'] });
 await build({ ...common, entryPoints: [path.join(root, 'src/preload/preload.ts')], outfile: path.join(dist, 'preload.js'), platform: 'node', format: 'cjs', target: 'node22', external: ['electron'] });
+// ACP stdio bridge that editors launch (ELECTRON_RUN_AS_NODE=1 Edict acp-bridge.js, or plain node)
+await build({ ...common, entryPoints: [path.join(root, 'src/acp-bridge/bridge.ts')], outfile: path.join(dist, 'acp-bridge.js'), platform: 'node', format: 'cjs', target: 'node22', banner: { js: '#!/usr/bin/env node' } });
 await build({
   ...common,
   entryPoints: [path.join(root, 'src/renderer/main.tsx')],
