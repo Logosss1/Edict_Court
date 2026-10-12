@@ -638,13 +638,42 @@ export interface PreviewResult {
   ok: boolean;
   title: string;
   text: string;
-  console: { level: string; message: string; source?: string; line?: number }[];
+  /** step: 1-based index of the interactive step that was running when the line was logged */
+  console: { level: string; message: string; source?: string; line?: number; step?: number }[];
   failed: string[];
   blocked: string[];
   screenshot?: string; // blob hash (PNG)
   width: number;
   height: number;
   loadMs: number;
+  /** interactive steps (preview_page `actions`), in order */
+  steps?: PreviewStepResult[];
+  /** extra viewport screenshots taken after the steps (preview_page `viewports`) */
+  viewports?: PreviewViewportResult[];
+}
+
+/** One step of an interactive preview check (click / fill / press / assert …). */
+export interface PreviewStepResult {
+  index: number; // 1-based
+  action: string; // e.g. 点击 #start
+  ok: boolean;
+  note: string;
+  ms: number;
+  /** a failure here does not stop the run */
+  optional?: boolean;
+  /** not run: an earlier step failed, the page hung or the time budget ran out */
+  skipped?: boolean;
+  screenshot?: string; // blob hash (PNG), when the step asked for one
+}
+
+export interface PreviewViewportResult {
+  width: number;
+  height: number;
+  screenshot?: string; // blob hash (PNG)
+  /** page content is wider than the viewport (horizontal scrollbar) */
+  overflowX?: boolean;
+  contentWidth?: number;
+  note?: string;
 }
 
 // ───────────────────────── MCP (Model Context Protocol) ─────────────────────────

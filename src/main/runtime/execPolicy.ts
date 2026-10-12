@@ -144,7 +144,8 @@ export function checkEvidence(t: Task, node: RunNode, c: ExecConclusion, toolCou
   checks.push(`系统记录的改动：${touched.length ? touched.join(', ') : '无'}`);
   const cmds = toolCounts.run_command ?? 0;
   const previews = toolCounts.preview_page ?? 0;
-  checks.push(`本节点执行命令 ${cmds} 次${previews ? `、预览页面 ${previews} 次` : ''}`);
+  const previewFails = toolCounts['preview_page:failed'] ?? 0;
+  checks.push(`本节点执行命令 ${cmds} 次${previews ? `、预览页面 ${previews} 次${previewFails ? `（其中 ${previewFails} 次未通过）` : ''}` : ''}`);
   if (status === 'done') {
     const effect = node.effect ?? 'read';
     if (missing.length) issues.push(`声称的产物不存在：${missing.join('、')}`);

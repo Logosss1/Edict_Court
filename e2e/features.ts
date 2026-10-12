@@ -26,7 +26,8 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     brain: (c) => {
       if (c.system.includes('独相') && c.lastUser.includes('PREVIEWTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'index.html', wait_ms: 300 } }] };
       if (c.system.includes('独相') && c.lastUser.includes('MCPTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'mcp__demo__echo', args: { text: '朕知道了' } }] };
-      if (c.system.includes('独相') && (c.lastUser.includes('PREVIEWTEST') || c.lastUser.includes('MCPTEST'))) return { text: '已验证。' };
+      if (c.system.includes('独相') && c.lastUser.includes('PREVIEWACT') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'click.html', actions: [{ fill: '#name', value: '魏征' }, { click: '#go' }, { assertText: '已点名：李靖', timeoutMs: 300 }] } }] };
+      if (c.system.includes('独相') && (c.lastUser.includes('PREVIEWTEST') || c.lastUser.includes('MCPTEST') || c.lastUser.includes('PREVIEWACT'))) return { text: '已验证。' };
       return base(c);
     },
   });
@@ -170,6 +171,46 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     // hidden-browser capture (the same host function the agent tool uses)
     const cap: any = await inv('previewCapture', 'preview://ws/index.html', 800, 600);
     ok('无头预览：标题 / 文本 / 截图', cap.title === '凌烟阁' && cap.text.includes('已修复') && /^[a-f0-9]{64}$/.test(cap.screenshot ?? ''), JSON.stringify({ title: cap.title, blocked: cap.blocked?.length }));
+    // interactive steps in the same hidden browser: fill / select / check / press / click change the page; assertions verify it
+    fs.writeFileSync(
+      path.join(ws, 'click.html'),
+      `<!doctype html><html><head><meta charset="utf-8"><title>点名册</title><style>body{font-family:sans-serif;margin:0;padding:16px}.wide{width:520px;height:30px;background:#b3322a}</style></head>
+<body><h1>点名册</h1><input id="name" placeholder="姓名"><select id="dept"><option value="li">吏部</option><option value="bing">兵部</option></select>
+<label><input type="checkbox" id="ok"> 已核</label><button type="button" id="go">点名</button><p id="out">尚未点名</p><div class="wide"></div>
+<script>
+var go = document.getElementById('go');
+go.addEventListener('click', function () {
+  var d = document.getElementById('dept');
+  document.getElementById('out').textContent = '已点名：' + document.getElementById('name').value + '（' + d.options[d.selectedIndex].text + (document.getElementById('ok').checked ? '，已核' : '') + '）';
+  fetch('https://cdn.example.com/track').catch(function () {});
+  alert('点名完成');
+});
+document.getElementById('name').addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
+</script></body></html>`,
+    );
+    const interact: any = await inv('previewCapture', 'preview://ws/click.html', 800, 600, {
+      actions: [
+        { fill: '#name', value: '魏征' },
+        { select: '#dept', value: '兵部' },
+        { check: '#ok' },
+        { press: 'Enter', selector: '#name' },
+        { assertText: '已点名：魏征（兵部，已核）' },
+        { fill: '#name', value: '房玄龄' },
+        { click: '#go', screenshot: true },
+        { assertText: '已点名：房玄龄（兵部，已核）', selector: '#out' },
+        { assertVisible: '#out' },
+      ],
+      viewports: [{ width: 375, height: 667 }],
+    });
+    const stepNotes = JSON.stringify((interact.steps ?? []).map((s: any) => `${s.ok ? '✓' : '✗'} ${s.action}: ${s.note}`));
+    ok('无头预览交互：填写 / 选择 / 勾选 / 回车 / 点击后文字改变，断言通过', interact.steps?.length === 9 && interact.steps.every((s: any) => s.ok) && interact.text.includes('已点名：房玄龄（兵部，已核）'), stepNotes);
+    ok('交互期间：alert 不阻塞（记入控制台）、外部请求仍被拦截、步骤截图存为 blob', interact.console.some((c: any) => c.message.includes('[alert] 点名完成') && c.step === 4) && interact.blocked.some((u: string) => u.includes('cdn.example.com/track')) && /^[a-f0-9]{64}$/.test(interact.steps?.[6]?.screenshot ?? ''), JSON.stringify({ console: interact.console?.slice(0, 3), blocked: interact.blocked }));
+    const vp = interact.viewports?.[0];
+    const vpUrl: string | null = vp?.screenshot ? await inv('blobImage', vp.screenshot) : null;
+    const vpWidth = vpUrl ? Buffer.from(vpUrl.split(',')[1], 'base64').readUInt32BE(16) : 0;
+    ok('交互后另截手机尺寸：375 宽截图，并发现横向溢出', vpWidth === 375 && vp?.overflowX === true && vp?.contentWidth > 375, JSON.stringify({ vpWidth, overflowX: vp?.overflowX, contentWidth: vp?.contentWidth }));
+    const failRun: any = await inv('previewCapture', 'preview://ws/click.html', 800, 600, { actions: [{ click: '#go' }, { assertText: '不存在的文字', timeoutMs: 300 }, { click: '#go' }] });
+    ok('交互断言失败：该步报错并给出当前文本，后续步骤不执行', failRun.steps?.[0]?.ok === true && failRun.steps?.[1]?.ok === false && /未找到文本 “不存在的文字”；当前文本：.*已点名/.test(failRun.steps?.[1]?.note ?? '') && failRun.steps?.[2]?.skipped === true, JSON.stringify(failRun.steps?.map((s: any) => s.note)));
     // agent uses preview_page
     fs.writeFileSync(path.join(ws, 'app.js'), "document.getElementById('n').textContent='共 24 人';\nbroken();\n");
     await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
@@ -182,6 +223,15 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const act = (await win.textContent('[data-testid=act-preview]').catch(() => '')) ?? '';
     ok('Agent 调用 preview_page：活动流展示截图与控制台错误', act.includes('凌烟阁') && act.includes('broken'), act.slice(0, 120));
     await shot('34-agent-preview');
+    // agent preview_page with actions: per-step results (and the failed assertion) are in the tool result
+    await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
+    await win.fill('#composer-input', 'PREVIEWACT 验证点名页');
+    await win.click('[data-testid=composer-send]');
+    const pt = await waitTask((x) => x.edict.includes('PREVIEWACT') && ['Done', 'Blocked'].includes(x.state), 30000);
+    const pacts: any[] = await inv('activities', pt.id);
+    const tr = pacts.find((a) => a.kind === 'tool_result' && a.data?.name === 'preview_page');
+    const pv = pacts.find((a) => a.kind === 'preview');
+    ok('Agent 调用 preview_page 带 actions：工具结果逐步列出，断言失败判为未通过', !!tr && tr.data.ok === false && /交互检查：未通过（2\/3 步成功；第 3 步「断言文本 “已点名：李靖”」失败）/.test(tr.content) && /✓ 2\. 点击 #go/.test(tr.content) && /交互 2\/3 步通过/.test(pv?.content ?? ''), (tr?.content ?? '').slice(0, 300));
   }
 
   // ── 4. 技能与 MCP 中心

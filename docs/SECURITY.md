@@ -13,6 +13,7 @@ Edict **不监听任何网络端口**。唯一的例外：你在「技能与 MCP
 - 预览页运行在独立会话分区 `edict-preview`：`<webview>` 在 `will-attach-webview` 中被强制去掉 preload、开启 sandbox / contextIsolation、关闭 Node；不允许弹窗、下载、任何权限请求；导航只允许 `preview://ws` 与 localhost。
 - 预览页的**外发网络默认拦截**（只放行工作区、localhost、data/blob），防止 Agent 生成的页面把数据发往外部；需要 CDN 时由你在预览栏确认放开（设置项 `previewAllowNetwork`），可随时恢复。
 - Agent 工具 `preview_page` 使用同一分区的离屏隐藏窗口，串行执行、20 秒超时，结果与截图写入审计 / 快照库。
+- `preview_page` 的交互步骤（`actions`：点击、填写、按键、断言等）在**同一个**隐藏窗口里执行，分区、外网拦截、导航限制、禁止弹窗 / 下载 / 权限全部不变；页面脚本是固定代码，选择器与填写的值只以 JSON 数据传入，不拼接成代码。最多 25 步、共 60 秒，页面卡死即中止；页面的 `alert` / `confirm` 不会阻塞（记入控制台，隐藏窗口另设 `disableDialogs`）。
 
 ## MCP 服务
 - 配置文件 `mcp.json`（Cursor 格式）存于数据目录；保存时**形似密钥的值**（名称含 key/token/secret/password/auth…，或值形如 `sk-…`、`ghp_…`、`Bearer …`；以及 `--api-key=…` 类参数）移入钥匙串加密存储，文件中只留 `${secret:…}` 占位。
