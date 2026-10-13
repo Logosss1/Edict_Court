@@ -14,9 +14,7 @@ import { redactSecrets, sha256, truncate } from '../runtime/util';
 import { safeEnv, userShell } from '../services/exec';
 import { McpClient, McpHttpError, SseTransport, StdioTransport, StreamableHttpTransport, type McpContentBlock, type McpPrompt, type McpResource, type McpResourceTemplate, type McpTool, type Transport } from './client';
 import { McpOAuth, OAUTH_LOGIN_TIMEOUT_MS } from './oauth';
-
-const SECRET_NAME = /(key|token|secret|password|passwd|auth|credential|cookie|bearer)/i;
-const SECRET_VALUE = /^(sk-|sk_|ghp_|gho_|github_pat_|xox[abpr]-|glpat-|AKIA|AIza|Bearer\s+\S{12,}|Basic\s+\S{8,})/;
+import { SECRET_NAME, SECRET_VALUE } from '../../shared/mcpSecrets';
 const MAX_LOGS = 300;
 const STATE_RESOURCES = 200; // kept on McpServerState (broadcast to the renderer)
 const LIST_RESOURCES = 1000; // returned by listResources()
@@ -68,7 +66,7 @@ function cleanPrompt(p: McpPrompt): McpPromptInfo {
 }
 
 /** Audit form of a resource URI: no userinfo, query or fragment. */
-function auditUri(uri: string) {
+export function auditUri(uri: string) {
   return uri.replace(/^([a-z][\w+.-]*:\/\/)[^/@]*@/i, '$1').replace(/[?#].*$/, '').slice(0, 200);
 }
 
