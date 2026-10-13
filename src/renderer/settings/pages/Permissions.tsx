@@ -12,7 +12,7 @@ import { NumField, baseName, fmtStamp } from './numField';
 import './permissions.css';
 
 const MODES: { id: PermissionMode; label: string; icon: string; desc: string; warn?: boolean }[] = [
-  { id: 'readonly', label: '只读', icon: 'eye', desc: '只看不改：读文件、搜索都行，写文件和执行命令一律不准。适合让官员先调研、出方案。' },
+  { id: 'readonly', label: '只读', icon: 'eye', desc: '只看不改：读文件、搜索都行，写文件和执行命令不准；协同旨意的子任务要动手时会弹卡片，你准许了才写。适合让官员先调研、出方案。' },
   { id: 'ask', label: '询问', icon: 'shield', desc: '写文件、执行命令都先问你。最稳妥。' },
   { id: 'auto-edit', label: '自动编辑', icon: 'edit', desc: '写文件自动；命令先问你，安全命令（ls、git status、npm test…）直接放行。' },
   { id: 'auto', label: '全自动', icon: 'zap', desc: '写文件、执行命令都不再询问，写任务开工也不问。高风险、发版与部署仍会问你。', warn: true },

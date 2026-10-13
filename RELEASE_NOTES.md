@@ -2,6 +2,45 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 2.0.0
+
+The first 2.x release.
+
+**What's new**
+- **Execution you stay in charge of**:
+  - Every subtask is tagged 只读, 写入 or 验证. Read subtasks run side by side; write and verify subtasks run one at a time, and only one writer works on an edict at once.
+  - Subtasks start read-only. Before each write subtask starts, a card in the agent pane asks: 准许开工, 准许，本子任务内写入与命令免询问, 改为只读执行 or 驳回, with an optional note. A read subtask that tries to change files asks first. 全自动 skips these cards.
+  - Approval cards offer 准许, 准许，本旨意内不再询问, 准许，本工作区永久允许 and 驳回. 设置 · 权限与审批 lists the rules with where they came from, and you can revoke them. High-risk actions always ask.
+  - Release and deploy commands (`git push`, publish, deploy tools …) ask every time, unless you turn on permanent allow for that workspace in 权限与审批.
+  - **成果核验**: files an official claims are hashed and checked against the changes Edict recorded. Missing evidence marks the result 成果存疑, and Court Lite then stops for your 御批.
+  - **请旨**: officials can stop and ask you a question with options. **典章**: your standing rules (禁止 / 规矩 / 偏好 / 教训) and the project's rule files (`AGENTS.md`, `.edict/rules.md` and the like) go into planning, review and execution.
+  - Files changed by `run_command` are recorded too (shadow snapshots), so 撤回改动 and 撤回并重做 work for a node or a whole edict.
+  - `preview_page` can click, fill, press keys, wait and check text in the page, and capture extra viewport sizes.
+- **One git worktree per edict** (on by default in git repositories):
+  - Court edicts on the same repository run side by side, each on its own branch `edict/<id>` in a folder inside the data folder. The checkout you have open is not touched until 结案.
+  - The 结案 dialog lists each changed file with line counts and the official (or command) that last changed it, and offers 合并 / 保留分支 / 丢弃 with an editable commit subject. A merge that would conflict is stopped and the branch kept.
+  - You can also create a worktree yourself and open it as the workspace, from 源代码管理 or 设置 · 工作树.
+- **MCP**:
+  - Log in to remote servers with OAuth. The browser opens only when you click 登录; a short-lived port on 127.0.0.1 receives the callback.
+  - Resources and prompts. In the 下旨 box, `/` lists MCP prompts and `@` inserts a resource reference; the resource text is attached when you send the edict.
+  - New 设置 · 连接服务（MCP） page: status tiles and filters, add cards for remote and local servers that show which values go to the keychain, and server cards with login, trust, tool permissions, resources, prompts and logs.
+- **Language servers (LSP)**: Edict finds language servers already installed on your Mac (24 well-known ones) and shows install commands for the missing ones; it installs nothing itself. Officials get an `lsp` tool (diagnostics, definition, references, hover, symbols), and the editor shows the servers' diagnostics. See 设置 · 语言服务.
+- **Editors over ACP**: Zed and other ACP editors can send edicts to Edict over a local socket (no network port), follow progress and answer permission requests. Off by default; each editor must be approved the first time it connects. 设置 · 编辑器接入 has the switch and a Zed snippet to copy.
+- **Built-in skill pack**: 37 skills for planning, review, investigation, QA, design, release, deploy, safety and everyday work. Each official holds a few duty skills; the rest are installed but not equipped. On 设置 · 技能 you switch extra skills on per official, like browser extensions. The skills an official loaded are recorded, with their hash, on the edict and the memorial.
+- **A new look**:
+  - **设置** is one tab with a left nav and search: 外观与通知, 存储与备份, 模型服务, 官员模型与路由, 运行策略, 权限与审批, 典章, 连接服务, 技能, 语言服务, 编辑器接入, 工作树, 审计日志, 使用说明.
+  - **Activity bar**: 待办 and 网页预览 side views, screens you can pin (right-click to customize), and 连接服务 / 技能 / 权限 / 终端 / 设置 at the bottom.
+  - **旨意看板**: stat tiles, a 需要你处理 lane with inline actions, filters (including 工作树) and a list view.
+  - **Agent pane**: decision cards (number keys, ⏎, Esc), a plan card with each subtask's tag and live status, and a 成果核验 line for each ministry.
+  - Desktop notifications: 全部, 只提醒要我处理的 or 关闭 (设置 · 外观与通知).
+- **SQLite storage**: everything that was in `state.json` and `settings.json` now lives in one database, `edict.db`. 设置 · 存储与备份 shows where it is and makes a backup on demand.
+
+**Install**: download `Edict-2.0.0-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". When you install over 1.x, your data is migrated into `edict.db` on first launch, and the original `state.json` / `settings.json` are kept in a `backup-1.x-…` folder inside the data folder, with rollback steps in its `README.txt`.
+
+**Verified**: 179/179 unit + integration tests, 21/21 + 78/78 end-to-end UI checks, the court smoke test and the app smoke test on Linux + Xvfb (mock LLM). Not yet verified with a real model service.
+
+**Not included**: an Intel (x86_64) build, auto-update, and Developer ID signing and notarization.
+
 ## 1.2.7
 
 **What's new**
