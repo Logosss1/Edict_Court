@@ -18,6 +18,8 @@ import { gitStatus, gitShowHead, gitStage, gitUnstage, gitCommit, gitLog, gitIni
 import type { TerminalManager } from './services/terminal';
 import { PERMISSION_LABEL } from './runtime/permissions';
 import { LspUnavailableError } from './lsp/manager';
+import { worktreeCreate, worktreeFinish, worktreeList, worktreeOnDelete, worktreeOpen, worktreeRemove } from './runtime/worktrees';
+import type { WorktreeAction } from '../shared/types';
 
 /** Editor-side LSP calls: a missing / disabled server is a normal answer (with install hints), not an error. */
 async function lspSoft<T>(fn: () => Promise<T>): Promise<{ ok: true; result: T } | { ok: false; reason: string; message: string; candidates: { id: string; name: string; hint: string; homepage: string; note?: string }[] }> {
@@ -63,14 +65,19 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     revertChange: (taskId: string, changeId: string, force?: boolean) => rt.revertChange(taskId, changeId, force),
     blob: (hash: string) => rt.blobs.get(hash)?.toString('utf8') ?? null,
     memorialMarkdown: (taskId: string) => rt.memorialMarkdown(taskId),
-    deleteTask: (id: string) => {
+    /** `worktree`: what to do with an edict worktree still in use — discard / keep (commit, keep branch); omitted = leave it where it is. */
+    deleteTask: async (id: string, o?: { worktree?: 'discard' | 'keep' }) => {
       const t = rt.getTask(id);
       if (!['Done', 'Cancelled'].includes(t.state)) throw new Error('只能删除已结案的旨意（奏折阁中的记录会保留）');
+      const r = await worktreeOnDelete(rt, t, o?.worktree);
       rt.tasks.delete(id);
-      rt.audit.record('emperor', 'task_removed_from_board', {}, id);
+      rt.audit.record('emperor', 'task_removed_from_board', r.worktree ? { worktree: r.worktree.path, worktreeStatus: r.worktree.status } : {}, id);
       rt.emit({ type: 'task_removed', id });
       rt.persist();
+      return r;
     },
+    /** 结案 dialog done later from the edict detail: merge / keep / discard its worktree (idempotent). */
+    worktreeFinish: (taskId: string, action: WorktreeAction) => worktreeFinish(rt, taskId, action),
 
     // ── debate (朝堂议政)
     debateCreate: (topic: string, participants?: AgentId[], maxRounds?: number) => createDebate(rt, { topic, participants, maxRounds }),
@@ -260,9 +267,17 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     }),
     gitLog: () => gitLog(ws().root),
     gitInit: () => gitInit(ws().root),
+    // worktrees of the open repository (Source Control)
+    worktreeList: () => worktreeList(rt),
+    worktreeCreate: (o: { branch: string; base?: string }) => worktreeCreate(rt, o),
+    worktreeOpen: (p: string) => worktreeOpen(rt, p),
+    worktreeRemove: (p: string, o?: { deleteBranch?: boolean; force?: boolean }) => worktreeRemove(rt, p, o),
 
-    // ── terminal
-    termCreate: (id: string, cols: number, rows: number) => terminals.create(id, rt.workspace?.root ?? process.env.HOME ?? '/', cols, rows),
+    // ── terminal (taskId: open it in that edict's worktree)
+    termCreate: (id: string, cols: number, rows: number, taskId?: string) => {
+      const t = taskId ? rt.tasks.get(taskId) : undefined;
+      return terminals.create(id, (t && rt.workspaceFor(t)?.root) ?? rt.workspace?.root ?? process.env.HOME ?? '/', cols, rows);
+    },
     termWrite: (id: string, data: string) => terminals.write(id, data),
     termResize: (id: string, cols: number, rows: number) => terminals.resize(id, cols, rows),
     termKill: (id: string) => terminals.kill(id),

@@ -21,6 +21,8 @@ export function safeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   for (const [k, v] of Object.entries(process.env)) {
     if (/KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL/i.test(k)) continue;
     if (k.startsWith('ELECTRON_') || k === 'NODE_OPTIONS') continue;
+    // git's env config is all-or-nothing: COUNT without its KEY_n (stripped above) makes every git call fail
+    if (/^GIT_CONFIG_(COUNT|KEY_\d+|VALUE_\d+)$/.test(k)) continue;
     env[k] = v;
   }
   // GUI apps on macOS get a minimal PATH; add common locations.

@@ -20,6 +20,8 @@ import { Workspace } from '../services/workspace';
 import { McpManager } from '../mcp/manager';
 import { LspManager, loadLspConfig, saveLspConfig, type LspConfig } from '../lsp/manager';
 import { DesignStore } from './designs';
+import { edictDir, raiseWorktreeCard, recoverWorktrees } from './worktrees';
+import { previewHostFor, taskIdFromPreviewHost } from '../services/preview';
 import type { FetchLike, ProviderRuntime } from '../llm/types';
 import { listRemoteModels, streamLlm } from '../llm/adapters';
 import { PROVIDER_PRESETS } from '../llm/presets';
@@ -104,6 +106,10 @@ export class Runtime {
   readonly store: SqliteStore;
   /** language servers found on this machine (auto-detected; missing ones show install hints) */
   readonly lsp: LspManager;
+  /** Workspace objects for edict worktrees (and other folders an edict works in), by root */
+  private wsCache = new Map<string, Workspace>();
+  /** language servers for edict worktrees (the editor's diagnostics stay on `lsp`) */
+  private lspByRoot = new Map<string, LspManager>();
   private listeners = new Set<(e: RuntimeEvent) => void>();
   private activityBuf = new Map<string, Activity[]>(); // taskId|'_global' → recent
   private activityLogs = new Map<string, JsonlLog<Activity>>();
@@ -190,7 +196,6 @@ export class Runtime {
     if (rep?.imported) this.audit.record('system', 'storage_migrated', { from: rep.imported.from, counts: rep.imported.counts as unknown as Record<string, unknown>, backupDir: rep.backupDir ?? null });
     this.designs.load();
     this.recoverInterrupted();
-    this.persist();
     if (this.settings.lastWorkspace && fs.existsSync(this.settings.lastWorkspace)) {
       try {
         this.workspace = new Workspace(this.settings.lastWorkspace);
@@ -198,6 +203,8 @@ export class Runtime {
         this.workspace = null;
       }
     }
+    recoverWorktrees(this);
+    this.persist();
     this.healthTimer = setInterval(() => this.healthCheck(), 5000);
     this.healthTimer.unref?.();
   }
@@ -860,14 +867,18 @@ export class Runtime {
       this.touch(task);
     }
     this.audit.record(agentId, 'file_change', { path: rel, op: ch.op, beforeHash: ch.beforeHash, afterHash: ch.afterHash }, task?.id);
-    this.emit({ type: 'fs_changed', paths: [rel] });
-    void this.lsp.notifyFilesChanged([rel]).catch(() => {});
+    const ws = task ? this.workspaceFor(task) : this.workspace;
+    // a write inside an edict's worktree leaves the open workspace untouched
+    if (!ws || ws === this.workspace) this.emit({ type: 'fs_changed', paths: [rel] });
+    // (a worktree's language servers exist only once its agent used the lsp tool)
+    void (!ws || ws === this.workspace ? this.lsp : this.lspByRoot.get(ws.root))?.notifyFilesChanged([rel]).catch(() => {});
     return ch;
   }
 
   /** Change LSP settings and persist them (lsp.json). */
   setLspConfig(patch: Partial<LspConfig>) {
     this.lsp.setConfig(patch);
+    for (const m of this.lspByRoot.values()) m.setConfig(patch);
     saveLspConfig(path.join(this.opts.dataDir, 'lsp.json'), this.lsp.config);
     this.audit.record('emperor', 'lsp_config', { keys: Object.keys(patch) });
   }
@@ -877,7 +888,8 @@ export class Runtime {
     const ch = t.changes.find((c) => c.id === changeId);
     if (!ch) throw new Error('改动记录不存在');
     if (ch.reverted) throw new Error('该改动已撤回');
-    const ws = this.requireWorkspace();
+    const ws = this.workspaceFor(t);
+    if (!ws) throw new Error(t.worktree && t.worktree.status !== 'active' ? '本旨意的工作树已结案处理（合并 / 保留 / 丢弃），不能在此撤回单个改动' : '本旨意的工作区当前不可用（已切换到别的文件夹，或独立工作树已不存在）');
     const cur = ws.readBuffer(ch.path);
     const curHash = cur ? sha256(cur) : null;
     if (!force && curHash !== ch.afterHash) throw new Error('文件在此改动之后又被修改，撤回可能覆盖新内容（可强制撤回）');
@@ -887,12 +899,68 @@ export class Runtime {
     this.audit.record('emperor', 'revert_change', { path: ch.path, changeId }, taskId);
     this.activity('human', `皇上撤回改动：${ch.path}`, { taskId });
     this.touch(t);
-    this.emit({ type: 'fs_changed', paths: [ch.path] });
+    if (ws === this.workspace) this.emit({ type: 'fs_changed', paths: [ch.path] });
   }
 
   requireWorkspace(): Workspace {
     if (!this.workspace) throw new Error('尚未打开工作区：请先选择项目文件夹');
     return this.workspace;
+  }
+
+  /**
+   * The folder an edict reads and writes: its active worktree, else the open workspace when it is the one the
+   * edict was submitted on, else null. Without a task (chat, the editor) it is the open workspace.
+   */
+  workspaceFor(task?: Task | null): Workspace | null {
+    if (!task) return this.workspace;
+    const w = task.worktree;
+    if (w?.status === 'active') {
+      const dir = edictDir(w);
+      return fs.existsSync(dir) ? this.wsAt(dir) : null;
+    }
+    return this.workspace && task.workspace === this.workspace.root ? this.workspace : null;
+  }
+
+  /** Cached Workspace for a folder (the open one is reused). */
+  wsAt(dir: string): Workspace {
+    const root = path.resolve(dir);
+    if (this.workspace?.root === root) return this.workspace;
+    let w = this.wsCache.get(root);
+    if (!w) {
+      w = new Workspace(root);
+      this.wsCache.set(root, w);
+    }
+    return w;
+  }
+
+  /** A folder went away (worktree removed): drop its Workspace and stop its language servers. */
+  forgetWorkspace(dir: string) {
+    const root = path.resolve(dir);
+    this.wsCache.delete(root);
+    const m = this.lspByRoot.get(root);
+    if (m) {
+      this.lspByRoot.delete(root);
+      void m.dispose();
+    }
+  }
+
+  /** Language servers for a workspace: the editor's manager for the open one, a separate one per worktree. */
+  lspFor(ws: Workspace): LspManager {
+    if (this.workspace && ws.root === this.workspace.root) return this.lsp;
+    let m = this.lspByRoot.get(ws.root);
+    if (!m) {
+      m = new LspManager({ workspace: ws, config: this.lsp.config, clientVersion: this.opts.version });
+      this.lspByRoot.set(ws.root, m);
+    }
+    return m;
+  }
+
+  /** Folder behind a preview:// host: `ws` = the open workspace, `wt-<task id>` = that edict's worktree. */
+  previewRoot(host: string): string | null {
+    const h = host.toLowerCase();
+    if (h === 'ws') return this.workspace?.root ?? null;
+    const t = taskIdFromPreviewHost(h) ? [...this.tasks.values()].find((x) => previewHostFor(x.id) === h) : undefined;
+    return t?.worktree?.status === 'active' ? (this.workspaceFor(t)?.root ?? null) : null;
   }
 
   setWorkspace(dir: string | null) {
@@ -907,12 +975,18 @@ export class Runtime {
   onTerminal(task: Task) {
     this.controllers.delete(task.id);
     // verified artifacts: recompute hashes from disk (never trust the model's claim)
-    if (this.workspace && task.workspace === this.workspace.root) {
+    const ws = this.workspaceFor(task);
+    if (ws) {
       const seen = new Map<string, FileChange>();
       for (const c of task.changes) if (!c.reverted) seen.set(c.path, c);
       const arts = [];
       for (const [p, c] of seen) {
-        const buf = this.workspace.readBuffer(p);
+        let buf: Buffer | null = null;
+        try {
+          buf = ws.readBuffer(p);
+        } catch {
+          /* path no longer inside the workspace */
+        }
         if (buf) arts.push({ path: p, sha256: sha256(buf), bytes: buf.length, agentId: c.agentId, nodeId: c.nodeId, at: now() });
       }
       task.result = { summary: task.result?.summary ?? '', artifacts: arts };
@@ -925,6 +999,8 @@ export class Runtime {
       this.pushNews({ title: `捷报：「${task.title}」已完成`, source: '军机处', category: '朝廷', summary: task.result?.summary?.slice(0, 120) });
       this.opts.notify?.('旨意完成', task.title);
     }
+    // 结案 dialog for an edict's own worktree (after the caller finished, e.g. cancel() closing its cards)
+    if (task.worktree?.status === 'active') setImmediate(() => raiseWorktreeCard(this, task));
     this.persist();
   }
 
@@ -1176,6 +1252,8 @@ export class Runtime {
   dispose() {
     this.mcp.dispose();
     void this.lsp.dispose();
+    for (const m of this.lspByRoot.values()) void m.dispose();
+    this.lspByRoot.clear();
     if (this.healthTimer) clearInterval(this.healthTimer);
     for (const c of this.controllers.values()) c.abort();
     this.flushAll();

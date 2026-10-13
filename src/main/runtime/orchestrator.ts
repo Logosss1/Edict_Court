@@ -15,6 +15,7 @@ import { createDebate, runDebate, concludeDebate } from './debate';
 import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt, nodeConclusion, parseConclusion, scheduleExec, toolsForNode } from './execPolicy';
 export { parseConclusion, type ExecConclusion } from './execPolicy';
 import { flowDecideGate, flowStep } from './flow';
+import { hasOwnTree, prepareWorkspace } from './worktrees';
 import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
 
 const drivingByRt = new WeakMap<Runtime, Set<string>>();
@@ -143,6 +144,12 @@ export async function drive(rt: Runtime, taskId: string): Promise<void> {
       if (!t) return;
       ws = t.workspace;
       if (TERMINAL.includes(t.state) || t.state === 'Blocked' || t.paused || t.gate) return;
+      // its own worktree is made when the edict leaves triage, before anything reads or writes files
+      const missing = await prepareWorkspace(rt, t);
+      if (missing) {
+        block(rt, t, missing);
+        return;
+      }
       const progressed = await step(rt, t);
       if (!progressed) return;
     }
@@ -157,7 +164,8 @@ export async function drive(rt: Runtime, taskId: string): Promise<void> {
 }
 
 function kickQueued(rt: Runtime, ws: string | null) {
-  for (const t of rt.tasks.values()) if (t.state === 'Next' && t.workspace === ws && !drivingSet(rt).has(t.id)) void drive(rt, t.id);
+  // only once the folder is free: re-driving a still-queued edict would kick itself again forever (a microtask loop)
+  for (const t of rt.tasks.values()) if (t.state === 'Next' && t.workspace === ws && !drivingSet(rt).has(t.id) && !otherDoing(rt, t)) void drive(rt, t.id);
 }
 
 export function block(rt: Runtime, t: Task, reason: string) {
@@ -282,16 +290,19 @@ async function step(rt: Runtime, t: Task): Promise<boolean> {
   }
 }
 
+/** Another edict is executing in the same folder (edicts with their own worktree never wait, nor make others wait). */
 export function otherDoing(rt: Runtime, t: Task) {
-  return [...rt.tasks.values()].some((x) => x.id !== t.id && x.state === 'Doing' && x.tier !== 'solo' && x.workspace && x.workspace === t.workspace);
+  if (hasOwnTree(t)) return false;
+  return [...rt.tasks.values()].some((x) => x.id !== t.id && x.state === 'Doing' && x.tier !== 'solo' && !hasOwnTree(x) && x.workspace && x.workspace === t.workspace);
 }
 
 // ───────────────────────── 中书省 ─────────────────────────
 export function repoContext(rt: Runtime, t: Task): string {
-  if (!rt.workspace || t.workspace !== rt.workspace.root) return '（未打开工作区：本旨意不涉及本地文件，或仅产出文本。）';
+  const ws = rt.workspaceFor(t);
+  if (!ws) return '（未打开工作区：本旨意不涉及本地文件，或仅产出文本。）';
   try {
-    const map = rt.workspace.repoMap(120);
-    const outline = rt.workspace.outlineMap(30, 10);
+    const map = ws.repoMap(120);
+    const outline = ws.outlineMap(30, 10);
     return `【仓库地图】\n${truncate(map, 6000)}\n\n【符号大纲（节选）】\n${truncate(outline || '（无）', 5000)}`;
   } catch (e) {
     return `（仓库地图生成失败：${(e as Error).message}）`;
@@ -374,7 +385,7 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
     }
     parts.push(t.tier === 'lite' ? '档位：Court Lite —— 子任务控制在 1~3 个，避免仪式性步骤。' : '档位：Full Court —— 子任务 2~6 个，充分利用六部并行，写清依赖。');
     parts.push('请输出方案 JSON。');
-    const tools = rt.workspace && t.workspace === rt.workspace.root ? READ_TOOLS : undefined;
+    const tools = rt.workspaceFor(t) ? READ_TOOLS : undefined;
     const r = await runAgent({ rt, agentId: 'zhongshu', task: t, node, prompt: parts.join('\n\n'), tools, maxSteps: 6, maxTokens: 4000, temperature: 0.3, label: node.label });
     let v = validatePlan(extractJson(r.text));
     if (!v.plan) {
@@ -432,7 +443,7 @@ async function stepMenxia(rt: Runtime, t: Task): Promise<boolean> {
       reviews.length ? `【此前审议】\n${reviews.map((r) => `第${r.round}轮 ${r.verdict === 'approve' ? '准奏' : '封驳'}：${r.comment}`).join('\n')}` : '',
       `这是第 ${round} 轮审议（封驳上限 ${t.budget.maxRejections} 次，超限将升级皇上裁决）。请从可行性、完整性、风险、资源四个维度审议，输出 JSON。`,
     ].filter(Boolean).join('\n\n');
-    const tools = rt.workspace && t.workspace === rt.workspace.root ? READ_TOOLS : undefined;
+    const tools = rt.workspaceFor(t) ? READ_TOOLS : undefined;
     const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt, tools, maxSteps: 4, maxTokens: 1500, temperature: 0.2, label: node.label });
     verdict = parseVerdict(r.text);
     if (!verdict) {
@@ -538,7 +549,7 @@ async function stepDoing(rt: Runtime, t: Task): Promise<boolean> {
 async function runExec(rt: Runtime, t: Task, node: RunNode, order?: string): Promise<void> {
   const plan = t.plan!;
   const sub = plan.subtasks.find((s) => s.id === node.subtaskId)!;
-  const hasWs = !!rt.workspace && t.workspace === rt.workspace.root;
+  const hasWs = !!rt.workspaceFor(t);
   await confirmWriteTask(rt, t, node, sub, AGENT_MAP[sub.dept].name, hasWs);
   await runNode(rt, t, node, async () => {
     const deps = sub.dependsOn.map((d) => {
@@ -566,7 +577,7 @@ async function runExec(rt: Runtime, t: Task, node: RunNode, order?: string): Pro
       const c2 = parseConclusion(r2.text);
       if (c2.structured) c = c2;
     }
-    const { conclusion, systemCheck } = checkEvidence(t, node, c, r.toolCounts, hasWs ? rt.workspace! : undefined);
+    const { conclusion, systemCheck } = checkEvidence(t, node, c, r.toolCounts, rt.workspaceFor(t) ?? undefined);
     if (conclusion.status === 'failed') throw new Error(`${AGENT_MAP[sub.dept].name}自报失败：${conclusion.summary}`);
     if (conclusion.status === 'partial') rt.activity('log', `⚠ ${node.label} 成果存疑：${conclusion.issues.join('；') || '自报部分完成'}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
     const { structured: _s, ...plain } = conclusion as typeof conclusion & { structured?: boolean };
@@ -605,7 +616,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       let verdict: ReturnType<typeof parseVerdict> = null;
       await runNode(rt, t, node, async () => {
         const concl = plan.subtasks.map((s) => `- ${s.id} ${s.title}（验收：${s.acceptance}）：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1200)}`);
-        const tools = rt.workspace && t.workspace === rt.workspace.root ? (['view_changes', 'read_file', 'list_dir', 'search', 'load_skill'] as const) : (['view_changes', 'load_skill'] as const);
+        const tools = rt.workspaceFor(t) ? (['view_changes', 'read_file', 'list_dir', 'search', 'load_skill'] as const) : (['view_changes', 'load_skill'] as const);
         const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
         verdict = parseVerdict(r.text);
         if (!verdict) {
@@ -674,7 +685,7 @@ async function stepSolo(rt: Runtime, t: Task): Promise<boolean> {
     const session = t.sessionId ? rt.sessions.get(t.sessionId) : undefined;
     await runNode(rt, t, node, async () => {
       const hist = (session?.messages ?? []).slice(0, -1).slice(-16).map((m) => ({ role: m.role, content: m.content }));
-      const tools = rt.workspace && t.workspace === rt.workspace.root ? ALL_TOOLS : undefined;
+      const tools = rt.workspaceFor(t) ? ALL_TOOLS : undefined;
       const ctx = tools ? `\n\n${repoContext(rt, t)}` : '';
       const r = await runAgent({ rt, agentId: 'solo', task: t, node, session, history: hist, prompt: `${t.edict}${hist.length ? '' : ctx}`, tools, maxSteps: 40, maxTokens: 8000, temperature: 0.2, label: 'Solo 执行', model: t.strongModel });
       if (session) {
