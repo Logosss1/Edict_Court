@@ -2,7 +2,7 @@
 // RunNode, so an interrupted/failed node can be retried locally without replaying the
 // whole agent tree. 门下省 review is structural — there is no code path from Zhongshu to
 // Assigned that does not pass a Menxia verdict (or the emperor's explicit decision).
-import type { CollabDesign, DesignPin, MinistryId, ModelRef, Plan, RevertResult, Review, RunNode, Session, Subtask, Task, Tier } from '../../shared/types';
+import type { CollabDesign, DesignPin, MinistryId, ModelRef, PermissionMode, Plan, RevertResult, Review, RunNode, Session, Subtask, Task, TaskScheduleRef, Tier } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL, agentName } from '../../shared/court';
 import { runAgent } from './agentLoop';
@@ -18,6 +18,7 @@ import { flowDecideGate, flowStep } from './flow';
 import { canonBlock } from './canon';
 import { askPrince, parsePrinceAsk, princeWaiting, type PrinceAsk } from './askEmperor';
 import { hasOwnTree, prepareWorkspace } from './worktrees';
+import { scheduleNote } from './scheduler';
 import { expandMcpRefs } from '../mcp/refs';
 import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
 import {
@@ -38,6 +39,7 @@ const drivingSet = (rt: Runtime) => {
 
 export function installOrchestrator(rt: Runtime) {
   rt.driveHook = (id) => void drive(rt, id);
+  rt.submitHook = (input) => submit(rt, input);
 }
 
 export interface SubmitInput {
@@ -51,6 +53,10 @@ export interface SubmitInput {
   sessionId?: string;
   effort?: string; // 思考程度 slider: a level name, 'default' or 'top'
   designId?: string; // 协同设计（缺省 = 内置三省六部）
+  /** 定时旨意: the folder it was scheduled for (null = none), its permission mode, and which schedule issued it */
+  workspace?: string | null;
+  permissionMode?: PermissionMode;
+  schedule?: TaskScheduleRef;
 }
 
 export type SubmitResult = { kind: 'chat'; sessionId: string; reply: string } | { kind: 'task'; taskId: string };
@@ -64,7 +70,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
   const tier: Tier = pinned?.spec ? pinned.spec.policies.tier : input.multiAgent ? input.tier : 'solo';
   // @mcp:<server>/<uri> references: the resource text is appended (【附带资源】) to what every official sees
   const { text, refs } = await expandMcpRefs(rt, typed);
-  rt.audit.record('emperor', 'edict_submitted', { design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: typed.length, mcpRefs: refs.length || undefined, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
+  rt.audit.record(input.schedule ? 'system' : 'emperor', 'edict_submitted', { schedule: input.schedule?.id, design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: typed.length, mcpRefs: refs.length || undefined, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
 
   if (tier === 'solo') {
     let session = input.sessionId ? rt.sessions.get(input.sessionId) : undefined;
@@ -76,7 +82,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     }
     session.messages.push({ role: 'user', content: text, at: now() });
     session.updatedAt = now();
-    const task = createTask(rt, { text, tier, title: typed.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort });
+    const task = createTask(rt, { text, tier, title: input.schedule?.title || typed.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort, ...scheduled(input) });
     session.taskId = task.id;
     rt.emit({ type: 'session', session });
     void drive(rt, task.id);
@@ -115,33 +121,37 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     session.status = 'done';
     rt.emit({ type: 'session', session });
   }
-  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: pinned ? false : (input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan)), templateId: input.templateId, effort: input.effort, design: pinned });
+  if (input.schedule) title = input.schedule.title || title;
+  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: pinned ? false : (input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan)), templateId: input.templateId, effort: input.effort, design: pinned, ...scheduled(input) });
   task.nodes.push({ id: 'triage', kind: 'triage', agentId: 'taizi', label: '太子分拣', status: 'done', attempts: 1, startedAt: now(), endedAt: now(), exitStatus: 'ok', output: triageOutput, usage: session.usage });
-  rt.transition(task, 'Taizi', 'taizi', '太子接旨分拣');
+  rt.transition(task, 'Taizi', 'taizi', input.schedule ? '定时旨意，直接接旨' : '太子接旨分拣');
   // the edict waits in 太子分拣 until the emperor answers; the answer drives it on
   if (ask) askPrince(rt, task, ask);
   else void drive(rt, task.id);
   return { kind: 'task', taskId: task.id };
 }
 
-export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string; design?: { pin: DesignPin; spec?: CollabDesign } }): Task {
+const scheduled = (i: SubmitInput) => (i.schedule ? { workspace: i.workspace ?? null, permissionMode: i.permissionMode, schedule: i.schedule } : {});
+
+export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string; design?: { pin: DesignPin; spec?: CollabDesign }; workspace?: string | null; permissionMode?: PermissionMode; schedule?: TaskScheduleRef }): Task {
   const s = rt.settings;
   const design = o.design ?? rt.designs.pin(BUILTIN_DESIGN_ID);
   const pol = design.spec?.policies;
   const est = rt.estimate(o.text, o.tier, o.model);
   const t: Task = {
     id: rt.newTaskId(), title: o.title, edict: o.text, tier: o.tier, state: 'Pending', createdAt: now(), updatedAt: now(),
-    workspace: rt.workspace?.root ?? null,
-    flow: [{ at: now(), from: '皇上', to: o.tier === 'solo' ? '独相' : '太子', remark: '下旨', state: 'Pending' }],
+    workspace: o.schedule ? (o.workspace ?? null) : (rt.workspace?.root ?? null),
+    flow: [{ at: now(), from: o.schedule ? '定时旨意' : '皇上', to: o.tier === 'solo' ? '独相' : '太子', remark: o.schedule ? `按时下旨：${o.schedule.title}` : '下旨', state: 'Pending' }],
     planHistory: [], reviews: [], nodes: [], paused: false, changes: [], usage: emptyUsage(),
     budget: { maxTokens: pol?.tokenBudget || s.budgets[o.tier], maxRejections: pol ? pol.maxRejections : o.tier === 'full' ? s.maxRejections.full : s.maxRejections.lite, maxCostUsd: s.maxCostUsd },
     design: design.pin, designSpec: design.spec, flowRun: design.spec ? { cursor: 0, iter: {}, rejections: {} } : undefined,
     estimate: { tokens: est.tokens, costUsd: est.costUsd },
     strongModel: o.model ?? undefined, withDebate: o.withDebate, sessionId: o.sessionId, templateId: o.templateId, effort: o.effort && o.effort !== 'default' ? o.effort : undefined, lastActivityAt: now(), execRound: 1,
+    ...(o.schedule ? { schedule: o.schedule, permissionMode: o.permissionMode } : {}),
   };
   rt.tasks.set(t.id, t);
-  rt.audit.record('emperor', 'edict_issued', { id: t.id, title: t.title, tier: t.tier, estimate: t.estimate, budget: t.budget, workspace: t.workspace, design: { id: design.pin.id, version: design.pin.version, hash: design.pin.hash } }, t.id);
-  rt.activity('human', `皇上下旨（${design.spec ? `协同设计「${design.pin.name}」v${design.pin.version}` : t.tier}）：${t.title}`, { taskId: t.id });
+  rt.audit.record(t.schedule ? 'system' : 'emperor', 'edict_issued', { id: t.id, title: t.title, tier: t.tier, estimate: t.estimate, budget: t.budget, workspace: t.workspace, ...(t.schedule ? { schedule: t.schedule.id, permission: t.schedule.permission } : {}), design: { id: design.pin.id, version: design.pin.version, hash: design.pin.hash } }, t.id);
+  rt.activity('human', `${t.schedule ? `定时旨意按时下达${t.schedule.catchUp ? '（补跑错过的一次）' : ''}` : '皇上下旨'}（${design.spec ? `协同设计「${design.pin.name}」v${design.pin.version}` : t.tier}）：${t.title}`, { taskId: t.id });
   rt.touch(t);
   return t;
 }
@@ -327,7 +337,7 @@ export function repoContext(rt: Runtime, t: Task): string {
 
 /** E2: the workspace's rule files plus the emperor's 典章, for every prompt that plans, reviews or does the work. */
 export function guidance(rt: Runtime, t: Task): string {
-  return canonBlock(rt, t, rt.workspaceFor(t));
+  return [scheduleNote(t), canonBlock(rt, t, rt.workspaceFor(t))].filter(Boolean).join('\n\n');
 }
 
 /** `allowed` = executor roles of a 协同设计 (id → name); default = the six ministries. */

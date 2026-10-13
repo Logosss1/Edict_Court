@@ -31,6 +31,8 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
       if (c.system.includes('独相') && c.lastUser.includes('PREVIEWACT') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'click.html', actions: [{ fill: '#name', value: '魏征' }, { click: '#go' }, { assertText: '已点名：李靖', timeoutMs: 300 }] } }] };
       if (c.system.includes('独相') && c.lastUser.includes('SEARCHTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'web_search', args: { query: 'Electron 最新版本' } }] };
       if (c.system.includes('独相') && c.lastUser.includes('SEARCHTEST')) return { text: '查到了：Electron 的发布页列出了最新版本。' };
+      if (c.system.includes('独相') && c.lastUser.includes('SCHEDTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'propose_schedule', args: { title: '每周查依赖更新', edict: '检查依赖是否有新版本，列出可以升级的包和升级要注意的地方', when: { kind: 'weekly', days: [1], time: '09:00' }, permission: 'readonly', reason: '依赖常有安全更新，每周看一眼更稳妥' } }] };
+      if (c.system.includes('独相') && c.lastUser.includes('SCHEDTEST')) return { text: '依赖都是最新的。另外臣已上疏提议每周一查一次依赖更新。' };
       if (c.system.includes('独相') && (c.lastUser.includes('PREVIEWTEST') || c.lastUser.includes('MCPTEST') || c.lastUser.includes('PREVIEWACT'))) return { text: '已验证。' };
       return base(c);
     },
@@ -704,6 +706,70 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     ok('方案卡列出需求与对照结果', pr.includes('需1') && pr.includes('满足'), pr.slice(0, 80));
     await shot('75-plan-card-requirements');
     if (te.state === 'Done') ok('奏折里有「需求对照」', ((await inv('memorialMarkdown', e.taskId)) as string).includes('需求对照'));
+  }
+
+  if (want('sched')) {
+    // 2.1 定时旨意: the page, a schedule made through the form, 立即执行一次, the 定时 tag, an official's proposal in 待办
+    execSync('git init -q -b main && git config user.name e2e && git config user.email e2e@example.com && git config commit.gpgsign false && git add -A && git commit -q -m init', { cwd: ws });
+    await inv('setWorkspace', ws);
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: null, selectedTaskId: null }));
+    await win.click('[data-testid=ab-schedules]');
+    await win.waitForSelector('[data-testid=schedules-panel]');
+    ok('活动栏有「定时旨意」，没有定时旨意时显示说明', (await win.locator('[data-testid=sch-new-2]').count()) === 1);
+    await shot('76-schedules-empty');
+    await win.click('[data-testid=sch-new]');
+    await win.waitForSelector('[data-testid=sch-form]');
+    await win.fill('[data-testid=sch-text]', '写一个 greet 函数并测试');
+    await win.fill('[data-testid=sch-title]', '每日问候巡检');
+    await win.click('[data-testid=sch-kind-weekly]');
+    await win.click('[data-testid=sch-day-6]');
+    await win.fill('[data-testid=sch-time]', '08:30');
+    await win.click('[data-testid=sch-perm-worktree] input');
+    const pv = (await win.textContent('[data-testid=sch-preview]')) ?? '';
+    ok('表单里预览接下来的三次', pv.startsWith('接下来：') && pv.split('·').length === 3 && pv.includes('08:30'), pv);
+    const ws0 = (await win.textContent('[data-testid=sch-ws]')) ?? '';
+    ok('工作区默认是当前打开的文件夹', ws0 === ws, ws0);
+    await shot('77-schedule-form');
+    await win.click('[data-testid=sch-save]');
+    await win.waitForSelector('[data-testid=sch-detail]');
+    const s0: any = ((await inv('scheduleList')) as any[])[0];
+    ok('保存后按表单排定', !!s0 && s0.title === '每日问候巡检' && s0.rule.kind === 'weekly' && s0.rule.time === '08:30' && s0.rule.days.join() === '1,2,3,4,5,6' && s0.permission === 'worktree' && s0.workspace === ws && s0.enabled && s0.nextAt > Date.now(), JSON.stringify(s0?.rule));
+    const ruleText = (await win.textContent('[data-testid=sch-rule]')) ?? '';
+    ok('详情页把时间读成人话', ruleText === '每周一、二、三、四、五、六 08:30', ruleText);
+    await shot('78-schedule-detail');
+    await win.click('[data-testid=sch-run-now]');
+    const st: any = await waitTask((x) => x.schedule?.id === s0.id, 10000);
+    ok('立即执行一次：下了一道定时旨意，不经太子分拣', st.schedule.permission === 'worktree' && st.workspace === ws && st.flow[0].from === '定时旨意');
+    const sd: any = await waitTask((x) => x.id === st.id && (x.state === 'Done' || x.gate || x.state === 'Blocked'), 40000);
+    const mainClean = execSync('git status --porcelain', { cwd: ws }).toString().trim() === '';
+    ok('「在旨意工作树里改」：在自己的工作树里办完，主目录没动', sd.state === 'Done' && sd.worktree?.status === 'active' && fs.existsSync(path.join(sd.worktree.path, 'greet.js')) && mainClean, `${sd.state} worktree=${sd.worktree?.status} clean=${mainClean} ${sd.blockedReason ?? ''}`);
+    await win.waitForSelector('[data-testid=sch-history] .sch-h-row');
+    ok('执行记录里有这一次', ((await win.textContent('[data-testid=sch-history]')) ?? '').includes('手动执行'));
+    await shot('79-schedule-history');
+    await win.click('[data-testid=ab-kanban]');
+    await win.waitForSelector('[data-testid=kc-schedule]', { timeout: 5000 }).catch(() => null);
+    ok('看板卡片带「定时」标记', (await win.locator('[data-testid=kc-schedule]').count()) > 0);
+    await shot('80-kanban-schedule-tag');
+    // an official proposes one; it waits in 待办 until the emperor approves
+    const pr: any = await inv('submit', { text: 'SCHEDTEST 看看依赖是不是最新的', tier: 'solo', multiAgent: false });
+    await waitTask((x) => x.id === pr.taskId && (x.state === 'Done' || x.gate || x.state === 'Blocked'), 30000);
+    await win.evaluate(() => (window as any).__edictUI.setUI({ sideView: 'inbox' }));
+    await win.waitForSelector('[data-testid=attn-schedule]', { timeout: 10000 });
+    const card = (await win.textContent('[data-testid=attn-schedule]')) ?? '';
+    ok('官员的定时提议出现在待办', card.includes('定时提议') && card.includes('每周查依赖更新'), card.slice(0, 80));
+    await shot('81-schedule-proposal-inbox');
+    await win.click('[data-testid=attn-schedule] .a-title');
+    await win.waitForSelector('[data-testid=sch-proposal]');
+    await shot('82-schedule-proposal-page');
+    await win.click('[data-testid=sch-approve]');
+    await win.waitForTimeout(400);
+    const p1: any = ((await inv('scheduleList')) as any[]).find((x: any) => x.title === '每周查依赖更新');
+    ok('准奏后生效', !!p1 && !p1.proposal && p1.enabled && p1.permission === 'readonly' && p1.origin.by === 'official' && p1.origin.agentId === 'solo', JSON.stringify({ proposal: p1?.proposal, enabled: p1?.enabled }));
+    ok('定时提议准奏后不再出现在待办', (await win.locator('[data-testid=attn-schedule]').count()) === 0);
+    await win.evaluate(() => (window as any).__edictUI.setUI({ sideView: null }));
+    await win.click('[data-testid=ab-schedules]');
+    await win.waitForSelector('[data-testid=schedules-panel]');
+    await shot('83-schedules-list');
   }
 
   const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json', 'edict.db', 'edict.db-wal'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));

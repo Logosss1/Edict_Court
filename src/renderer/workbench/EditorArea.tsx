@@ -7,7 +7,7 @@ import { takeReveal, onReveal, setProblems, registerSave, saveActiveEditor, appl
 import { PanelView } from '../panels/PanelView';
 import type { PanelId } from '../store';
 
-const PANEL_ICON: Partial<Record<PanelId, string>> = { kanban: 'kanban', monitor: 'monitor', memorials: 'scroll', templates: 'book', officials: 'users', news: 'news', designs: 'layers', sessions: 'message', ceremony: 'flag', debate: 'gavel', audit: 'shield', help: 'help', settings: 'settings' };
+const PANEL_ICON: Partial<Record<PanelId, string>> = { kanban: 'kanban', monitor: 'monitor', memorials: 'scroll', templates: 'book', officials: 'users', news: 'news', designs: 'layers', schedules: 'clock', sessions: 'message', ceremony: 'flag', debate: 'gavel', audit: 'shield', help: 'help', settings: 'settings' };
 import { askText } from '../common/Prompt';
 import { TaskDetail } from '../panels/TaskDetail';
 import { PreviewView, PREVIEWABLE, openPreview } from './PreviewView';

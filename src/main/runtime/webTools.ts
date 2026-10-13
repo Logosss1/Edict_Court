@@ -178,7 +178,7 @@ export async function webSearchTool(ctx: ToolContext, args: Record<string, unkno
   if (!webStatus(rt).searchReady) {
     if (task?.webSearchDeclined) return { ok: false, output: `这道旨意里不能联网搜索（皇上没有设置搜索服务）。${fetchHint || '请改用已有资料，'}并在结论里说明。` };
     // 上疏请旨: one card per edict; 「配置搜索服务」 opens the setup right on the card
-    const timeoutMin = rt.settings.permissionMode === 'auto' ? rt.settings.askTimeoutMin ?? 0 : 0;
+    const timeoutMin = rt.modeFor(task) === 'auto' ? rt.settings.askTimeoutMin ?? 0 : 0;
     let apId = '';
     const decision = rt.requestDecision({
       kind: 'search_setup', taskId: task?.id, agentId, nodeId: node?.id, tool: 'web_search',

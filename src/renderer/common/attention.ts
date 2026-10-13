@@ -3,7 +3,7 @@ import type { ApprovalRequest, Task } from '../../shared/types';
 import { TERMINAL, agentName } from '../../shared/court';
 import { useStore } from '../store';
 
-export type AttentionKind = 'write_task' | 'question' | 'approval' | 'risk' | 'plan' | 'final' | 'decide' | 'blocked' | 'merge';
+export type AttentionKind = 'write_task' | 'question' | 'approval' | 'risk' | 'plan' | 'final' | 'decide' | 'blocked' | 'merge' | 'schedule';
 
 export interface AttentionItem {
   key: string;
@@ -33,6 +33,7 @@ export function attentionItems(tasks: Task[], approvals: ApprovalRequest[]): Att
     const base = { key: `ap:${a.id}`, taskId: a.taskId, at: a.at, approval: a, task: t, who };
     if (a.kind === 'write_task') out.push({ ...base, kind: 'write_task', label: '写任务开工', tone: 'gold', title: t?.title ?? a.summary, sub: a.summary });
     else if (a.kind === 'question') out.push({ ...base, kind: 'question', label: '请旨', tone: 'blue', title: a.summary.replace(/^.*?请旨：/, ''), sub: t ? t.title : who });
+    else if (a.kind === 'schedule') out.push({ ...base, kind: 'schedule', label: '定时提议', tone: 'blue', title: a.summary.replace(/^.*?提议定时旨意：/, ''), sub: `${who}：${a.reason}` });
     else if ((a.kind as string) === 'worktree') out.push({ ...base, kind: 'merge', label: '结案合并', tone: 'jade', title: t?.title ?? a.summary, sub: a.summary });
     else if (a.risk === 'high') out.push({ ...base, kind: 'risk', label: '高风险操作', tone: 'danger', title: a.summary, sub: t ? `${t.title} · ${a.reason}` : a.reason });
     else out.push({ ...base, kind: 'approval', label: a.kind === 'escalate' ? '请求加权限' : a.kind === 'loop' ? '重复操作' : '操作待批', tone: 'gold', title: a.summary, sub: t ? `${t.title} · ${a.reason}` : a.reason });

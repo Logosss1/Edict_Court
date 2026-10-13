@@ -58,7 +58,10 @@ const missingReason = (w: EdictWorktree) => `独立工作树已丢失：${w.path
 
 // ───────────────────────── creation (when the edict leaves triage) ─────────────────────────
 function wantsWorktree(rt: Runtime, t: Task): boolean {
-  if (rt.settings.worktreePerEdict === false || !t.workspace || t.tier === 'solo' || t.worktree) return false;
+  if (!t.workspace || t.tier === 'solo' || t.worktree) return false;
+  // a scheduled edict: 「在旨意工作树里改」 always gets one; a read-only one never needs one
+  const cap = t.schedule?.permission;
+  if (cap === 'readonly' || (cap !== 'worktree' && rt.settings.worktreePerEdict === false)) return false;
   // only before anything read or wrote files for this edict (an edict toggled on mid-flight stays where it is)
   if (t.state !== 'Pending' && t.state !== 'Taizi') return false;
   if (t.designSpec && t.design && !t.design.native && t.designSpec.roles.every((r) => r.toolAccess === 'none')) return false;

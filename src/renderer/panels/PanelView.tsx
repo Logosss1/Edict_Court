@@ -7,6 +7,7 @@ import { News } from './News';
 import { Models } from './Models';
 import { Skills } from './Skills';
 import { Designs } from './Designs';
+import { Schedules } from './Schedules';
 import { Sessions } from './Sessions';
 import { CeremonyPanel } from './Ceremony';
 import { DebatePanel } from './Debate';
@@ -32,6 +33,8 @@ export function PanelView({ panel }: { panel: PanelId }) {
       return <Models />;
     case 'designs':
       return <Designs />;
+    case 'schedules':
+      return <Schedules />;
     case 'skills':
       return <Skills />;
     case 'sessions':

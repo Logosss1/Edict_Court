@@ -1,5 +1,5 @@
 // Edict for Mac — Electron main process.
-import { app, BrowserWindow, Menu, Notification, dialog, ipcMain, nativeTheme, net, protocol, shell, type MenuItemConstructorOptions } from 'electron';
+import { app, BrowserWindow, Menu, Notification, dialog, ipcMain, nativeTheme, net, powerSaveBlocker, protocol, shell, type MenuItemConstructorOptions } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -260,8 +260,19 @@ app.whenReady().then(async () => {
   acp = createAcpService(rt, { confirmClient: confirmAcpClient, confirmWorkspace: confirmAcpWorkspace, highRiskInEdictOnly: rt.settings.acpHighRiskInEdictOnly !== false, log: (l) => console.log(l) });
   const followAcp = (on: boolean) => void acp?.setEnabled(on).catch((err) => send({ type: 'toast', level: 'error', message: `编辑器接入（ACP）无法启动：${(err as Error).message}` }));
   followAcp(!!rt.settings.acpEnabled);
+  // 定时旨意: the Mac does not go to sleep while a scheduled edict is working (not while it waits on the emperor)
+  let awake: number | null = null;
+  const followAwake = () => {
+    const want = rt.schedules.keepAwake();
+    if (want && awake == null) awake = powerSaveBlocker.start('prevent-app-suspension');
+    else if (!want && awake != null) {
+      powerSaveBlocker.stop(awake);
+      awake = null;
+    }
+  };
   rt.on((e) => {
     send(e);
+    if (e.type === 'task' || e.type === 'approval') followAwake();
     if (e.type === 'workspace') {
       watchWorkspace(e.workspace);
       // servers whose config depends on the workspace are restarted for the new folder
@@ -298,6 +309,7 @@ app.whenReady().then(async () => {
   watchWorkspace(rt.workspace?.root ?? null);
   firstLaunchNotice();
   resumeAll(rt);
+  rt.schedules.start();
   if (smokeTest) {
     setTimeout(() => {
       console.log('[smoke] ok', JSON.stringify({ tasks: rt.tasks.size, dataDir }));

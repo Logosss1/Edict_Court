@@ -1,6 +1,6 @@
 // 旨意详情 — nodes (with local retry), plan versions, reviews, changes, flow chain, annotations.
 import { useState } from 'react';
-import { useStore, useTask, setUI, toast, openSettings } from '../store';
+import { useStore, useTask, setUI, toast, openSettings, openPanel } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
@@ -9,6 +9,7 @@ import { AGENTS, AGENT_MAP, TIER_LABEL } from '../../shared/court';
 import type { AgentId, RevertResult, RunNode, Task } from '../../shared/types';
 import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode, revertTaskChanges, runRevert } from './TaskWidgets';
 import { levelLabel } from '../../shared/reasoning';
+import { PERMISSION_TEXT } from '../../shared/schedule';
 import { ActivityStream } from '../workbench/ActivityStream';
 import { openWorktreeDialog, worktreeLabel } from '../workbench/WorktreeDialog';
 
@@ -27,6 +28,12 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           <h2 className="ellipsis">{task.title}</h2>
           <code className="muted">{task.id}</code>
         </div>
+        {task.schedule && (
+          <div className="small td-sch" data-testid="td-schedule">
+            <Icon name="clock" size={12} /> 定时旨意「{task.schedule.title}」{task.schedule.catchUp ? '补跑错过的一次' : '按时下达'} · 权限：{PERMISSION_TEXT[task.schedule.permission].label}
+            <button className="link small" onClick={() => { setUI({ scheduleFocus: task.schedule!.id }); openPanel('schedules'); }}>查看定时设置</button>
+          </div>
+        )}
         <div className="muted small">{task.design && !task.design.native ? `协同设计「${task.design.name}」v${task.design.version}（${task.design.hash.slice(0, 8)}）` : TIER_LABEL[task.tier]} · 下旨 {fmtTime(task.createdAt)} · 工作区 {task.workspace ?? '（无）'}</div>
         <Pipeline task={task} />
         <UsageLine task={task} />

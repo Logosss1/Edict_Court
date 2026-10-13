@@ -13,6 +13,7 @@ import { parseMcpConfig } from './mcp/manager';
 import type { McpServerPolicy, McpToolPolicy, CollabDesign } from '../shared/types';
 import { validateDesign } from '../shared/design';
 import { builtinDeclarative } from './runtime/designs';
+import type { ScheduleDraft } from './runtime/scheduler';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gitStatus, gitShowHead, gitStage, gitUnstage, gitCommit, gitLog, gitInit } from './services/git';
@@ -53,7 +54,8 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     info: () => ({ dataDir: rt.opts.dataDir, encrypted: rt.opts.secrets.encrypted, version: rt.opts.version, platform: rt.opts.platform, permissionLabels: PERMISSION_LABEL }),
 
     // ── edicts & control
-    submit: (input: SubmitInput) => submit(rt, input),
+    // what the schedule fields carry is set by the scheduler only, never by the window
+    submit: ({ workspace: _w, permissionMode: _p, schedule: _s, ...input }: SubmitInput) => submit(rt, input),
     estimate: (text: string, tier: Tier, model?: ModelRef | null) => rt.estimate(text, tier, model),
     pause: (id: string) => rt.pause(id),
     resume: (id: string) => rt.resume(id),
@@ -167,6 +169,13 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     designRestore: (token: string) => rt.designs.restore(token),
     /** the built-in 三省六部 as an editable starting point (not saved until the editor saves it) */
     designTemplate: (tier: 'lite' | 'full') => ({ ...builtinDeclarative(tier, rt.settings), id: '', native: undefined }),
+
+    // ── 定时旨意
+    scheduleList: () => rt.schedules.all(),
+    scheduleSave: (d: ScheduleDraft) => rt.schedules.upsert(d),
+    scheduleSetEnabled: (id: string, on: boolean) => rt.schedules.setEnabled(id, on),
+    scheduleDelete: (id: string) => rt.schedules.remove(id),
+    scheduleRunNow: (id: string) => rt.schedules.runNow(id),
 
     // ── MCP
     mcpList: () => rt.mcp.list(),

@@ -15,11 +15,12 @@ import { skillRole } from '../../shared/skills';
 import { LSP_TOOL_SPEC, describeLspCall, runLspTool } from '../lsp/tool';
 import { ASK_EMPEROR_SPEC, askEmperor } from './askEmperor';
 import { WEB_FETCH_SPEC, WEB_SEARCH_SPEC, webFetchTool, webSearchTool } from './webTools';
+import { PROPOSE_SCHEDULE_SPEC, proposeScheduleTool } from './scheduler';
 
-export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'lsp' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page' | 'ask_emperor' | 'web_fetch' | 'web_search';
+export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'lsp' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page' | 'ask_emperor' | 'web_fetch' | 'web_search' | 'propose_schedule';
 
-export const READ_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'load_skill', 'web_fetch', 'web_search'];
-export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page', 'ask_emperor', 'web_fetch', 'web_search'];
+export const READ_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'load_skill', 'web_fetch', 'web_search', 'propose_schedule'];
+export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page', 'ask_emperor', 'web_fetch', 'web_search', 'propose_schedule'];
 
 const S = (props: Record<string, unknown>, required: string[]) => ({ type: 'object', properties: props, required, additionalProperties: false });
 
@@ -77,12 +78,13 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   ask_emperor: ASK_EMPEROR_SPEC,
   web_fetch: WEB_FETCH_SPEC,
   web_search: WEB_SEARCH_SPEC,
+  propose_schedule: PROPOSE_SCHEDULE_SPEC,
   view_changes: { name: 'view_changes', description: '查看本旨意迄今所有文件改动（统一 diff 摘要，系统记录，非 Agent 自述）', parameters: S({ path: { type: 'string', description: '可选：只看某文件' } }, []) },
 };
 
 const CLASS: Record<ToolName, ToolClass> = {
   list_dir: 'read', read_file: 'read', search: 'read', outline: 'read', lsp: 'read', load_skill: 'meta', view_changes: 'meta', ask_emperor: 'meta',
-  write_file: 'write', edit_file: 'write', delete_file: 'write', run_command: 'command', preview_page: 'read', web_fetch: 'read', web_search: 'read',
+  write_file: 'write', edit_file: 'write', delete_file: 'write', run_command: 'command', preview_page: 'read', web_fetch: 'read', web_search: 'read', propose_schedule: 'meta',
 };
 
 export interface ToolContext {
@@ -210,6 +212,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   if (tool === 'ask_emperor') return askEmperor(ctx, args);
   if (tool === 'web_fetch') return webFetchTool(ctx, args);
   if (tool === 'web_search') return webSearchTool(ctx, args);
+  if (tool === 'propose_schedule') return proposeScheduleTool(rt, task, agentId, args);
 
   // an edict works in its own worktree (or the workspace it was submitted on); chat in the open workspace
   const ws = rt.workspaceFor(task);
@@ -219,7 +222,8 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   const target = str('path');
   const cls = CLASS[tool];
   const node = ctx.node;
-  const base = rt.settings.permissionMode;
+  const base = rt.modeFor(task);
+  const readonlySchedule = task?.schedule?.permission === 'readonly';
   const cmd = tool === 'run_command' ? str('command') : '';
   let verdict: RiskVerdict;
   try {
@@ -238,7 +242,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   let preApproved = false;
   // R1: a subtask that started read-only asks to be upgraded the first time it wants to write or run a non-safe
   // command (high-risk actions skip this and go straight to their own confirmation)
-  if (acting && node && readOnlyNode(node) && base !== 'auto' && verdict.risk !== 'high' && !(cls === 'command' && classifyCommand(cmd).safe)) {
+  if (acting && node && readOnlyNode(node) && base !== 'auto' && !readonlySchedule && verdict.risk !== 'high' && !(cls === 'command' && classifyCommand(cmd).safe)) {
     const d = await rt.requestDecision({
       kind: 'escalate', taskId: task?.id, agentId, nodeId: node.id, tool,
       summary: `只读子任务要${cls === 'write' ? '改文件' : '执行命令'}：${summary.replace(/^[^：]+：/, '')}`,
@@ -258,6 +262,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   if (!preApproved) {
     if (verdict.decision === 'deny') {
       rt.audit.record(agentId, 'tool_denied', { tool, reason: verdict.reason, path: target || undefined }, task?.id);
+      if (readonlySchedule) return { ok: false, output: '这道定时旨意按「只读」排定：不能写文件，也不能执行命令。请只做分析，在结论里给出修改建议。' };
       if (node?.grant === 'readonly') return { ok: false, output: '皇上要求本子任务只读执行：不能写文件或执行会改动东西的命令。请只做分析，在结论里给出修改建议。' };
       return { ok: false, output: `权限拒绝：${verdict.reason}` };
     }
@@ -480,6 +485,8 @@ export const describeToolCall = (name: string, args: Record<string, unknown>): s
       return `抓取网页 ${String(args.url ?? '').slice(0, 120)}`;
     case 'web_search':
       return `联网搜索 “${String(args.query ?? '').slice(0, 80)}”`;
+    case 'propose_schedule':
+      return `提议定时旨意：${String(args.title ?? '').slice(0, 40)}`;
     case 'mcp_list_resources':
       return '列出 MCP 资源';
     case 'mcp_read_resource':
@@ -557,13 +564,14 @@ async function mcpTool(ctx: ToolContext, name: string, args: Record<string, unkn
   if (st.policy.agents !== 'all' && !st.policy.agents.includes(agentId)) return { ok: false, output: `该官员未获授权使用 MCP 服务 ${server}` };
   if (!tool.policy.enabled) return { ok: false, output: `MCP 工具已停用：${server}/${tool.name}` };
   const risk = tool.policy.risk;
-  const mode = effectiveMode(rt.settings.permissionMode, ctx.node?.grant);
+  const mode = effectiveMode(rt.modeFor(task), ctx.node?.grant);
   const summary = `调用 MCP 工具 ${server} / ${tool.name}`;
   if (mode === 'readonly' && risk !== 'read') {
     rt.audit.record(agentId, 'tool_denied', { tool: name, reason: '只读模式' }, task?.id);
     return { ok: false, output: ctx.node?.grant === 'readonly' ? '皇上要求本子任务只读执行：只能使用标记为「只读」的 MCP 工具' : '权限拒绝：只读模式下只能使用标记为「只读」的 MCP 工具' };
   }
-  const needAsk = risk === 'high' || (risk === 'write' && !tool.policy.autoApprove && mode !== 'auto');
+  // a scheduled edict's 全自动 covers its own worktree, not outside effects: MCP write tools still ask there
+  const needAsk = risk === 'high' || (risk === 'write' && !tool.policy.autoApprove && (mode !== 'auto' || !!task?.schedule));
   if (needAsk) {
     const verdict: RiskVerdict = { decision: 'ask', risk: risk === 'high' ? 'high' : 'normal', reason: risk === 'high' ? 'MCP 工具标记为高风险（外部副作用）' : 'MCP 工具可能产生外部副作用' };
     const d = await askAction(ctx, name, args, verdict, summary, truncate(JSON.stringify(args, null, 2), 3000));

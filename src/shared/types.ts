@@ -298,8 +298,69 @@ export interface Task {
   webSearchDeclined?: boolean;
   /** 需求对照检查 results, newest last */
   requirementChecks?: RequirementCheck[];
+  /** 定时旨意: the schedule that issued this edict (absent = issued by hand) */
+  schedule?: TaskScheduleRef;
+  /** permission mode for this edict only (a schedule's cap); absent = the global setting */
+  permissionMode?: PermissionMode;
   execRound?: number; // 1 = first execution; >1 = rework rounds
   rework?: { round: number; targets: string[]; feedback: string; by: 'menxia' | 'emperor' };
+}
+
+// ───────────── 定时旨意 (2.1) ─────────────
+/** When a schedule fires (local time). `court` = each morning court (06:00). */
+export type ScheduleRule =
+  | { kind: 'daily'; time: string }
+  | { kind: 'weekly'; days: number[]; time: string }
+  | { kind: 'interval'; hours: number }
+  | { kind: 'court' }
+  | { kind: 'once'; at: number };
+/** What a scheduled edict may do: read only / ask for every change / change freely inside its own worktree. */
+export type SchedulePermission = 'readonly' | 'ask' | 'worktree';
+export type ScheduleStop = { kind: 'never' } | { kind: 'count'; n: number } | { kind: 'until'; at: number };
+export interface ScheduleRun {
+  at: number;
+  outcome: 'started' | 'skipped' | 'failed';
+  taskId?: string;
+  /** fired late, for a time Edict was closed or the Mac asleep */
+  catchUp?: boolean;
+  note?: string;
+}
+export interface EdictSchedule {
+  id: string;
+  title: string;
+  /** the edict text issued each time */
+  text: string;
+  workspace: string | null;
+  tier: Tier;
+  designId?: string;
+  model?: ModelRef | null;
+  effort?: string;
+  rule: ScheduleRule;
+  permission: SchedulePermission;
+  stop: ScheduleStop;
+  /** a time missed while Edict was closed or the Mac asleep: run once when back, or skip it */
+  missed: 'once' | 'skip';
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  /** who set it up; an official's proposal only takes effect once the emperor approves it */
+  origin: { by: 'emperor' } | { by: 'official'; agentId: AgentId; taskId?: string; reason?: string };
+  /** an official's proposal still waiting for the emperor (not scheduled until approved) */
+  proposal?: 'pending';
+  runs: number;
+  nextAt: number | null;
+  lastRunAt?: number;
+  lastTaskId?: string;
+  /** set when the stop rule ended it */
+  ended?: string;
+  history: ScheduleRun[];
+}
+export interface TaskScheduleRef {
+  id: string;
+  title: string;
+  permission: SchedulePermission;
+  firedAt: number;
+  catchUp?: boolean;
 }
 
 export type WorktreeStatus = 'active' | 'merged' | 'kept' | 'discarded';
@@ -398,7 +459,7 @@ export interface Activity {
   streaming?: boolean;
 }
 
-export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree' | 'search_setup' | 'sandbox' | 'web_domain';
+export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree' | 'search_setup' | 'sandbox' | 'web_domain' | 'schedule';
 
 export interface EdictQuestion {
   id: string;
@@ -798,6 +859,7 @@ export interface Snapshot {
   mcp: McpServerState[];
   designs: DesignInfo[];
   templates: Template[];
+  schedules: EdictSchedule[];
   workspace: string | null;
   dataDir: string;
   version: string;
@@ -830,6 +892,7 @@ export type RuntimeEvent =
   | { type: 'preview_blocked'; url: string }
   | { type: 'mcp'; servers: McpServerState[] }
   | { type: 'designs'; designs: DesignInfo[] }
+  | { type: 'schedules'; schedules: EdictSchedule[] }
   | { type: 'lsp_diagnostics'; path: string; server: string; diagnostics: LspDiagnostic[] }
   | { type: 'lsp_status' };
 

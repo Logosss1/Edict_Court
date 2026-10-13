@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
-  Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
+  Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, PermissionMode, Plan,
   ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo, RevertResult,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
@@ -23,6 +23,8 @@ import type { PreviewHostResult, PreviewRenderOptions } from '../services/previe
 import { McpManager } from '../mcp/manager';
 import { LspManager, loadLspConfig, saveLspConfig, type LspConfig } from '../lsp/manager';
 import { DesignStore } from './designs';
+import { ScheduleStore } from './scheduler';
+import type { SubmitInput, SubmitResult } from './orchestrator';
 import { edictDir, raiseWorktreeCard, recoverWorktrees } from './worktrees';
 import { previewHostFor, taskIdFromPreviewHost } from '../services/preview';
 import type { FetchLike, ProviderRuntime } from '../llm/types';
@@ -100,6 +102,8 @@ export class Runtime {
   skills: SkillInfo[] = [];
   readonly mcp: McpManager = new McpManager(this);
   readonly designs: DesignStore = new DesignStore(this);
+  /** 定时旨意 (2.1) */
+  readonly schedules: ScheduleStore = new ScheduleStore(this);
   totals: Usage = emptyUsage();
   seqByDay: Record<string, number> = {};
   workspace: Workspace | null = null;
@@ -135,6 +139,7 @@ export class Runtime {
 
   // hooks wired by orchestrator module (avoid circular imports)
   driveHook: (taskId: string) => void = () => {};
+  submitHook: (input: SubmitInput) => Promise<SubmitResult> = () => Promise.reject(new Error('orchestrator not installed'));
   private agentLocks = new Map<string, Promise<void>>();
 
   /** One official handles one piece of work at a time (keeps per-agent observability truthful). */
@@ -202,6 +207,7 @@ export class Runtime {
     const rep = this.store.openReport;
     if (rep?.imported) this.audit.record('system', 'storage_migrated', { from: rep.imported.from, counts: rep.imported.counts as unknown as Record<string, unknown>, backupDir: rep.backupDir ?? null });
     this.designs.load();
+    this.schedules.load();
     this.recoverInterrupted();
     if (this.settings.lastWorkspace && fs.existsSync(this.settings.lastWorkspace)) {
       try {
@@ -311,6 +317,7 @@ export class Runtime {
       skills: this.skills,
       mcp: this.mcp.list(),
       designs: this.designs.list(),
+      schedules: this.schedules.all(),
       templates: TEMPLATES,
       workspace: this.workspace?.root ?? null,
       dataDir: this.opts.dataDir,
@@ -745,6 +752,17 @@ export class Runtime {
     }
   }
 
+  /**
+   * The permission mode an edict runs under: a scheduled edict's own cap (set when it was scheduled), else the
+   * setting. The 「在旨意工作树里改」 cap only holds inside the edict's own worktree; anywhere else it asks.
+   */
+  modeFor(task?: Task | null): PermissionMode {
+    const m = task?.permissionMode;
+    if (!task || !m) return this.settings.permissionMode;
+    if (task.schedule?.permission === 'worktree' && task.worktree?.status !== 'active') return 'ask';
+    return m;
+  }
+
   // ───────────────────────── always-allow rules (R5) ─────────────────────────
   /** The workspace root permission rules are keyed by (a worktree maps back to its repository). */
   permRoot(task?: Task): string | null {
@@ -1032,7 +1050,8 @@ export class Runtime {
 
   /**
    * The folder an edict reads and writes: its active worktree, else the open workspace when it is the one the
-   * edict was submitted on, else null. Without a task (chat, the editor) it is the open workspace.
+   * edict was submitted on (or, for a scheduled edict, the folder it was scheduled for), else null. Without a task
+   * (chat, the editor) it is the open workspace.
    */
   workspaceFor(task?: Task | null): Workspace | null {
     if (!task) return this.workspace;
@@ -1041,7 +1060,10 @@ export class Runtime {
       const dir = edictDir(w);
       return fs.existsSync(dir) ? this.wsAt(dir) : null;
     }
-    return this.workspace && task.workspace === this.workspace.root ? this.workspace : null;
+    if (this.workspace && task.workspace === this.workspace.root) return this.workspace;
+    // a scheduled edict works in the folder it was scheduled for, whichever one is open now
+    if (task.schedule && task.workspace && fs.existsSync(task.workspace)) return this.wsAt(task.workspace);
+    return null;
   }
 
   /** Cached Workspace for a folder (the open one is reused). */
@@ -1375,6 +1397,7 @@ export class Runtime {
   }
 
   dispose() {
+    this.schedules.stop();
     this.mcp.dispose();
     void this.lsp.dispose();
     for (const m of this.lspByRoot.values()) void m.dispose();
