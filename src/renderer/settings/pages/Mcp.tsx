@@ -1,5 +1,5 @@
 // 设置 · 连接服务（MCP）: summary tiles (click to filter), filter tabs, 刷新 / 从工作区导入 / 编辑 JSON, the two add
-// cards, and a 2-column grid of server cards. Everything is saved as Cursor-compatible mcp.json through mcpSave.
+// cards, and a 2-column grid of server cards. Everything is saved as standard mcp.json through mcpSave.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { call } from '../../api';
 import { toast, useStore } from '../../store';
@@ -137,10 +137,10 @@ export function McpPage() {
           <button className="btn sm" onClick={refresh} disabled={refreshing || !servers.length} {...tip('刷新', '重连异常的服务，并重新拉取已连接服务的资源与提示词', undefined, 'below')} data-testid="mcp-refresh">
             <Icon name="refresh" size={12} /> {refreshing ? '刷新中…' : '刷新'}
           </button>
-          <button className="btn sm" onClick={importWs} {...tip('从工作区导入', '读取当前工作区的 .cursor/mcp.json、.vscode/mcp.json 或 mcp.json，先给你过目再保存', undefined, 'below')} data-testid="mcp-import">
+          <button className="btn sm" onClick={importWs} {...tip('从工作区导入', '读取当前工作区里的 mcp.json 配置文件，先给你过目再保存', undefined, 'below')} data-testid="mcp-import">
             <Icon name="folder" size={12} /> 从工作区导入
           </button>
-          <button className={`btn sm ${panel === 'json' ? 'on' : ''}`} onClick={() => { setJsonSeed(null); setPanel(panel === 'json' ? null : 'json'); }} {...tip('编辑 JSON', '直接编辑 mcp.json（与 Cursor 格式相同）', undefined, 'below')} data-testid="mcp-edit-json">
+          <button className={`btn sm ${panel === 'json' ? 'on' : ''}`} onClick={() => { setJsonSeed(null); setPanel(panel === 'json' ? null : 'json'); }} {...tip('编辑 JSON', '直接编辑 mcp.json（标准格式）', undefined, 'below')} data-testid="mcp-edit-json">
             <Icon name="code" size={12} /> 编辑 JSON
           </button>
         </div>
@@ -153,7 +153,7 @@ export function McpPage() {
             <span className="ic"><Icon name="plug" size={18} /></span>
             <div>
               <b>还没有连接任何服务</b>
-              <p>MCP 服务能把外部工具接给官员：查 GitHub、读数据库、操作浏览器、翻设计稿……远程服务填一个地址即可，本地服务填一条命令。也可以「从工作区导入」现成的 .cursor/mcp.json。</p>
+              <p>MCP 服务能把外部工具接给官员：查代码仓库、读数据库、操作浏览器、翻设计稿……远程服务填一个地址即可，本地服务填一条命令。也可以「从工作区导入」现成的 mcp.json。</p>
             </div>
           </div>
         )}
@@ -271,7 +271,7 @@ function JsonEditor({ seed, serverCount, onClose }: { seed: string | null; serve
       {err && <div className="mp-json-err">JSON：{err}</div>}
       <div className="mp-json-foot">
         <span className="muted">
-          与 Cursor 格式相同：<code>command / args / env / envFile / cwd</code>（本地）或 <code>url / headers / auth</code>（远程，先试 Streamable HTTP，再退回 SSE）。变量 <code>{'${env:NAME}'}</code> <code>{'${workspaceFolder}'}</code> <code>{'${userHome}'}</code>；形似密钥的值保存时移入系统钥匙串，文件中只留 <code>{'${secret:…}'}</code>。
+          标准格式：<code>command / args / env / envFile / cwd</code>（本地）或 <code>url / headers / auth</code>（远程，先试 Streamable HTTP，再退回 SSE）。变量 <code>{'${env:NAME}'}</code> <code>{'${workspaceFolder}'}</code> <code>{'${userHome}'}</code>；形似密钥的值保存时移入系统钥匙串，文件中只留 <code>{'${secret:…}'}</code>。
         </span>
         <span className="mp-sp" />
         {dirty && <button className="btn sm" onClick={() => { setDirty(false); setErr(null); void currentConfig().then((c) => setText(c.text), fail); }}>还原</button>}

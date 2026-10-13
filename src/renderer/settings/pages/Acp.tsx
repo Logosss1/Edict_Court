@@ -1,8 +1,8 @@
-// 编辑器接入（ACP）: editors such as Zed drive Edict through a local socket (Agent Client Protocol).
+// 编辑器接入（ACP）: external editors drive Edict through a local socket (Agent Client Protocol).
 // Off by default; each editor is approved on first connect; high-risk approvals can stay inside Edict.
 import { useEffect, useState } from 'react';
 import { openTaskTab, toast, useStore } from '../../store';
-import { call, isMac } from '../../api';
+import { call } from '../../api';
 import { Icon } from '../../common/Icon';
 import { tip } from '../../common/Tip';
 import { fmtAgo } from '../../common/format';
@@ -47,7 +47,7 @@ export function AcpPage() {
     if (!cfg) return;
     try {
       await navigator.clipboard.writeText(cfg);
-      toast('已复制 Zed 配置，粘贴进 Zed 的 settings.json 即可', 'success');
+      toast('已复制配置，粘贴进编辑器的 settings.json 即可', 'success');
     } catch {
       toast('复制失败，请手动选中复制', 'warn');
     }
@@ -56,7 +56,7 @@ export function AcpPage() {
   const shown = all ? sessions : sessions.slice(0, SHOW_SESSIONS);
 
   return (
-    <Page icon="link" title="编辑器接入（ACP）" lead="让 Zed 等编辑器直接给 Edict 下旨（Agent Client Protocol）：编辑器里说的话变成旨意，由各部执行，进度、改动和权限请求回到编辑器里。只走本机通道，不开网络端口。" testid="settings-acp">
+    <Page icon="link" title="编辑器接入（ACP）" lead="让支持 ACP 的编辑器直接给 Edict 下旨（Agent Client Protocol）：编辑器里说的话变成旨意，由各部执行，进度、改动和权限请求回到编辑器里。只走本机通道，不开网络端口。" testid="settings-acp">
       <Sec>
         <Row label="允许编辑器通过 ACP 接入" desc="只在本机 socket 上监听（仅你的账户可读写）；每个编辑器第一次连上都要你点头，本次运行内有效。">
           <Toggle on={enabled} onChange={(v) => void up({ acpEnabled: v })} label="允许编辑器通过 ACP 接入" testid="acp-enabled" />
@@ -76,19 +76,19 @@ export function AcpPage() {
         </div>
       </Sec>
 
-      <Sec title={<span className="acp-t"><Icon name="code" size={14} /> 接入 Zed</span>} note="· 其他支持 ACP 的编辑器用法相同：启动同一个命令即可" testid="acp-zed">
+      <Sec title={<span className="acp-t"><Icon name="code" size={14} /> 接入编辑器</span>} note="· 支持 ACP 的编辑器用法相同：启动同一个命令即可" testid="acp-editor">
         <ol className="acp-steps">
           <li>打开上面的「允许编辑器通过 ACP 接入」。</li>
-          <li>在 Zed 里打开 settings.json（<kbd>{isMac() ? '⌘' : 'Ctrl'}</kbd> <kbd>,</kbd>），把下面这段并进去；已有 <code>agent_servers</code> 时合并到里面。</li>
-          <li>打开 Zed 的 Agent 面板，新建会话时选「Edict」。第一次连接时 Edict 会弹窗请你允许。</li>
+          <li>在编辑器里打开它的设置文件 settings.json，把下面这段并进去；已有 <code>agent_servers</code> 时合并到里面。</li>
+          <li>打开编辑器的 Agent 面板，新建会话时选「Edict」。第一次连接时 Edict 会弹窗请你允许。</li>
         </ol>
         <div className="acp-code">
           <div className="acp-code-h">
-            <span className="muted small">Zed settings.json</span>
+            <span className="muted small">编辑器配置示例 · settings.json</span>
             <span className="grow" />
-            <button className="btn sm" onClick={() => void copyCfg()} disabled={!cfg} data-testid="acp-copy-zed"><Icon name="copy" size={12} /> 复制 Zed 配置</button>
+            <button className="btn sm" onClick={() => void copyCfg()} disabled={!cfg} data-testid="acp-copy-config"><Icon name="copy" size={12} /> 复制配置</button>
           </div>
-          <pre data-testid="acp-zed-config">{cfg ?? '（读取配置失败）'}</pre>
+          <pre data-testid="acp-editor-config">{cfg ?? '（读取配置失败）'}</pre>
         </div>
         <div className="muted small acp-tip">配置里写的是这台机器上 Edict 程序的位置；Edict 换了位置或升级后连不上，重新复制一次即可。编辑器里可选三种模式：Solo（默认）、Court Lite、Full Court；三省模式回奏后仍在 Edict 里御批结案。</div>
       </Sec>

@@ -237,7 +237,7 @@ export function duplicateSkill(rt: Runtime, name: string) {
   return saveSkill(rt, { name: n, description: s.description, agents: s.agents, duty: [], content: parseFrontmatter(fs.readFileSync(s.path, 'utf8')).body, enabled: false });
 }
 
-/** Import a skill folder (Anthropic / Cursor style: a folder containing SKILL.md). Only SKILL.md text is copied. */
+/** Import a skill folder (a folder containing SKILL.md). Only SKILL.md text is copied. */
 export function importSkillFolder(rt: Runtime, folder: string) {
   const file = ['SKILL.md', 'skill.md', 'README.md'].map((f) => path.join(folder, f)).find((f) => fs.existsSync(f));
   if (!file) throw new Error('所选文件夹中没有 SKILL.md');

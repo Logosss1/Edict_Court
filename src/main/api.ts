@@ -196,11 +196,11 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     mcpRestart: (name: string) => rt.mcp.restart(name),
     mcpSetServerPolicy: (name: string, patch: Partial<McpServerPolicy>) => rt.mcp.setServerPolicy(name, patch),
     mcpSetToolPolicy: (name: string, tool: string, patch: Partial<McpToolPolicy>) => rt.mcp.setToolPolicy(name, tool, patch),
-    /** Read `.cursor/mcp.json` / `.vscode/mcp.json` / `mcp.json` from the open workspace, merged into the editor text (not saved yet). */
+    /** Read the open workspace's mcp.json (first of the known locations below), merged into the editor text (not saved yet). */
     mcpImportWorkspace: () => {
       const root = ws().root;
       const found = ['.cursor/mcp.json', '.vscode/mcp.json', 'mcp.json', '.mcp.json'].map((f) => path.join(root, f)).find((f) => fs.existsSync(f));
-      if (!found) throw new Error('工作区中未找到 .cursor/mcp.json、.vscode/mcp.json 或 mcp.json');
+      if (!found) throw new Error('工作区中未找到 mcp.json 配置文件');
       const incoming = parseMcpConfig(fs.readFileSync(found, 'utf8'));
       const merged = { mcpServers: { ...rt.mcp.config.mcpServers, ...incoming.mcpServers } };
       return { text: JSON.stringify(merged, null, 2), from: path.relative(root, found), added: Object.keys(incoming.mcpServers) };

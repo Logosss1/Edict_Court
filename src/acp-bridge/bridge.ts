@@ -1,4 +1,4 @@
-// Edict ACP bridge — the process an editor (e.g. Zed) launches as its ACP agent. It relays the
+// Edict ACP bridge — the process an editor launches as its ACP agent. It relays the
 // editor's stdin/stdout to the running Edict app's Unix socket. Pure byte pipe: it never parses the
 // protocol, holds no credentials and needs nothing but Node built-ins.
 //

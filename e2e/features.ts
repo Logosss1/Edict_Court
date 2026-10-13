@@ -275,7 +275,7 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.click('[data-testid=mcp-server-demo] button:has-text("工具权限")').catch(() => {});
     await win.waitForTimeout(200);
     const row = (await win.textContent('[data-testid=mcp-server-demo]').catch(() => '')) ?? '';
-    ok('MCP：Cursor 格式 mcp.json 保存后连接 stdio 服务并列出工具', row.includes('echo') && row.includes('已连接'), row.slice(0, 160));
+    ok('MCP：标准格式 mcp.json 保存后连接 stdio 服务并列出工具', row.includes('echo') && row.includes('已连接'), row.slice(0, 160));
     await shot('36-mcp-center');
     await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
     await win.click('[data-testid=composer] .tier-seg button:has-text("Solo")');

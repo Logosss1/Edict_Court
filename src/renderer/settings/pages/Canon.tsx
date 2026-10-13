@@ -22,7 +22,7 @@ const KIND_ORDER = KINDS.map((k) => k.id);
 const KIND_LABEL = Object.fromEntries(KINDS.map((k) => [k.id, k.label])) as Record<CanonKind, string>;
 const RULE_FILES: { file: string; desc: string }[] = [
   { file: 'AGENTS.md', desc: '通用的 AI 代理约定文件' },
-  { file: 'CLAUDE.md', desc: 'Claude Code 的项目说明' },
+  { file: 'CLAUDE.md', desc: '另一种常见的项目说明文件' },
   { file: '.edict/rules.md', desc: 'Edict 专用的项目规约' },
 ];
 const RULES_TEMPLATE = `# 项目规约

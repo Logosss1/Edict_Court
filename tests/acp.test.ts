@@ -134,13 +134,13 @@ function fakeSetup(opts: { authorize?: (c: any) => Promise<boolean> } = {}) {
 // ───────────────────────── protocol level ─────────────────────────
 test('acp: initialize negotiates protocol v1 and advertises capabilities', async () => {
   const { client, agent } = fakeSetup();
-  const r = await client.init('zed');
+  const r = await client.init('my-editor');
   assert.equal(r.protocolVersion, 1);
   assert.deepEqual(r.authMethods, []);
   assert.equal(r.agentCapabilities.loadSession, true);
   assert.deepEqual(r.agentCapabilities.promptCapabilities, { image: false, audio: false, embeddedContext: true });
   assert.equal(r.agentInfo.name, 'fake-agent');
-  assert.equal(agent.clientInfo?.name, 'zed');
+  assert.equal(agent.clientInfo?.name, 'my-editor');
   // a client asking for a newer version gets our latest (1)
   const b = fakeSetup();
   const r2 = await b.client.conn.request<any>('initialize', { protocolVersion: 7, clientInfo: { name: 'x', version: '1' } });
@@ -157,13 +157,13 @@ test('acp: malformed input, requests before initialize and unknown methods get J
   send('{"jsonrpc":"1.0","id":2,"method":"initialize","params":{"protocolVersion":1}}');
   send('{"jsonrpc":"2.0","id":3}');
   // initialize split across writes, cutting a multi-byte UTF-8 character in half
-  const init = Buffer.from('{"jsonrpc":"2.0","id":4,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"zed","title":"编辑器","version":"1"}}}\n');
+  const init = Buffer.from('{"jsonrpc":"2.0","id":4,"method":"initialize","params":{"protocolVersion":1,"clientInfo":{"name":"my-editor","title":"编辑器","version":"1"}}}\n');
   const cut = init.indexOf(Buffer.from('编')) + 1;
   c2a.write(init.subarray(0, cut));
   c2a.write(init.subarray(cut));
   await waitFor(() => out.some((l) => l.id === 4), 2000, 'initialize');
   send('{"jsonrpc":"2.0","id":5,"method":"foo/bar","params":{}}');
-  send('{"jsonrpc":"2.0","method":"_zed/whatever","params":{}}'); // unknown notification: ignored, no reply
+  send('{"jsonrpc":"2.0","method":"_editor/whatever","params":{}}'); // unknown notification: ignored, no reply
   send('{"jsonrpc":"2.0","id":6,"method":"session/new","params":{"cwd":"relative/dir","mcpServers":[]}}');
   send('{"jsonrpc":"2.0","id":7,"method":"session/prompt","params":{"sessionId":"nope","prompt":[]}}');
   send('{"jsonrpc":"2.0","id":8,"method":"authenticate","params":{"methodId":"x"}}');
@@ -355,19 +355,19 @@ test('acp socket: 0600 socket, consent per client name, refusal closes, stop rem
   // refused
   const a = await connectClient(sockPath);
   const aClosed = new Promise((r) => a.sock.once('close', r));
-  await assert.rejects(a.client.init('zed'), (e: RpcError) => e.code === -32001);
+  await assert.rejects(a.client.init('my-editor'), (e: RpcError) => e.code === -32001);
   await aClosed;
-  assert.deepEqual(asked, ['zed@1.0.0']);
+  assert.deepEqual(asked, ['my-editor@1.0.0']);
   // approved once → remembered for this client name
   answer = true;
   const b = await connectClient(sockPath);
-  assert.equal((await b.client.init('zed')).protocolVersion, 1);
+  assert.equal((await b.client.init('my-editor')).protocolVersion, 1);
   const s = await b.client.conn.request<any>('session/new', { cwd: '/tmp', mcpServers: [] });
   assert.ok(s.sessionId);
   const c = await connectClient(sockPath);
-  await c.client.init('zed');
+  await c.client.init('my-editor');
   assert.equal(asked.length, 2, 'no second dialog for an approved client');
-  assert.deepEqual(server.approvedClients(), ['zed']);
+  assert.deepEqual(server.approvedClients(), ['my-editor']);
   // another client name asks again
   answer = false;
   const d = await connectClient(sockPath);
@@ -406,7 +406,7 @@ test('acp bridge: relays stdio to the socket; a missing socket prints a bilingua
   const child = spawn(process.execPath, [bridge, '--socket', sockPath, '--no-launch'], { stdio: ['pipe', 'pipe', 'pipe'] });
   const exited = new Promise<number | null>((r) => child.once('exit', (code) => r(code)));
   const client = new TestClient({ readable: child.stdout!, writable: child.stdin! });
-  const r = await client.init('zed');
+  const r = await client.init('my-editor');
   assert.equal(r.protocolVersion, 1);
   const s = await client.conn.request<any>('session/new', { cwd: '/tmp', mcpServers: [] });
   const p = await client.conn.request<any>('session/prompt', { sessionId: s.sessionId, prompt: [{ type: 'text', text: 'hi' }] });
@@ -435,7 +435,7 @@ async function runtimeSetup(o: { brain?: Brain; delayMs?: number; host?: Constru
   const ws = tmpDir('edict-ws-');
   rt.setWorkspace(ws);
   const host = new RuntimeAcpHost(rt, o.host);
-  const connect = async (name = 'zed') => {
+  const connect = async (name = 'my-editor') => {
     const p = pair();
     new AcpAgent(new JsonRpcConnection(p.agentIo), { host });
     const client = new TestClient(p.clientIo);
@@ -478,7 +478,7 @@ test('acp integration: Solo prompt end to end — streaming, tool call with real
   const task = [...rt.tasks.values()].at(-1)!;
   assert.equal(task.tier, 'solo');
   assert.equal(task.state, 'Done');
-  assert.ok(rt.audit.list({ taskId: task.id }).some((e) => e.action === 'acp_prompt' && e.actor === 'acp:zed'));
+  assert.ok(rt.audit.list({ taskId: task.id }).some((e) => e.action === 'acp_prompt' && e.actor === 'acp:my-editor'));
   assert.ok(rt.activities(task.id).some((a) => a.content.includes('经 ACP 下达')));
   // second prompt continues the same Solo conversation (history kept)
   await client.conn.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: '再写一个' }] });
@@ -492,7 +492,7 @@ test('acp integration: Solo prompt end to end — streaming, tool call with real
   const p = pair();
   new AcpAgent(new JsonRpcConnection(p.agentIo), { host: reloaded });
   const c2 = new TestClient(p.clientIo);
-  await c2.init('zed');
+  await c2.init('my-editor');
   const lr = await c2.conn.request<any>('session/load', { sessionId, cwd: ws, mcpServers: [] });
   assert.equal(lr.modes.currentModeId, 'solo');
   const replay = c2.of(sessionId);
@@ -559,7 +559,7 @@ test('acp integration: approvals go to the editor; allow_always never covers hig
   const aps = [...rt.approvals.values()];
   assert.deepEqual(aps.map((a) => [a.tool, a.risk, a.status]), [['write_file', 'normal', 'approved'], ['run_command', 'high', 'approved'], ['run_command', 'high', 'denied']]);
   const decided = rt.audit.list({}).filter((e) => e.action === 'approval_granted' || e.action === 'approval_denied');
-  assert.ok(decided.every((e) => e.actor === 'acp:zed'));
+  assert.ok(decided.every((e) => e.actor === 'acp:my-editor'));
   assert.equal(fs.readFileSync(path.join(ws, 'a.txt'), 'utf8'), 'A\n');
   await env.close();
 });
@@ -618,18 +618,18 @@ test('acp integration: the editor cwd must be the Edict workspace unless the use
   const p = pair();
   new AcpAgent(new JsonRpcConnection(p.agentIo), { host: h2 });
   const c2 = new TestClient(p.clientIo);
-  await c2.init('zed');
+  await c2.init('my-editor');
   const s = await c2.conn.request<any>('session/new', { cwd: other, mcpServers: [] });
   assert.ok(s.sessionId);
-  assert.deepEqual(asked, [`zed:${other}`]);
+  assert.deepEqual(asked, [`my-editor:${other}`]);
   assert.equal(rt.workspace?.root, other);
   assert.ok(rt.audit.list({}).some((e) => e.action === 'acp_workspace_switch'));
   h2.dispose();
   await env.close();
 });
 
-test('acp service: createAcpService serves the runtime over the socket; Zed agent_servers snippet', async () => {
-  const { createAcpService, zedAgentServerConfig } = await import('../src/main/acp/index');
+test('acp service: createAcpService serves the runtime over the socket; editor agent_servers snippet', async () => {
+  const { createAcpService, editorAgentServerConfig } = await import('../src/main/acp/index');
   const mock = await startMockLlm();
   const rt = makeRuntime(mock.url);
   const ws = tmpDir('edict-ws-');
@@ -639,18 +639,18 @@ test('acp service: createAcpService serves the runtime over the socket; Zed agen
   assert.equal(svc.socketPath, path.join(rt.opts.dataDir, 'acp.sock'));
   await svc.setEnabled(true);
   const { sock, client } = await connectClient(svc.socketPath);
-  await client.init('zed');
+  await client.init('my-editor');
   const { sessionId } = await client.conn.request<any>('session/new', { cwd: ws, mcpServers: [] });
   const r = await client.conn.request<any>('session/prompt', { sessionId, prompt: [{ type: 'text', text: '写个文件' }] });
   assert.equal(r.stopReason, 'end_turn');
-  assert.deepEqual(asked, ['zed']);
+  assert.deepEqual(asked, ['my-editor']);
   assert.equal(svc.host.listSessions()[0].id, sessionId);
   sock.destroy();
   await svc.dispose();
   assert.ok(!svc.server.listening && !fs.existsSync(svc.socketPath));
   const index = JSON.parse(fs.readFileSync(path.join(rt.opts.dataDir, 'acp-sessions.json'), 'utf8'));
   assert.ok(index.sessions.some((s: { id: string; turns: unknown[] }) => s.id === sessionId && s.turns.length === 1));
-  const cfg = zedAgentServerConfig({ appExecutable: '/Applications/Edict.app/Contents/MacOS/Edict', bridgeScript: '/Applications/Edict.app/Contents/Resources/app/acp-bridge.js' });
+  const cfg = editorAgentServerConfig({ appExecutable: '/Applications/Edict.app/Contents/MacOS/Edict', bridgeScript: '/Applications/Edict.app/Contents/Resources/app/acp-bridge.js' });
   assert.deepEqual(cfg, { agent_servers: { Edict: { type: 'custom', command: '/Applications/Edict.app/Contents/MacOS/Edict', args: ['/Applications/Edict.app/Contents/Resources/app/acp-bridge.js'], env: { ELECTRON_RUN_AS_NODE: '1' } } } });
   rt.dispose();
   await mock.close();

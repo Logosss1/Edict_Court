@@ -257,7 +257,7 @@ test('R5: always-allow per workspace, never for high risk; release needs the wor
 });
 
 // ───────────────────────── court flows ─────────────────────────
-test('R1: each write subtask asks before it starts (Codex-style); rejecting blocks with the reason', async () => {
+test('R1: each write subtask asks before it starts; rejecting blocks with the reason', async () => {
   const mock = await startMockLlm();
   const rt = makeRuntime(mock.url);
   rt.updateSettings({ permissionMode: 'auto-edit', finalGate: false });

@@ -406,7 +406,7 @@ function escalateChoices(base: PermissionMode): ApprovalChoice[] {
 }
 
 /**
- * Ask about one action (Codex-style). Release / deploy commands run without asking only when the workspace
+ * Ask about one action on an approval card. Release / deploy commands run without asking only when the workspace
  * opted in; other normal-risk actions can be allowed for this edict or this workspace. High risk always asks.
  */
 async function askAction(ctx: ToolContext, tool: string, args: Record<string, unknown>, verdict: RiskVerdict, summary: string, detail: string): Promise<{ approve: boolean; comment?: string }> {

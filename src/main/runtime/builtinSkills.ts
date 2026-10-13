@@ -1,7 +1,6 @@
 // 内置技能包 (built-in skill pack): workflow skills for the court — plan / review / investigate / QA /
 // design / release / deploy / safety — plus everyday engineering skills.
-// Skill names follow the public gstack pack's naming where one exists (codex → second-opinion);
-// every body is original Simplified-Chinese content written for Edict's tools and court roles.
+// Every body is original Simplified-Chinese content written for Edict's tools and court roles.
 //
 // Conventions every body follows (enforced by tests/skillpack.test.ts):
 // - "# 标题（name）" heading, then 步骤 / 证据 / 回报格式 / 停下请示 sections, 25–80 lines, no emojis.

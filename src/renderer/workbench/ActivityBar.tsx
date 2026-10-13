@@ -159,7 +159,7 @@ export function ActivityBar() {
         <Icon name="plug" size={20} stroke={1.6} />
         {mcpBad > 0 && <span className="ab-badge">{mcpBad}</span>}
       </button>
-      <button className={`ab-item ${onSettings('skills') ? 'on' : ''}`} {...tip('技能', '给每位官员配技能，像浏览器扩展一样开关')} onClick={() => openSettings('skills')} data-testid="ab-skills">
+      <button className={`ab-item ${onSettings('skills') ? 'on' : ''}`} {...tip('技能', '给每位官员配技能，按官员单独开关')} onClick={() => openSettings('skills')} data-testid="ab-skills">
         <Icon name="puzzle" size={20} stroke={1.6} />
       </button>
       <button className={`ab-item ${onSettings('permissions') ? 'on' : ''}`} {...tip('权限与审批', `当前：${MODE_DOT[mode]?.label ?? mode}。官员动手前要不要先问你`)} onClick={() => openSettings('permissions')} data-testid="ab-permissions">

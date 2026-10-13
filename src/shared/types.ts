@@ -376,7 +376,7 @@ export interface EdictQuestion {
   answeredAt?: number;
 }
 
-/** One button on an approval card (Codex-style: proceed / proceed and don't ask again / no, and say what to do instead). */
+/** One button on an approval card (proceed / proceed and don't ask again / no, and say what to do instead). */
 export interface ApprovalChoice {
   id: string;
   label: string;
@@ -572,7 +572,7 @@ export type PermissionMode = 'readonly' | 'ask' | 'auto-edit' | 'auto';
 export interface SkillInfo {
   name: string;
   description: string;
-  /** extra skills the emperor equipped (like browser extensions); 'all' = every official */
+  /** extra skills the emperor equipped (switched on per official); 'all' = every official */
   agents: AgentId[] | 'all';
   /** officials that hold this as a fixed duty skill (职责技能) */
   duty: AgentId[];
@@ -636,7 +636,7 @@ export interface Settings {
   defaultDesign?: string; // design id preselected in the composer
   previewAllowNetwork?: boolean; // HTML 预览可加载外部网络资源（默认仅本地） // last 思考程度 slider value ('default' | 'top' | level)
   language: 'zh';
-  /** ask before each write subtask starts (Codex-style), unless permissionMode is auto */
+  /** ask before each write subtask starts, unless permissionMode is auto */
   confirmWriteTasks: boolean;
   /** after a restart, resume interrupted nodes that had no side effects instead of blocking */
   autoResumeSafe: boolean;
@@ -644,7 +644,7 @@ export interface Settings {
   nodeTimeoutMin: number;
   /** per workspace root: 「本工作区永久允许」 rules */
   workspacePerms: Record<string, WorkspacePerms>;
-  /** editors (Zed …) may connect over ACP through a local socket */
+  /** external editors may connect over ACP through a local socket */
   acpEnabled: boolean;
   /** high-risk approvals from ACP edicts are answered in Edict only, never in the editor */
   acpHighRiskInEdictOnly: boolean;
@@ -813,7 +813,7 @@ export interface PreviewViewportResult {
 }
 
 // ───────────────────────── MCP (Model Context Protocol) ─────────────────────────
-/** One server entry in Cursor-compatible `mcp.json` (`{ "mcpServers": { name: entry } }`). */
+/** One server entry in the standard `mcp.json` format (`{ "mcpServers": { name: entry } }`). */
 export interface McpServerEntry {
   type?: 'stdio' | 'http' | 'sse' | 'streamable-http';
   command?: string;

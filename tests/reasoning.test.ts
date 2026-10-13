@@ -65,7 +65,7 @@ test('effort flows into the request body; unsupported reasoning params fall back
     reject: (_c, body) => ('reasoning_effort' in body ? { status: 400, body: '{"error":{"message":"Unrecognized request argument supplied: reasoning_effort"}}' } : undefined),
   });
   const rt = makeRuntime(mock.url);
-  // mark mock-strong as an OpenAI-style reasoning model
+  // mark mock-strong as a reasoning model using the `openai` reasoning parameters
   const p = rt.providers[0];
   rt.upsertProvider({ ...p, models: p.models.map((m) => (m.id === 'mock-strong' ? { ...m, reasoning: { style: 'openai', levels: ['low', 'medium', 'high', 'xhigh'], default: 'medium' }, maxOutputTokens: 32000 } : m)) });
   assert.equal(rt.providers[0].models[0].reasoning?.style, 'openai', 'reasoning config survives save');

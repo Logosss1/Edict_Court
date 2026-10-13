@@ -1,4 +1,4 @@
-// Cursor-style agent pane: task switcher, live activity, gates, and the 下旨 composer.
+// Agent pane: task switcher, live activity, gates, and the 下旨 composer.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, setUI, selectTask, openTaskTab, openPanel, toast, getState } from '../store';
 import { call } from '../api';

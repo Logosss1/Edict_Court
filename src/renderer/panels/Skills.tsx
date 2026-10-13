@@ -1,4 +1,4 @@
-// 技能与 MCP 中心（吏部）— add / edit / enable Skills; configure MCP servers (Cursor-compatible mcp.json),
+// 技能与 MCP 中心（吏部）— add / edit / enable Skills; configure MCP servers (standard mcp.json format),
 // trust local commands, per-tool risk & approval, per-official grants; see exactly what an official is given.
 import { useEffect, useMemo, useState } from 'react';
 import { useStore, toast } from '../store';
@@ -236,7 +236,7 @@ export function McpTab() {
   };
   return (
     <div className="mcp-tab">
-      {servers.length === 0 && <div className="card muted pad">尚未配置 MCP 服务。在下方 mcp.json 中添加（格式与 Cursor 相同），或从工作区的 .cursor/mcp.json 导入。</div>}
+      {servers.length === 0 && <div className="card muted pad">尚未配置 MCP 服务。在下方 mcp.json 中添加（标准 mcp.json 格式），或从工作区的 mcp.json 文件导入。</div>}
       <div className="mcp-servers">
         {servers.map((s) => <McpServerCard key={s.name} s={s} />)}
       </div>

@@ -11,7 +11,7 @@ import { buildApi } from './api';
 import { installPreview, hardenContents, previewPage } from './previewHost';
 import { TerminalManager } from './services/terminal';
 import type { RuntimeEvent } from '../shared/types';
-import { createAcpService, zedAgentServerConfig, type AcpService } from './acp';
+import { createAcpService, editorAgentServerConfig, type AcpService } from './acp';
 
 const APP_NAME = 'Edict';
 app.setName(APP_NAME);
@@ -256,7 +256,7 @@ app.whenReady().then(async () => {
   rt.mcp.load();
   nativeTheme.themeSource = rt.settings.theme;
   terminals = new TerminalManager((id, kind, payload) => win?.webContents.send('term:event', { id, kind, payload }));
-  // ACP: editors (Zed …) drive Edict over a 0600 local socket; off until the emperor turns it on
+  // ACP: external editors drive Edict over a 0600 local socket; off until the emperor turns it on
   acp = createAcpService(rt, { confirmClient: confirmAcpClient, confirmWorkspace: confirmAcpWorkspace, highRiskInEdictOnly: rt.settings.acpHighRiskInEdictOnly !== false, log: (l) => console.log(l) });
   const followAcp = (on: boolean) => void acp?.setEnabled(on).catch((err) => send({ type: 'toast', level: 'error', message: `编辑器接入（ACP）无法启动：${(err as Error).message}` }));
   followAcp(!!rt.settings.acpEnabled);
@@ -286,7 +286,7 @@ app.whenReady().then(async () => {
       }));
       return { enabled: !!rt.settings.acpEnabled, listening: !!acp?.server.listening, socketPath: acp?.socketPath ?? '', connections: acp?.server.connections ?? 0, approvedClients: acp?.server.approvedClients() ?? [], sessions };
     },
-    acpEditorConfig: () => zedAgentServerConfig({ appExecutable: process.execPath, bridgeScript: path.join(DIST, 'acp-bridge.js') }),
+    acpEditorConfig: () => editorAgentServerConfig({ appExecutable: process.execPath, bridgeScript: path.join(DIST, 'acp-bridge.js') }),
   });
   ipcMain.handle('rt:invoke', async (_e, method: string, args: unknown[]) => {
     const fn = (api as Record<string, (...a: unknown[]) => unknown>)[method];

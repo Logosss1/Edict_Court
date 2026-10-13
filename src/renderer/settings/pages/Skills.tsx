@@ -1,4 +1,4 @@
-// 技能 (2.0) — like browser extensions: every official carries fixed 职责技能 (the job itself); extra skills
+// 技能 (2.0) — every official carries fixed 职责技能 (the job itself); extra skills
 // are switched on per official. Also: the whole library (enable / edit / copy / restore / delete), update
 // checks for skills added from a link, and the prompt an official actually receives.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -128,7 +128,7 @@ export function SkillsPage() {
     else if (bad) toast(`${bad} 个技能检查失败，链接可能暂时打不开`, 'warn');
     else toast('从链接添加的技能都是最新的', 'success');
   };
-  // like Chrome: look for updates once per run when the page is first opened
+  // look for updates once per run when the page is first opened
   useEffect(() => {
     if (mem.autoChecked || !remotes.length) return;
     mem.autoChecked = true;
@@ -302,7 +302,7 @@ function AgentPane({ agent, skills, ctx, match, cat, setCat }: { agent: AgentId;
       <DutyBox key={`duty-${agent}`} agent={agent} skills={skills} ctx={ctx} />
       <div className="skp-lane">
         <b>另配技能</b>
-        <span className="muted">· 像浏览器扩展一样，打开开关就配给{a.name}；其他官员不受影响</span>
+        <span className="muted">· 打开开关就配给{a.name}；其他官员不受影响</span>
         <span className="grow" />
         <span className="muted small nowrap">已配 {on} / {pool.length}</span>
       </div>
@@ -486,7 +486,7 @@ function Tags({ s, ctx, withSource = true }: { s: SkillInfo; ctx: Ctx; withSourc
   );
 }
 
-/** accent: outline the card while it is on (equipped); the library views only show it on the switch, like Chrome. */
+/** accent: outline the card while it is on (equipped); the library views only show it on the switch. */
 function ExtCard({ s, ctx, on, accent, onToggle, toggleLabel, holders, actions, status }: { s: SkillInfo; ctx: Ctx; on: boolean; accent?: boolean; onToggle: (v: boolean) => void; toggleLabel: string; holders?: boolean; actions?: ReactNode; status?: boolean }) {
   const title = ctx.title(s);
   const upd = ctx.updates[s.name];
@@ -618,7 +618,7 @@ function SkillDetail({ name, skills, ctx, onClose }: { name: string; skills: Ski
         <OfficialChips value={s.duty} onToggle={(a, v) => ctx.setDuty(s, v ? [...s.duty, a] : s.duty.filter((x) => x !== a))} />
       </div>
       <div className="skd-sec">
-        <div className="k"><Icon name="puzzle" size={12} /> 另配 <span className="muted">· 像扩展一样按官员开关</span></div>
+        <div className="k"><Icon name="puzzle" size={12} /> 另配 <span className="muted">· 按官员单独开关</span></div>
         <OfficialChips value={s.agents === 'all' ? 'all' : s.agents.filter((a) => !s.duty.includes(a))} onToggle={(a, v) => ctx.equip(s, a, v)} disabledFor={s.duty} disabledNote="已是职责技能，始终带着" />
       </div>
       {!s.enabled && <div className="warnbox"><Icon name="alert" size={13} /><span>已停用：所有官员都看不到它，打开右上角开关后才生效。</span></div>}

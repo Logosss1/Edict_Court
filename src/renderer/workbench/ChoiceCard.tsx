@@ -1,4 +1,4 @@
-// Codex-style decision card, inline in the agent pane: numbered options (1–9), ⏎ to confirm, Esc to deny,
+// Decision card, inline in the agent pane: numbered options (1–9), ⏎ to confirm, Esc to deny,
 // an optional 批示. Used for write-task starts, risky actions, 请旨 questions, escalations and loops.
 import { useEffect, useRef, useState } from 'react';
 import { useStore, selectTask, toast } from '../store';

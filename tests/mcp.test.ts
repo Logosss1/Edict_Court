@@ -16,7 +16,7 @@ const FIXTURE = path.resolve('tests/fixtures/mcp-echo-server.mjs');
 const RES_FIXTURE = path.resolve('tests/fixtures/mcp-resources-server.mjs');
 const stdioCfg = (extra: Record<string, unknown> = {}) => JSON.stringify({ mcpServers: { demo: { command: process.execPath, args: [FIXTURE], env: { ECHO_PREFIX: 'P' }, ...extra } } });
 
-test('config: Cursor + VS Code shapes, validation, interpolation, secret extraction, exposed names', () => {
+test('config: mcpServers + servers shapes, validation, interpolation, secret extraction, exposed names', () => {
   assert.deepEqual(Object.keys(parseMcpConfig('{"servers":{"a":{"url":"https://x/mcp"}}}').mcpServers), ['a']);
   assert.throws(() => parseMcpConfig('{"mcpServers":{"bad name!":{"command":"x"}}}'), /服务名不合法/);
   assert.throws(() => parseMcpConfig('{"mcpServers":{"a":{}}}'), /command/);

@@ -45,7 +45,7 @@ export function Row({ label, desc, children, testid }: { label: ReactNode; desc?
   );
 }
 
-/** iOS-style switch (keyboard accessible). */
+/** Toggle switch (keyboard accessible). */
 export function Toggle({ on, onChange, disabled, tone, label, testid }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; tone?: 'red'; label?: string; testid?: string }) {
   return (
     <button

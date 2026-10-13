@@ -699,7 +699,7 @@ export class Runtime {
     return this.requestDecision(req).then((d) => d.approve);
   }
 
-  /** Ask the emperor; with `choices` the card offers those buttons (Codex-style) and the note box. */
+  /** Ask the emperor; with `choices` the card offers those buttons and the note box. */
   requestDecision(req: Omit<ApprovalRequest, 'id' | 'at' | 'status'>, o: { onId?: (id: string) => void } = {}): Promise<ApprovalDecision> {
     const ap: ApprovalRequest = { ...req, id: uid('ap'), at: now(), status: 'pending' };
     o.onId?.(ap.id);

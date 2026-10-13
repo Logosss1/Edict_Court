@@ -135,7 +135,7 @@ Phaser 3.90：`pixelArt: true`、`roundPixels`、640×360 世界、**整数倍�
 
 - **MCP**：`oauth.ts` 实现远程服务登录（发现、动态注册、PKCE、一次性回环回调、续期、吊销）；`client.ts` 支持 `resources/*`、`prompts/*` 与列表变更通知（仅当服务声明该能力）；`resourceTools.ts` 给官员 `mcp_list_resources` / `mcp_read_resource`（按官员授权）；`refs.ts` 在下旨时把 `@mcp:<服务>/<uri>` 展开成【附带资源】块（最多 10 项、合计 8000 字符）。下旨框的 `/`（提示词）与 `@`（资源）选择器在 `workbench/McpPicker.tsx`。
 - **LSP**（`src/main/lsp`）：`registry.ts` 是 24 种常见语言服务器的数据（命令、项目标记、各平台安装提示）；`detect.ts` 不经 shell 在 `PATH` 与常见安装目录里找可执行文件并缓存；`client.ts` 是 LSP 3.17 的 stdio JSON-RPC 客户端（推送与拉取两种诊断）；`manager.ts` 按（项目根 × 服务器）懒启动、从磁盘同步文档、闲置回收、崩溃退避重启，并把诊断推给编辑器（Monaco 标记）；`tool.ts` 是官员的 `lsp` 工具（诊断、定义、引用、悬停、符号、全局符号），没装服务器时返回安装提示。
-- **ACP**（`src/main/acp`）：`server.ts` 在 `<dataDir>/acp.sock` 上监听并逐个批准编辑器；`connection.ts` 是按行分隔的 JSON-RPC 2.0；`agent.ts` 实现 ACP v1 的 initialize、`session/new|load|prompt|cancel|set_mode`；`runtimeHost.ts` 把一次提示变成一道旨意（`orchestrator.submit`，模式 = Solo / Court Lite / Full Court，默认 Solo），活动流映射为 `session/update`，方案映射为 `plan`，待批操作映射为 `session/request_permission` 再交给 `rt.decideApproval`；遇到关卡本轮结束。会话索引存于 `acp-sessions.json`，恢复会话时回放。编辑器侧由 `dist/acp-bridge.js` 把 stdio 接到套接字，「编辑器接入」页可复制 Zed 配置。
+- **ACP**（`src/main/acp`）：`server.ts` 在 `<dataDir>/acp.sock` 上监听并逐个批准编辑器；`connection.ts` 是按行分隔的 JSON-RPC 2.0；`agent.ts` 实现 ACP v1 的 initialize、`session/new|load|prompt|cancel|set_mode`；`runtimeHost.ts` 把一次提示变成一道旨意（`orchestrator.submit`，模式 = Solo / Court Lite / Full Court，默认 Solo），活动流映射为 `session/update`，方案映射为 `plan`，待批操作映射为 `session/request_permission` 再交给 `rt.decideApproval`；遇到关卡本轮结束。会话索引存于 `acp-sessions.json`，恢复会话时回放。编辑器侧由 `dist/acp-bridge.js` 把 stdio 接到套接字，「编辑器接入」页可复制编辑器配置示例。
 
 ## 设置中心与界面（v2.0）
 

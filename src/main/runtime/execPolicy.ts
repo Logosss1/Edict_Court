@@ -1,6 +1,6 @@
 // Execution policy shared by the native 三省六部 engine and 协同设计 fan-outs:
-// effect-aware scheduling (read subtasks in parallel, write / verify alone), the Codex-style
-// write-task dialog, and the evidence check on each ministry's conclusion.
+// effect-aware scheduling (read subtasks in parallel, write / verify alone), the
+// write-task approval card, and the evidence check on each ministry's conclusion.
 import type { ApprovalChoice, PermissionMode, RunNode, Subtask, SubtaskEffect, Task } from '../../shared/types';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { PERMISSION_LABEL } from './permissions';

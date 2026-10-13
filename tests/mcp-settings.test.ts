@@ -10,7 +10,7 @@ import type { McpPromptListItem, McpResourceListItem } from '../src/shared/types
 
 test('add remote: auth modes, transport, headers; validation of names and URLs', () => {
   const r = (p: Partial<typeof EMPTY_REMOTE>, existing: string[] = []) => buildRemote({ ...EMPTY_REMOTE, ...p }, existing);
-  assert.deepEqual(r({ name: 'linear', url: 'https://mcp.linear.app/sse' }).entry, { url: 'https://mcp.linear.app/sse' }, 'auto = OAuth on demand (no auth key)');
+  assert.deepEqual(r({ name: 'tracker', url: 'https://mcp.example.com/sse' }).entry, { url: 'https://mcp.example.com/sse' }, 'auto = OAuth on demand (no auth key)');
   assert.deepEqual(r({ name: 'a', url: 'https://x.dev/mcp', transport: 'sse', auth: 'oauth', clientId: ' cid ' }).entry, { url: 'https://x.dev/mcp', type: 'sse', auth: { type: 'oauth', clientId: 'cid' } });
   assert.deepEqual(r({ name: 'a', url: 'https://x.dev/mcp', auth: 'none', headers: 'X-Api-Version: 2\n\nX-Team=core' }).entry, { url: 'https://x.dev/mcp', auth: { type: 'none' }, headers: { 'X-Api-Version': '2', 'X-Team': 'core' } });
   assert.deepEqual(r({ name: 'a', url: 'https://x.dev/mcp', auth: 'bearer', token: 'ghp_123', headers: 'X-A: b=c:d' }).entry?.headers, { Authorization: 'Bearer ghp_123', 'X-A': 'b=c:d' });
@@ -18,7 +18,7 @@ test('add remote: auth modes, transport, headers; validation of names and URLs',
 
   assert.match(r({ name: '', url: 'https://x.dev' }).errors.name!, /名称/);
   assert.match(r({ name: 'bad name', url: 'https://x.dev' }).errors.name!, /字母/);
-  assert.match(r({ name: 'Linear', url: 'https://x.dev' }, ['linear']).errors.name!, /同名/, 'duplicates are case-insensitive');
+  assert.match(r({ name: 'Tracker', url: 'https://x.dev' }, ['tracker']).errors.name!, /同名/, 'duplicates are case-insensitive');
   assert.match(r({ name: 'a', url: 'ftp://x' }).errors.url!, /https/);
   assert.match(r({ name: 'a', url: 'https://' }).errors.url!, /格式|主机/);
   assert.match(r({ name: 'a', url: 'https://x.dev', auth: 'bearer' }).errors.token!, /令牌/);
@@ -64,7 +64,7 @@ test('built entries parse unchanged, and the plain-text hint matches what extrac
   assert.equal(valueFate('X-Ref', '${env:REF}'), 'reference');
 });
 
-test('config merge and removal keep the file shape (mcpServers or VS Code servers)', () => {
+test('config merge and removal keep the file shape (mcpServers or servers)', () => {
   const t = addToConfig('{"mcpServers":{"a":{"url":"https://a.dev"}}}', 'b', { command: 'x', args: [] });
   assert.deepEqual(serverNames(t), ['a', 'b']);
   assert.throws(() => addToConfig(t, 'b', { url: 'https://b.dev' }), /同名/);

@@ -1,4 +1,4 @@
-/* 技能 page (settings center): officials on the left, extension-style cards on the right. Scoped under .skp */
+/* 技能 page (settings center): officials on the left, skill cards with on/off switches on the right. Scoped under .skp */
 .skp { height: 100%; min-height: 0; min-width: 0; }
 /* the container lives on .skp-body, not .skp: containment would trap the fixed-position dialogs */
 .skp-body { display: flex; height: 100%; min-height: 0; min-width: 0; container-type: inline-size; }

@@ -145,7 +145,7 @@ export function PermissionsPage() {
         </Sec>
 
         <Sec title="写任务与续跑">
-          <Row label="每个写任务开工前问一次" desc={<>像 Codex 一样：准许 / 本子任务内免询问 / 改为只读 / 驳回，可附批示。{mode === 'auto' && <span className="permp-dim">（全自动模式下不问）</span>}</>}>
+          <Row label="每个写任务开工前问一次" desc={<>准许 / 本子任务内免询问 / 改为只读 / 驳回，可附批示。{mode === 'auto' && <span className="permp-dim">（全自动模式下不问）</span>}</>}>
             <Toggle on={s.confirmWriteTasks !== false} onChange={(v) => void up({ confirmWriteTasks: v })} label="每个写任务开工前问一次" testid="confirm-write-tasks" />
           </Row>
           <Row label="应用重启后，自动续跑没改过文件的步骤" desc="改过文件的步骤会停下来，等你核对后再重试">

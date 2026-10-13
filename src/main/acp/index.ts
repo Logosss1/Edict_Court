@@ -26,10 +26,10 @@ export interface AcpService {
 }
 
 /**
- * Zed `settings.json` fragment that launches the bridge with Edict's own binary in Node mode.
+ * Editor `settings.json` fragment (`agent_servers`) that launches the bridge with Edict's own binary in Node mode.
  * `appExecutable` = process.execPath of the packaged app; `bridgeScript` = <resources>/app/acp-bridge.js.
  */
-export function zedAgentServerConfig(o: { appExecutable: string; bridgeScript: string; socketPath?: string; name?: string }) {
+export function editorAgentServerConfig(o: { appExecutable: string; bridgeScript: string; socketPath?: string; name?: string }) {
   return {
     agent_servers: {
       [o.name ?? 'Edict']: {

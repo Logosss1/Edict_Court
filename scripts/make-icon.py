@@ -25,7 +25,7 @@ PAPER = (244, 230, 196, 255)
 S = 32
 im = Image.new('RGBA', (S, S), (0, 0, 0, 0))
 d = ImageDraw.Draw(im)
-# macOS-style rounded square silhouette built from pixels
+# rounded-square app-icon silhouette built from pixels
 d.rounded_rectangle([1, 1, 30, 30], radius=6, fill=RED)
 d.rounded_rectangle([1, 1, 30, 30], radius=6, outline=INK)
 # bevel: light top-left, dark bottom-right

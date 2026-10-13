@@ -159,7 +159,7 @@
 .eb-row .tier-seg { flex: none; }
 .eb-row .tier-seg button { white-space: nowrap; }
 
-/* ── agent pane: plan card, 成果核验, Codex-style decision cards ── */
+/* ── agent pane: plan card, 成果核验, decision cards ── */
 .activity-stream > .plan-card, .activity-stream > .cc-list { flex: none; }
 .plan-card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
 .plan-card .h { display: flex; gap: 6px; align-items: center; font-weight: 600; }

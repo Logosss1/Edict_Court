@@ -32,9 +32,9 @@ test('pack: names are unique, kebab-case and stable under skillSlug', () => {
   }
 });
 
-test('pack: covers the requested gstack-style, everyday and legacy skills', () => {
+test('pack: covers the requested workflow, everyday and legacy skills', () => {
   const required = [
-    // gstack-style workflow skills (codex is renamed second-opinion)
+    // workflow skills
     'autoplan', 'benchmark', 'browse', 'canary', 'careful', 'second-opinion', 'cso', 'design-consultation', 'design-review',
     'document-release', 'investigate', 'land-and-deploy', 'office-hours', 'plan-ceo-review', 'plan-design-review', 'plan-eng-review',
     'qa', 'qa-only', 'retro', 'review', 'setup-deploy', 'ship',
@@ -43,7 +43,6 @@ test('pack: covers the requested gstack-style, everyday and legacy skills', () =
     'accessibility-audit', 'i18n', 'code-reading', 'changelog', 'incident-postmortem',
   ];
   for (const n of required) assert.ok(byName.has(n), `missing skill ${n}`);
-  assert.ok(!byName.has('codex'), 'codex must be shipped as second-opinion');
 });
 
 test('pack: the three legacy builtin skills keep their names', () => {

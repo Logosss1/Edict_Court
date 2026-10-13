@@ -1,4 +1,4 @@
-// 连接服务（MCP） page, pure part: turn the two add cards' fields into Cursor-compatible mcp.json entries (the shapes
+// 连接服务（MCP） page, pure part: turn the two add cards' fields into standard mcp.json entries (the shapes
 // parseMcpConfig in src/main/mcp/manager.ts accepts), validate them, merge them into the config text, and tell the
 // user which typed values would be written to mcp.json as plain text (the rest move to the keychain on save).
 import type { McpServerEntry } from '../../../shared/types';
@@ -171,7 +171,7 @@ export function valueFate(key: string, value: string): ValueFate | null {
 /** Same rule as extractSecrets for `--api-key=…` style arguments. */
 export const argMovesToKeychain = (a: string) => /^--?[\w-]*(?:key|token|secret|password)[\w-]*=(.+)$/i.test(a) && !a.includes('${');
 
-/** The `{ mcpServers }` object of a config text (Cursor or VS Code shape). */
+/** The `{ mcpServers }` object of a config text (`mcpServers` or `servers` shape). */
 function serversOf(text: string): { root: Record<string, unknown>; box: Record<string, unknown> } {
   const root = JSON.parse(text.trim() || '{}') as Record<string, unknown>;
   if (!root || typeof root !== 'object' || Array.isArray(root)) throw new Error('mcp.json 顶层必须是对象');

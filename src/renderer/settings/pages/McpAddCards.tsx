@@ -1,4 +1,4 @@
-// 连接服务（MCP）: the two add cards (远程服务 / 本地服务). Each builds a Cursor-compatible mcp.json entry, merges it
+// 连接服务（MCP）: the two add cards (远程服务 / 本地服务). Each builds a standard mcp.json entry, merges it
 // into the current config and saves through mcpSave — which asks the native trust dialog for a new local command.
 import { useMemo, useState } from 'react';
 import { Icon } from '../../common/Icon';
@@ -55,11 +55,11 @@ function RemoteCard({ existing, onAdd }: { existing: string[]; onAdd: AddFn }) {
       <div className="h"><Icon name="globe" size={15} /> 添加远程服务 <span className="muted">HTTP / SSE · 支持 OAuth 登录</span></div>
       <div className="mp-fgrid">
         <label htmlFor="mcp-r-name">名称</label>
-        <input id="mcp-r-name" className={`input ${err.name ? 'bad' : ''}`} value={d.name} onChange={(e) => up({ name: e.target.value })} placeholder="linear" spellCheck={false} data-testid="mcp-r-name" />
+        <input id="mcp-r-name" className={`input ${err.name ? 'bad' : ''}`} value={d.name} onChange={(e) => up({ name: e.target.value })} placeholder="my-server" spellCheck={false} data-testid="mcp-r-name" />
         {err.name && <div className="err">{err.name}</div>}
         <label htmlFor="mcp-r-url">地址</label>
         <div className="mp-inline">
-          <input id="mcp-r-url" className={`input ${err.url ? 'bad' : ''}`} value={d.url} onChange={(e) => up({ url: e.target.value })} placeholder="https://mcp.linear.app/sse" spellCheck={false} data-testid="mcp-r-url" />
+          <input id="mcp-r-url" className={`input ${err.url ? 'bad' : ''}`} value={d.url} onChange={(e) => up({ url: e.target.value })} placeholder="https://mcp.example.com/mcp" spellCheck={false} data-testid="mcp-r-url" />
           <select className="input" value={d.transport} onChange={(e) => up({ transport: e.target.value as RemoteDraft['transport'] })} {...tip('传输方式', '自动：先试 Streamable HTTP，不行再退回旧版 SSE', undefined, 'above')}>
             <option value="auto">自动</option>
             <option value="http">HTTP</option>

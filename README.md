@@ -1,6 +1,6 @@
 # Edict for Mac · A Multi-Agent Collaborative Programming Workstation
 
-English | [中文](README.zh-CN.md)
+English | [Chinese (Simplified)](README.zh-CN.md)
 
 <p align="center">
   <a href="https://github.com/Logosss1/Edict_Court/releases/latest"><img src="https://img.shields.io/github/v/release/Logosss1/Edict_Court?display_name=tag&label=latest%20release" alt="Latest release"></a>
@@ -49,7 +49,7 @@ Both modes show the same live state: approve in the court and the workbench clos
 - **Thinking-level slider.** Its steps are the selected model's own levels (since 1.2.7 detected from the service and shown by their API names). Translated per protocol (`reasoning_effort`, `reasoning.effort`, `output_config.effort`, `thinking.budget_tokens`, `enable_thinking`, …), configurable per model and per official, with custom levels such as `ultra`.
 - **Readable model errors.** Configuration errors such as a relay's "this group doesn't support the model or access method" are no longer retried blindly; an error card explains the cause and offers **retry with another model**. **Protocol probe** tests Chat / Responses / Messages with and without thinking parameters.
 - **HTML preview and self-testing.** A sandboxed built-in browser runs generated pages with a console, device sizes, auto-reload, and outbound-network blocking; agents verify their pages with the `preview_page` tool, which returns errors and a screenshot.
-- **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the  `mcp.json` format (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
+- **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the standard `mcp.json` format (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
 
 ### New in 1.2
 
@@ -70,8 +70,8 @@ Both modes show the same live state: approve in the court and the workbench clos
 - **One git worktree per edict.** In a git repository each court edict works on its own branch in its own folder, so edicts on one repo run side by side and your checkout stays untouched. At the end you choose merge, keep the branch, or discard.
 - **MCP login, resources and prompts.** OAuth login for remote servers, a new MCP settings page, and `/` (prompts) and `@` (resources) pickers in the edict box.
 - **Language servers.** Edict uses the language servers already installed on your Mac and shows install commands for missing ones; officials get an `lsp` tool and the editor shows their diagnostics.
-- **Editors over ACP.** Zed and other ACP editors can drive Edict through a local socket; each editor must be approved first.
-- **Built-in skill pack.** 37 skills for planning, review, investigation, QA, release, deploy and everyday work. Each official has a few duty skills; you equip extra ones per official, like browser extensions.
+- **Editors over ACP.** Editors that speak ACP can drive Edict through a local socket; each editor must be approved first.
+- **Built-in skill pack.** 37 skills for planning, review, investigation, QA, release, deploy and everyday work. Each official has a few duty skills; you switch extra ones on per official.
 - **SQLite storage.** Data lives in one `edict.db`; 1.x data is migrated on first launch and the original files are backed up.
 - **A new look.** A settings center with search, a richer activity bar with a to-do view, a redesigned Kanban board with a "needs you" lane, decision cards in the agent pane, and desktop notification settings.
 
@@ -100,4 +100,4 @@ npm run package:mac      # assemble Edict.app (arm64), ad-hoc sign, create zip +
 
 ## License
 
-MIT. Third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EDICT and Yan-Agent are MIT-licensed. This project does not use the Visual Studio Code name, icons, or Marketplace.
+MIT. Third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EDICT and Yan-Agent are MIT-licensed.

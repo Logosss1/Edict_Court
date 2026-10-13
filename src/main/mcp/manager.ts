@@ -1,4 +1,4 @@
-// MCP 管理：Cursor-compatible mcp.json (data dir), per-tool policy, trust for local commands,
+// MCP 管理：standard mcp.json (data dir), per-tool policy, trust for local commands,
 // secret extraction into the keychain-backed SecretStore, connection lifecycle, OAuth login for remote
 // servers (tokens in the SecretStore under `mcp-oauth:<server>`), resources / prompts and agent tool exposure.
 import fs from 'node:fs';
@@ -82,7 +82,7 @@ export function exposedName(server: string, tool: string): string {
   return n;
 }
 
-/** Accepts Cursor `{mcpServers}` and VS Code `{servers}` shapes; validates entries. */
+/** Accepts `{mcpServers}` and `{servers}` shapes; validates entries. */
 export function parseMcpConfig(text: string): McpConfig {
   let j: unknown;
   try {
@@ -123,7 +123,7 @@ export function parseMcpConfig(text: string): McpConfig {
 
 export interface InterpCtx { workspace: string | null; secret: (id: string) => string | null }
 
-/** Cursor-style variables: ${env:NAME} ${userHome} ${workspaceFolder} ${workspaceFolderBasename} ${pathSeparator} ${/} + ${secret:ID}. */
+/** Config variables: ${env:NAME} ${userHome} ${workspaceFolder} ${workspaceFolderBasename} ${pathSeparator} ${/} + ${secret:ID}. */
 export function interpolate(s: string, ctx: InterpCtx): string {
   return s.replace(/\$\{([^}]+)\}/g, (m, key: string) => {
     if (key.startsWith('env:')) return process.env[key.slice(4)] ?? '';
