@@ -40,6 +40,7 @@ The Chancellery cannot be bypassed: there is no path from planning to execution 
 - Approvals can be remembered for one edict or permanently for a workspace. High-risk actions always ask, and release or deploy commands ask every time unless the workspace opts in.
 - When something is unclear, officials stop and ask you, with options to pick from.
 - Results are checked against the changes Edict actually recorded, and any step or a whole edict can be reverted, including changes made by shell commands.
+- Officials' shell commands run in a macOS sandbox: they can write only to the workspace (or the edict's worktree), temporary folders and package caches, and cannot read the folders that hold keys, tokens and browser data. Network access is on by default and can be turned off. When the sandbox blocks a command, a card lets you run it once without the sandbox, allow that folder for the workspace, or stop.
 
 ### A full coding workbench
 
@@ -53,8 +54,28 @@ A file tree, Monaco editor with diagnostics, project-wide search and replace, an
 
 In a git repository each edict works on its own branch in its own folder, so several edicts on one repository run side by side and your own checkout is not touched. When an edict is done you see every changed file and who changed it, then merge, keep the branch, or discard it.
 
+Each new worktree can be prepared before the officials start: untracked files such as `.env` are copied in, dependency folders are linked, and a setup script of your choice runs. Every worktree also gets its own block of ports (`$EDICT_PORT`), so edicts that start dev servers side by side don't collide.
+
+### Requirements, checked at the end
+
+The Secretariat starts each plan with a short requirement spec: the goal, numbered acceptance criteria, what is out of scope, and constraints. Each subtask says which criteria it delivers. When the ministries are done, the Chancellery checks every criterion and gives a verdict with evidence; anything unmet goes back to the ministry for another round, and if it is still unmet the edict waits for your decision. You can read and edit the spec on the plan, and the final report lists the check. On by default in Court Lite and Full Court.
+
+### Scheduled edicts
+
+Set an edict to run on its own: daily, on chosen weekdays, every few hours, at morning court or once. Each schedule has its own folder, mode and model, and you decide up front what it may do: read only, ask before every change, or work freely inside its own git worktree and leave the merge to you. A run missed while the Mac was asleep runs once when Edict is back. Officials can also propose a schedule; it waits for your approval.
+
+### Other coding agents, and several attempts at once
+
+- **Outside agents as officials.** Coding agents installed on your Mac that speak ACP can take on a ministry's subtask. They work only in the edict's worktree, their file and command requests go through Edict's permissions and sandbox, and files they change with their own tools are recorded and can be reverted. If an agent can't start or isn't logged in, the ministry's own official takes over. Pick an agent per ministry in Settings › Outside agents, or per subtask on the plan. Edict only uses agents you have already installed and logged in to.
+- **Several attempts at one subtask.** For a hard write subtask you can assign two or three lanes when you review the plan, each done by an official (with any model) or an outside agent. The lanes work side by side in their own worktrees, the Chancellery scores them, and you compare their changes, scores, time and cost side by side and pick one to merge. The others can be kept as branches. Available in Full Court, and in Court Lite when you turn it on.
+
+| Comparing lanes | A scheduled edict | Requirement check |
+|---|---|---|
+| ![Comparing two lanes before picking one](docs/screenshots/90-lanes-compare.png) | ![A scheduled edict](docs/screenshots/91-scheduled-edict.png) | ![Requirement check on the plan](docs/screenshots/92-requirement-check.png) |
+
 ### Models, skills and tools
 
+- Officials can read web pages, and search the web through a search service you set up or the model's own web search. If an edict needs search and none is set up, the official asks you and the setup opens right there.
 - OpenAI Chat Completions, OpenAI Responses and Anthropic Messages, with any compatible service. No keys are built in; yours are encrypted with a key kept in the macOS keychain.
 - Strong and economy models, a thinking-level slider whose steps are detected from the model itself, and a model of your choice for each official.
 - 37 built-in skills for planning, review, investigation, QA, release and deploy, plus your own.
@@ -97,6 +118,7 @@ When an edict is ambiguous, the Crown Prince asks you one short question with a 
 
 ## Recent updates
 
+- **2.1.0**: web reading and search, a command sandbox, requirement specs checked at the end, scheduled edicts, outside coding agents as officials, several attempts at one subtask, and worktree setup with ports of their own.
 - **2.0.3**: the living palace, ten new scenes, and the Crown Prince's clarifying question.
 - **2.0**: execution you stay in charge of, one git worktree per edict, MCP login with resources and prompts, language servers, editors over ACP, built-in skills, SQLite storage and a new settings center.
 
