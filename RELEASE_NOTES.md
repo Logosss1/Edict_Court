@@ -2,6 +2,13 @@
 
 Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 2.0.1
+
+**Fixes**
+- The 「新」 tags in the 设置 navigation now go away once you open that page, and stay hidden after a restart. Pages you haven't opened keep their tag.
+
+**Install**: download `Edict-2.0.1-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data is kept when you install over 2.0.0.
+
 ## 2.0.0
 
 The first 2.x release.

@@ -596,6 +596,17 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.click('[data-testid=to-court]');
     await win.waitForTimeout(600);
     ok('标题栏「朝堂」切换到朝堂', await win.locator('[data-testid=court]').isVisible());
+    // settings nav: a 新 tag goes away once that page has been opened, and stays away after reload
+    await win.evaluate(() => (window as any).__openSettings('lsp'));
+    await win.waitForSelector('[data-testid=sn-lsp]');
+    await win.waitForTimeout(200);
+    const tagsNow = await win.evaluate(() => [!!document.querySelector('[data-testid=sn-lsp] .sn-b.n'), !!document.querySelector('[data-testid=sn-acp] .sn-b.n')]);
+    await win.reload();
+    await win.waitForSelector('.titlebar');
+    await win.evaluate(() => (window as any).__openSettings('appearance'));
+    await win.waitForSelector('[data-testid=sn-lsp]');
+    const tagsAfter = await win.evaluate(() => [!!document.querySelector('[data-testid=sn-lsp] .sn-b.n'), !!document.querySelector('[data-testid=sn-acp] .sn-b.n')]);
+    ok('设置导航的「新」点开看过后消失，重开仍不显示；没看过的还在', !tagsNow[0] && tagsNow[1] && !tagsAfter[0] && tagsAfter[1], JSON.stringify({ tagsNow, tagsAfter }));
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
   }
 

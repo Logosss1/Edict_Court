@@ -1,5 +1,5 @@
 // 设置中心 (2.0): every setting in one editor tab — left nav with groups and search, one page at a time.
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useStore, openSettings, type SettingsSection } from '../store';
 import { Icon } from '../common/Icon';
 import { SETTINGS_GROUPS, SECTIONS } from './sections';
@@ -18,6 +18,17 @@ import { WorktreesPage } from './pages/Worktrees';
 import { AuditPanel } from '../panels/Audit';
 import { Help } from '../panels/Help';
 import './settings.css';
+
+// 新 tags disappear once the page has been opened (kept per install, like the activity bar pins)
+const SEEN_KEY = 'edict.settings.seenNew';
+function loadSeen(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(SEEN_KEY) ?? '[]') as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 function pageFor(id: SettingsSection): ReactNode {
   switch (id) {
@@ -42,11 +53,22 @@ export function SettingsView() {
   const section = useStore((s) => s.ui.settingsSection);
   const mcpBad = useStore((s) => s.mcp.filter((m) => m.status === 'error' || m.status === 'needs_auth' || m.status === 'untrusted').length);
   const [q, setQ] = useState('');
+  const [seen, setSeen] = useState(loadSeen);
+  useEffect(() => {
+    if (!SECTIONS.find((x) => x.id === section)?.isNew || seen.includes(section)) return;
+    const next = [...seen, section];
+    setSeen(next);
+    try {
+      localStorage.setItem(SEEN_KEY, JSON.stringify(next));
+    } catch {
+      /* ignore */
+    }
+  }, [section, seen]);
   const query = q.trim().toLowerCase();
   const hits = useMemo(() => (query ? SECTIONS.filter((x) => `${x.label} ${x.keywords}`.toLowerCase().includes(query)) : null), [query]);
   const badge = (id: SettingsSection, isNew?: boolean) => {
     if (id === 'mcp' && mcpBad) return <span className="sn-b">{mcpBad}</span>;
-    if (isNew) return <span className="sn-b n">新</span>;
+    if (isNew && !seen.includes(id)) return <span className="sn-b n">新</span>;
     return null;
   };
   const item = (x: (typeof SECTIONS)[number]) => (
