@@ -4,93 +4,124 @@
 
 > 下载：[最新版本（Releases）](https://github.com/Logosss1/Edict_Court/releases/latest) · 旧的 0.x 桌面封装版本见 [历史 Releases](https://github.com/Logosss1/Edict_Court/releases) 与 `v0.3.2` 及更早的标签。
 
-> 以 [Edict](https://github.com/cft0808/edict) 的三省六部多 Agent 协作为核心
-> 构建的 macOS（**仅 Apple Silicon / arm64**）桌面 AI 编程工具。Web 技术构建界面（Electron + React + Monaco + xterm.js + Phaser 3），原生桌面应用形态交付。
+Edict for Mac 是一款 **Apple Silicon Mac** 上的桌面 AI 编程工作站。你下一道旨意，一个由 AI 官员组成的朝廷按朝堂的规矩办事：太子分拣，中书省规划，门下省审议，尚书省派发，六部并行执行，最后回奏请你御批。协作流程来自 [Edict](https://github.com/cft0808/edict) 的三省六部。
 
 ```
-皇上下旨 → 太子分拣（闲聊直答）→ 中书省规划 → 门下省审议（准奏 / 封驳，封驳强制返工）
-        → 尚书省派发 → 六部并行执行 → 汇总回奏 → 皇上御批结案（奏折自动归档）
+皇上下旨 → 太子分拣 → 中书省规划 → 门下省审议（准奏 / 封驳）
+        → 尚书省派发 → 六部并行执行 → 汇总回奏 → 皇上御批结案
 ```
 
-## 两种模式，同一个运行时（⌘J 切换）
-
-| 工作台（默认） | 朝堂（像素 · 唐） |
+| 工作台 | 朝堂 |
 |---|---|
-| ![工作台](docs/screenshots/03-workbench-final-gate.png) | ![太和殿](docs/screenshots/08-court-taihe-presenter.png) |
+| ![工作台](docs/screenshots/03-workbench-final-gate.png) | ![官员跪奏请旨](docs/screenshots/71-court-petition.png) |
 
-两种模式显示的是同一份实时状态：在朝堂里准奏，工作台立即结案；在工作台叫停，朝堂里的官员立即停笔。
+工作台和朝堂是同一份实时状态的两种看法：在朝堂里准奏，工作台立即结案；在工作台叫停，朝堂里的官员立即停笔。⌘J 切换。
 
-## 协同三档
+## 主要功能
+
+### 三省六部协作，三种档位
 
 | 档位 | 流程 | 适用 |
 |---|---|---|
-| **Solo** | 独相直接对话、读写文件、执行命令，无编排 | 简单任务 |
-| **Court Lite**（默认） | 太子分拣 → 中书规划 → 门下审议（封驳上限 1，超限升级御裁）→ 六部执行 → 回奏御批 | 日常任务 |
-| **Full Court** | 太子 / 中书 / 门下 / 尚书 / 六部全流程；可选**朝堂议政**；**方案御览（可朱笔涂改）**；六部并行（依赖图）；门下**审议成果**；封驳循环（上限 3） | 复杂长任务 |
+| **Solo** | 一位官员直接和你对话、读写文件、执行命令 | 简单任务 |
+| **Court Lite**（默认） | 分拣 → 规划 → 审议 → 六部执行 → 回奏 | 日常任务 |
+| **Full Court** | 全流程，可选朝堂议政，方案下发前可以亲手修改，六部按依赖图并行，门下省再审成果 | 复杂长任务 |
 
-关闭「协同」开关 = Solo。
+门下省审议不能绕过：从规划到执行没有跳过它的路径，被封驳的方案必须返工。
 
-## 核心能力
+### 由你掌控执行
 
-- **制度性审核**：状态机与 Edict 的 `STATE_TRANSITIONS` 一致，中书 → 尚书之间**没有任何绕过门下省的路径**；非法流转被拒绝并写入审计；高风险流转（执行中取消、审议中取消、结案）必须由皇上亲自完成。
-- **完全可观测**：每位官员的 thinking（流式）、工具调用与返回、日志、状态、错误实时显示；心跳 + 健康检测（🟢活跃 🟡停滞 🔴告警）。
-- **实时可干预**：叫停 / 取消 / 恢复；**朱批**（给任一 Agent 留言，其下一轮必须读到并回应，回应写入审计）；**插话**（朝堂议政中官员针对你的发言继续辩论）；**涂改方案**（修改中书省方案后放行，按修改版执行）。
-- **全程可审计**：SHA-256 哈希链审计日志（可一键校验）；奏折阁五阶段时间线（圣旨 → 中书 → 门下 → 六部 → 回奏）；记录模型、协议、run ID、退出状态、产物路径与**系统核验的哈希**（不采信模型自述）。
-- **局部恢复**：每一步都是持久化节点；失败 / 应用重启中断后只**重放失败节点**，不重放整棵 Agent 树。
-- **Editor**：文件树、多标签、Monaco 语法高亮与诊断、全局搜索替换（正则/大小写/全字/包含）、集成终端（无原生模块的 PTY）、问题面板、Git 状态 / diff / 暂存 / 提交；Agent 改动实时刷新到打开的文件。
-- **军机处全部面板**：旨意看板、省部调度、奏折阁、旨库（9 模板）、官员总览（Token 排行）、天下要闻、小任务 Sessions、上朝仪式、朝堂议政，另有审计日志与使用说明；模型、技能、MCP 等配置自 2.0 起集中在「设置」（每 Agent 可独立热切换模型）。
-- **思考程度滑块**（v1.1）：刻度就是所选模型自己的档位，按服务检测结果显示，用 API 原名（None / Low / Medium / High / XHigh / Max / Ultra 等，自定义可加 ultra）；按协议自动翻译为 `reasoning_effort`、`output_config.effort`、`thinking.budget_tokens`、`enable_thinking` 等；每位官员可单独设置。
-- **可读的模型错误**（v1.1）：中转站「分组不支持该模型或接入方式」等配置错误不再盲目重试，直接给出原因、做法和「换模型重试」；「协议探测」一键找出哪种协议可用。
-- **HTML 预览与自测**（v1.1）：内置浏览器运行 Agent 生成的网页（控制台、视口尺寸、自动刷新、外网拦截）；Agent 用 `preview_page` 截图自验。
-- **技能与 MCP 中心**（v1.1）：技能增删改、启停、授权；MCP 使用 `mcp.json` 格式，支持 stdio / Streamable HTTP / SSE，逐工具风险与审批。
-- **协同设计**（v1.2）：三省六部流程变成有版本的「设计」，可复制、修改、按旨意固定、回滚，进行中的旨意不受影响。**流程画布**可视化编排：阶段为行，拖动排序、叠放即并行、拖审议卡的 ↺ 设定封驳退回到哪一步；也可用表单或 JSON 编辑。撤销 / 重做、⌘S、自动暂存、收藏、删除可撤销。内置三省六部保持只读。
-- **角色与官员单独选模型**（v1.2）：自己设计里的每个角色可指定模型和思考程度；内置官员在「模型配置」里一人一行设置。指定的模型被删除后自动改回强 / 经济路由，并在日志里提示。
-- **思考档位检测**（v1.2）：「检测思考档位」对每个档位发一个极小的请求，只保留服务接受的档位；新加的模型保存时自动检测。中转站什么值都接受时标「未能确认」。
-- **经济模型自动回退**（v1.2）：服务说不支持经济模型时，该官员自动改用主模型继续，并提示去「模型配置」修改。
-- **更精细的唐风朝堂，按宫殿布局走**（v1.2）：四个场景两倍精度重绘，官员 29 种动作跟随实际工作；新增**太和殿广场**，太和殿 → 广场 → 承天门 → 六部值房 可方向键或点击行走；悬停 / 点击官员与物件、奏折回放、昼夜与天气；每个设计可单独设置朝堂站位。
-- **悬停说明**（v1.2）：活动栏、军机处列表、朝堂工具栏和下旨框的每个控件，鼠标停一下就显示名称和一句话说明。
-- **执行由你掌控**（v2.0）：子任务标注 只读 / 写入 / 验证，只读的并行、写入的逐个执行；子任务默认只读开工，每个写任务开工前单独弹卡（准许开工 / 本子任务内免询问 / 改为只读执行 / 驳回）。审批可选「本旨意内不再询问」或「本工作区永久允许」；高风险操作每次都问，发版 / 部署逐次确认，工作区可单独开启永久允许。成果按系统实际记录的改动核验，命令造成的改动也能撤回；官员可以「请旨」，「典章」里的规矩和项目的 `AGENTS.md` 等规约文件会交给官员。
-- **每道旨意一个 git 工作树**（v2.0）：git 仓库里的协同旨意各在自己的分支和目录里办，同一仓库的旨意并行，你打开的工作区在结案前一个文件都不动；结案时选择合并、保留分支或丢弃。也可以手动新建工作树并打开为工作区。
-- **MCP 登录、资源与提示词**（v2.0）：远程服务 OAuth 登录；新的「连接服务（MCP）」设置页；下旨框里 `/` 选提示词、`@` 引用资源。
-- **语言服务（LSP）**（v2.0）：自动找到本机已安装的语言服务器，缺的给出安装命令（不替你安装）；官员有 `lsp` 工具，编辑器显示其诊断。
-- **编辑器接入（ACP）**（v2.0）：支持 ACP 的编辑器经本机套接字直接给 Edict 下旨；每个编辑器首次接入须你批准。
-- **内置技能包**（v2.0）：37 个规划、评审、排查、测试、发布、部署与日常技能；每位官员有几个职责技能，其余技能按官员单独开关另配。
-- **SQLite 存储**（v2.0）：数据集中在 `edict.db`；首次启动自动迁移 1.x 数据并保留原文件备份。
-- **新界面**（v2.0）：带搜索的设置中心；活动栏加入待办、网页预览和可固定的常用页面；看板有统计卡、「需要你处理」栏与筛选；Agent 栏的决策卡与方案卡；桌面通知设置。2.0 不包含 Intel 版本、自动更新与公证，详见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
-- **多协议 / 多供应商**：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses；DeepSeek / GLM / Qwen / Kimi / OpenAI / Anthropic / 本地 Ollama 预设（只预填 base_url，模型 id 由你填写或从服务拉取；**没有任何硬编码 Key**）。
-- **Token 经济性**：强 / 经济模型分级路由；仓库地图 + 符号大纲代替全量源码；文件按需读取；子 Agent 只回传结构化结论；稳定系统前缀（Anthropic `cache_control`，OpenAI/DeepSeek 前缀缓存）；长对话滚动压缩；封驳次数与预算上限（超限升级御批）；下旨前预估、每任务 / 每官员实时统计。
+- 子任务分读、写、验证三类。读任务并行；每个写任务开工前先问你：准许、准许且不再问、改为只读、驳回。
+- 准许可以只管这道旨意，也可以对整个工作区永久生效。高风险操作总会询问；发版、部署命令每次都问，除非该工作区明确开启。
+- 遇到不清楚的地方，官员会停下来请旨，并给出可选项。
+- 成果会和 Edict 实际记录的改动对账；任一步或整道旨意都能撤回，命令行改的文件也算在内。
 
-| 协同设计画布 | 太和殿广场 | 官员独立模型 |
+### 完整的编程工作台
+
+文件树、带诊断的 Monaco 编辑器、全局搜索替换、集成终端、问题面板和 Git。Edict 使用你 Mac 上已装好的语言服务器。沙箱预览可以运行生成的网页，官员会在里面自测。看板有一列专门放等你处理的事。
+
+| 看板 | 编辑器 | 网页预览 |
 |---|---|---|
-| ![协同设计画布](docs/screenshots/37-designs-canvas.png) | ![太和殿广场](docs/screenshots/38-court-guangchang.png) | ![官员独立模型](docs/screenshots/39-models-agent-models.png) |
+| ![看板](docs/screenshots/04-kanban.png) | ![编辑器](docs/screenshots/05-editor-problems.png) | ![网页预览](docs/screenshots/33-html-preview.png) |
+
+### 每道旨意一个 git worktree
+
+在 git 仓库里，每道旨意在自己的分支和目录里干活，同一仓库的多道旨意可以同时进行，你自己的工作区不受影响。结案时列出每个改动的文件和改它的官员，你选择合并、保留分支或丢弃。
+
+### 模型、技能与工具
+
+- 支持 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 以及兼容的服务。不内置任何 Key；你的 Key 用 macOS 钥匙串里的密钥加密保存。
+- 强 / 经济模型分级，思考档位从模型本身探测，每位官员可以用不同模型。
+- 内置 37 个技能（规划、评审、排查、测试、发版、部署等），也可以自己写。
+- MCP 服务器（stdio、Streamable HTTP、SSE），支持 OAuth 登录、资源和提示词、按工具分级风险。支持 ACP 的编辑器也可以驱动 Edict。
+
+| 协同设计 | MCP 服务器 | 结案合并 |
+|---|---|---|
+| ![协同设计画布](docs/screenshots/37-designs-canvas.png) | ![MCP 设置](docs/screenshots/36-mcp-center.png) | ![结案对话框](docs/screenshots/60-worktree-merge.png) |
+
+### 自定义协作流程
+
+朝堂流程是一份有版本的设计。可以复制后在流程画布上调整步骤、指定封驳退回到哪一步、给每个角色单独配模型，并把某个设计固定给某道旨意。
+
+### 可审计、可恢复
+
+所有操作写入哈希链审计日志。每一步完成即保存，出错或重启后只重跑失败的那一步。数据存放在一个 SQLite 数据库里。
+
+## 特色功能
+
+### 活起来的宫城
+
+朝堂模式是一座跟着你电脑时钟运转的像素宫城，把正在进行的工作演出来。
+
+- **宫里的一天**：每天 6–9 点自动早朝；白天官员在各自衙门办公，傍晚陆续下值，夜里大殿空着、只剩灯火。随时可以去承天门击鼓上朝，一段时间没有操作会自动退朝。
+- **把工作演出来**：官员在衙门之间递折子，跑腿的把消息从一处送到另一处，被封驳的方案盖着「驳」字退回；需要你拍板时，官员会走到你所在的地方跪奏请旨。正忙的部院因公告假，留在案前继续办差。
+- **在宫里走动**：十个场景，太和殿、太和殿广场、承天门、军机处（折子墙）、六部院、东宫、御花园、宫道长街、角楼和宫城舆图。用方向键或点击地面行走，官员见驾行礼。
+- **小细节**：真实月相、晴雨雪、春天落花、夏夜萤火、节日烟花、宫里的猫，还有御花园池子里会游过来抢食的锦鲤。
+
+| 朝会中 | 回奏呈折 | 宫城舆图 |
+|---|---|---|
+| ![朝会中](docs/screenshots/70-court-session.png) | ![回奏呈折](docs/screenshots/72-court-memorial.png) | ![宫城舆图](docs/screenshots/73-court-map.png) |
+| **六部院** | **军机处** | **承天门** |
+| ![六部院](docs/screenshots/74-court-liubu.png) | ![军机处](docs/screenshots/75-court-junjichu.png) | ![承天门](docs/screenshots/76-court-chengtian.png) |
+| **东宫** | **御花园** | **角楼夜景** |
+| ![东宫](docs/screenshots/77-court-donggong.png) | ![御花园](docs/screenshots/78-court-garden.png) | ![角楼夜景](docs/screenshots/79-court-night.png) |
+
+### 太子先问一句再办
+
+旨意含糊时，太子会在开工前问你一个简短的问题（「父皇，这个应该是…」），附上几个可能的答案，你答完再往下办。其他官员需要你定夺时，也会用自己的口吻请旨（「皇上，臣对…不太明白」）。太子追问可以在「设置 › 权限与审批」里关掉。
+
+## 近期更新
+
+- **2.0.3**：活起来的宫城、十个新场景、太子追问。
+- **2.0**：由你掌控执行、每道旨意一个 git worktree、MCP 登录与资源 / 提示词、语言服务器、ACP、内置技能、SQLite 存储、新的设置中心。
+
+完整的更新记录见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
 
 ## 安装（Apple Silicon）
 
-见 [docs/INSTALL_MAC.md](docs/INSTALL_MAC.md)。**安装包未签名（仅 ad-hoc）、未公证**：首次打开需在「系统设置 → 隐私与安全性」中点「仍要打开」。
+从 [Releases](https://github.com/Logosss1/Edict_Court/releases/latest) 下载 `Edict-<版本>-arm64.dmg`，把 Edict 拖进「应用程序」（[详细说明](docs/INSTALL_MAC.md)）。**安装包未用开发者 ID 签名、未公证**：首次打开需在「系统设置 → 隐私与安全性」中点「仍要打开」。暂无 Intel 版本。
 
 ## 从源码构建
 
 ```bash
-npm install              # electron / esbuild / react / playwright（需要 npm 网络）
-npm run assets           # 生成像素占位美术（已提交，可跳过）
+npm install
 npm run build            # esbuild 打包 main / preload / renderer 到 dist/
 npx electron dist        # 运行
-npm test                 # 单元 + 集成测试（mock LLM）
-npm run typecheck        # 类型检查 src/（主进程、preload、渲染进程）
+npm test                 # 单元 + 集成测试（mock 模型）
+npm run typecheck        # 类型检查
 npm run package:mac      # 组装 Edict.app（arm64）、ad-hoc 签名、生成 zip + DMG
 ```
 
-`package:mac` 需要官方的 `electron-v44.4.5-darwin-arm64.zip`（放在 `deps/`，或设置 `ELECTRON_DARWIN_ZIP`）。在 macOS 上使用 `codesign` 与 `hdiutil`；在 Linux 上需要 `PATH` 中有 rcodesign 与 libdmg-hfsplus 的 `dmg`（或设置 `RCODESIGN` / `DMG_TOOL`），生成 ISO9660+RockRidge → UDIF。端到端测试：先 `npm run build`，再 `npm run e2e` 与 `npm run e2e:features`（Playwright；Linux 下用 `xvfb-run`；见 [docs/TESTING.md](docs/TESTING.md)）。
-
+`package:mac` 需要官方的 `electron-v44.4.5-darwin-arm64.zip`（放在 `deps/`，或设置 `ELECTRON_DARWIN_ZIP`）。在 macOS 上使用 `codesign` 与 `hdiutil`；在 Linux 上需要 rcodesign 与 libdmg-hfsplus 的 `dmg`。端到端测试：先 `npm run build`，再 `npm run e2e` 与 `npm run e2e:features`（Playwright；Linux 下用 `xvfb-run`；见 [docs/TESTING.md](docs/TESTING.md)）。
 
 ## 文档
 
 - [docs/STATUS.md](docs/STATUS.md) — 现状盘点、交付清单、已知限制
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 运行时、状态机、编排、Token 经济性
 - [docs/SECURITY.md](docs/SECURITY.md) — 权限、路径边界、数据位置、外发范围
-- [docs/ART_PIPELINE.md](docs/ART_PIPELINE.md) — 像素美术规格锁、AI 生图 prompt 包、Aseprite 规整与导入
+- [docs/ART_PIPELINE.md](docs/ART_PIPELINE.md) — 像素美术规格与场景生成
 - [docs/TESTING.md](docs/TESTING.md) — 测试与验证方法
 
 ## 许可证
 
-MIT。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。不使用 Visual Studio Code 的名称、图标或 Marketplace。
+MIT。第三方组件见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

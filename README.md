@@ -1,4 +1,4 @@
-# Edict for Mac · A Multi-Agent Collaborative Programming Workstation
+# Edict for Mac
 
 English | [Chinese (Simplified)](README.zh-CN.md)
 
@@ -9,94 +9,119 @@ English | [Chinese (Simplified)](README.zh-CN.md)
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-22C55E" alt="MIT License"></a>
 </p>
 
-Edict for Mac is a desktop AI coding tool for **Apple Silicon Macs (ARM64 only)**. Its core is the multi-agent workflow of [EDICT](https://github.com/cft0808/edict) — the Three Departments and Six Ministries
+Edict for Mac is a desktop AI coding workstation for **Apple Silicon Macs**. You issue an order, an *edict*, and a court of AI officials handles it the way an imperial court would: the Crown Prince triages it, the Secretariat plans it, the Chancellery reviews the plan, and the Six Ministries carry it out in parallel and report back for your approval. The workflow comes from [EDICT](https://github.com/cft0808/edict)'s Three Departments and Six Ministries.
 
 ```
-Emperor issues an edict → Crown Prince triages (small talk is answered directly) → Secretariat plans
-  → Chancellery reviews (approve / reject; a rejection forces a re-plan) → Department of State Affairs dispatches
-  → the Six Ministries execute in parallel → summary report → the Emperor approves and closes the case
+You issue an edict → Crown Prince triages → Secretariat plans → Chancellery reviews (approve or send back)
+  → Department of State Affairs dispatches → Six Ministries work in parallel → report → you approve
 ```
 
-> **Versions.** 1.x and 2.x are a new codebase. The 0.x releases (a macOS / Windows / Linux packaging of the upstream EDICT runtime) remain available under [Releases](https://github.com/Logosss1/Edict_Court/releases) and the `v0.3.2` and earlier tags.
-
-## Two modes, one runtime (⌘J)
-
-| Workbench (default) | Court |
+| Workbench | Court |
 |---|---|
-| ![Workbench](docs/screenshots/03-workbench-final-gate.png) | ![Hall of Supreme Harmony](docs/screenshots/08-court-taihe-presenter.png) |
+| ![Workbench](docs/screenshots/03-workbench-final-gate.png) | ![An official kneels to ask for a decision](docs/screenshots/71-court-petition.png) |
 
-Both modes show the same live state: approve in the court and the workbench closes the case, and the other way round.
+The workbench and the court are two views of the same live state. Approve in the court and the workbench closes the case; stop an official in the workbench and the same official stops writing in the court. Switch with ⌘J.
 
-## Three collaboration tiers
+## Main features
+
+### A court of agents, three ways to work
 
 | Tier | Flow | Use for |
 |---|---|---|
-| **Solo** | One agent talks to you directly, reads/writes files, runs commands | Simple tasks |
-| **Court Lite** (default) | Triage → plan → review (1 rejection max, then escalates to you) → ministries → report | Everyday work |
-| **Full Court** | The full court; optional **court debate**; **plan review where you can edit the plan**; parallel ministries with a dependency graph; result review; rejection loop (max 3) | Complex, long tasks |
+| **Solo** | One agent talks to you, reads and writes files, runs commands | Quick tasks |
+| **Court Lite** (default) | Triage → plan → review → ministries → report | Everyday work |
+| **Full Court** | The whole court, with an optional debate, a plan you can edit before it is released, parallel ministries with a dependency graph, and a review of the results | Large, long tasks |
 
-## Highlights
+The Chancellery cannot be bypassed: there is no path from planning to execution that skips its review, and a plan it sends back must be reworked.
 
-- **Institutional review.** The state machine matches EDICT's `STATE_TRANSITIONS`; there is no path from planning to dispatch that bypasses the Chancellery. Illegal transitions are refused and audited; high-risk transitions need you.
-- **Observable and interruptible.** Streaming thinking, tool calls, logs, and health for every official. Pause / cancel / resume, notes the agent must answer, interjections during debates, and editing the plan before release.
-- **Auditable and recoverable.** SHA-256 hash-chained audit log; five-stage memorial timeline; every step is a persisted node, so a failure or restart re-runs only the failed node.
-- **Editor.** File tree, tabs, Monaco with diagnostics, global search/replace, integrated terminal, problems panel, Git.
-- **Multiple protocols and providers.** OpenAI Chat Completions, Anthropic Messages, OpenAI Responses; presets only fill in the base URL — **no keys are hard-coded**.
-- **Token economy.** Strong/economy model routing, repo map and symbol outlines instead of whole files, prompt caching, rolling compression, budgets and pre-flight estimates.
+### You stay in charge
 
-### New in 1.1.0
+- Subtasks are read, write or verify. Read subtasks run side by side; each write subtask asks before it starts, and you can allow it, allow it without further questions, keep it read-only, or reject it.
+- Approvals can be remembered for one edict or permanently for a workspace. High-risk actions always ask, and release or deploy commands ask every time unless the workspace opts in.
+- When something is unclear, officials stop and ask you, with options to pick from.
+- Results are checked against the changes Edict actually recorded, and any step or a whole edict can be reverted, including changes made by shell commands.
 
-- **Thinking-level slider.** Its steps are the selected model's own levels (since 1.2.7 detected from the service and shown by their API names). Translated per protocol (`reasoning_effort`, `reasoning.effort`, `output_config.effort`, `thinking.budget_tokens`, `enable_thinking`, …), configurable per model and per official, with custom levels such as `ultra`.
-- **Readable model errors.** Configuration errors such as a relay's "this group doesn't support the model or access method" are no longer retried blindly; an error card explains the cause and offers **retry with another model**. **Protocol probe** tests Chat / Responses / Messages with and without thinking parameters.
-- **HTML preview and self-testing.** A sandboxed built-in browser runs generated pages with a console, device sizes, auto-reload, and outbound-network blocking; agents verify their pages with the `preview_page` tool, which returns errors and a screenshot.
-- **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the standard `mcp.json` format (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
+### A full coding workbench
 
-### New in 1.2
+A file tree, Monaco editor with diagnostics, project-wide search and replace, an integrated terminal, a problems panel and Git. Edict uses the language servers already installed on your Mac. A sandboxed preview runs generated web pages, and officials test their own pages in it. The Kanban board has a lane for everything waiting on you.
 
-- **Collaboration designs.** The Three Departments and Six Ministries flow is a versioned design you can copy, edit, pin per edict, and roll back; running edicts keep the version they started with. Design your own on a **flow canvas** (phases as rows, drag to reorder, drop to run in parallel, drag a review's ↺ onto an earlier step to set where a rejection goes) or in a form / JSON view. Undo/redo, ⌘S, autosave, favourites and undoable delete. The built-in three departments and six ministries stay read-only.
-- **Per-role and per-official models.** Each role in your own design can use a specific model and thinking level; built-in officials are listed one per row in Models with their own model and level. If a chosen model is removed, the role falls back to strong / economy routing, and the log says so.
-- **Thinking levels from the model itself.** **Detect thinking levels** sends one tiny request per level name and keeps the ones the service accepts; new models are detected when saved. Levels are shown by their API names (None · Minimal · Low · Medium · High · XHigh · Max · Ultra). A relay that accepts any value is marked "unconfirmed".
-- **Economy model fallback.** If the service says it doesn't offer the economy model, that official switches to your main model and carries on, with a notice.
-- **A finer Tang court that follows the palace layout.** Scenes redrawn at twice the detail; officials have 29 animations that follow their work. New **Taihe Palace Square** scene; walk Taihe Palace → Square → Chengtian Gate → Six Ministries Office with the arrow keys or by clicking. Hover and click officials and objects, replay a finished edict, day/night and weather. Per-design court seating.
-- **Hover descriptions** on the activity bar, the Privy Council list, the court toolbar, and every control in the edict box.
-
-| Flow canvas | Taihe Palace Square | Per-official models |
+| Kanban | Editor | Web preview |
 |---|---|---|
-| ![Collaboration design canvas](docs/screenshots/37-designs-canvas.png) | ![Taihe Palace Square](docs/screenshots/38-court-guangchang.png) | ![Per-official models](docs/screenshots/39-models-agent-models.png) |
+| ![Kanban](docs/screenshots/04-kanban.png) | ![Editor](docs/screenshots/05-editor-problems.png) | ![Web preview](docs/screenshots/33-html-preview.png) |
 
-### New in 2.0
+### One git worktree per edict
 
-- **You stay in charge of execution.** Subtasks are tagged read / write / verify: read subtasks run in parallel, write subtasks one at a time. Subtasks start read-only, and each write subtask asks before it starts (allow, allow without further asks, keep it read-only, or reject). An approval can be remembered for the edict or permanently for the workspace; high-risk actions always ask, and release / deploy commands ask every time unless the workspace opts in. Results are checked against the changes Edict actually recorded, and changes made by shell commands can be reverted too.
-- **One git worktree per edict.** In a git repository each court edict works on its own branch in its own folder, so edicts on one repo run side by side and your checkout stays untouched. At the end you choose merge, keep the branch, or discard.
-- **MCP login, resources and prompts.** OAuth login for remote servers, a new MCP settings page, and `/` (prompts) and `@` (resources) pickers in the edict box.
-- **Language servers.** Edict uses the language servers already installed on your Mac and shows install commands for missing ones; officials get an `lsp` tool and the editor shows their diagnostics.
-- **Editors over ACP.** Editors that speak ACP can drive Edict through a local socket; each editor must be approved first.
-- **Built-in skill pack.** 37 skills for planning, review, investigation, QA, release, deploy and everyday work. Each official has a few duty skills; you switch extra ones on per official.
-- **SQLite storage.** Data lives in one `edict.db`; 1.x data is migrated on first launch and the original files are backed up.
-- **A new look.** A settings center with search, a richer activity bar with a to-do view, a redesigned Kanban board with a "needs you" lane, decision cards in the agent pane, and desktop notification settings.
+In a git repository each edict works on its own branch in its own folder, so several edicts on one repository run side by side and your own checkout is not touched. When an edict is done you see every changed file and who changed it, then merge, keep the branch, or discard it.
 
-Details: [RELEASE_NOTES.md](RELEASE_NOTES.md). Not in 2.0: an Intel build, auto-update, notarization.
+### Models, skills and tools
 
-## Install (Apple Silicon)
+- OpenAI Chat Completions, OpenAI Responses and Anthropic Messages, with any compatible service. No keys are built in; yours are encrypted with a key kept in the macOS keychain.
+- Strong and economy models, a thinking-level slider whose steps are detected from the model itself, and a model of your choice for each official.
+- 37 built-in skills for planning, review, investigation, QA, release and deploy, plus your own.
+- MCP servers (stdio, Streamable HTTP, SSE) with OAuth login, resources and prompts, and per-tool risk levels. Editors that speak ACP can drive Edict too.
 
-Download `Edict-<version>-arm64.dmg` from [Releases](https://github.com/Logosss1/Edict_Court/releases/latest) and see [docs/INSTALL_MAC.md](docs/INSTALL_MAC.md). **The app is not signed with a Developer ID or notarized (ad-hoc signature only).** On first launch, allow it in System Settings → Privacy & Security → "Open Anyway".
+| Collaboration designs | MCP servers | Merging a worktree |
+|---|---|---|
+| ![Flow canvas](docs/screenshots/37-designs-canvas.png) | ![MCP settings](docs/screenshots/36-mcp-center.png) | ![Closing an edict](docs/screenshots/60-worktree-merge.png) |
+
+### Your own collaboration designs
+
+The court's flow is a versioned design. Copy it, rearrange the steps on a flow canvas, decide where a rejection sends the work, give each role its own model, and pin a design to an edict.
+
+### Auditable and recoverable
+
+Every action goes into a hash-chained audit log. Each step is saved as it finishes, so after a failure or a restart only the failed step runs again. Your data lives in one SQLite database.
+
+## Standout features
+
+### A living palace
+
+The court mode is a pixel-art palace that runs on your Mac's clock and acts out the work as it happens.
+
+- **A palace day.** Morning court opens by itself between 6 and 9. During the day officials work in their own offices, in the evening they leave one by one, and at night the halls stand empty under the lamps. You can call court at any time by striking the drum at the gate; an idle court ends after a few minutes.
+- **The work, acted out.** Officials carry memorials between offices, runners take messages from hall to hall, rejected plans come back stamped, and an official who needs your decision walks to wherever you are and kneels to ask. Busy ministries are excused from court and keep working at their desks.
+- **Walk the palace.** Ten scenes: the Hall of Supreme Harmony, the Palace Square, Chengtian Gate, the Privy Council with its memorial wall, the Six Ministries Office, the Eastern Palace, the Imperial Garden, the Long Palace Street, the Corner Tower and a palace map. Walk with the arrow keys or click, and officials bow as you pass.
+- **Small things.** The real phase of the moon, weather, falling petals in spring, fireflies on summer nights, fireworks on festival nights, a palace cat, and koi in the garden pond that come when you feed them.
+
+| Court in session | A report presented | Palace map |
+|---|---|---|
+| ![Court in session](docs/screenshots/70-court-session.png) | ![A report presented to the throne](docs/screenshots/72-court-memorial.png) | ![Palace map](docs/screenshots/73-court-map.png) |
+| **Six Ministries Office** | **Privy Council** | **Chengtian Gate** |
+| ![Six Ministries Office](docs/screenshots/74-court-liubu.png) | ![Privy Council](docs/screenshots/75-court-junjichu.png) | ![Chengtian Gate](docs/screenshots/76-court-chengtian.png) |
+| **Eastern Palace** | **Imperial Garden** | **Corner Tower at night** |
+| ![Eastern Palace](docs/screenshots/77-court-donggong.png) | ![Imperial Garden](docs/screenshots/78-court-garden.png) | ![Corner Tower at night](docs/screenshots/79-court-night.png) |
+
+### The Crown Prince asks before he guesses
+
+When an edict is ambiguous, the Crown Prince asks you one short question with a few likely answers before the court starts work, then carries on with your answer. Other officials ask in their own voice when they need a decision. You can turn the prince's question off in Settings › Permissions & approvals.
+
+## Recent updates
+
+- **2.0.3**: the living palace, ten new scenes, and the Crown Prince's clarifying question.
+- **2.0**: execution you stay in charge of, one git worktree per edict, MCP login with resources and prompts, language servers, editors over ACP, built-in skills, SQLite storage and a new settings center.
+
+The full history is in [RELEASE_NOTES.md](RELEASE_NOTES.md).
+
+## Install
+
+Download `Edict-<version>-arm64.dmg` from [Releases](https://github.com/Logosss1/Edict_Court/releases/latest) and drag Edict into Applications ([details](docs/INSTALL_MAC.md)). The app is not signed with a Developer ID or notarized, so on first launch allow it in System Settings → Privacy & Security → "Open Anyway". Apple Silicon only; there is no Intel build yet.
 
 ## Build from source
 
 ```bash
 npm install
-npm run build            # bundle main / preload/renderer into dist/
+npm run build            # bundle main / preload / renderer into dist/
 npx electron dist        # run
-npm test                 # unit + integration tests (mock LLM)
-npm run typecheck        # type-check src/ (main, preload, renderer)
-npm run package:mac      # assemble Edict.app (arm64), ad-hoc sign, create zip + DMG
+npm test                 # unit and integration tests (mock model)
+npm run typecheck
+npm run package:mac      # build Edict.app (arm64), sign ad hoc, make the zip and DMG
 ```
 
-`package:mac` needs the official `electron-v44.4.5-darwin-arm64.zip` in `deps/` (or `ELECTRON_DARWIN_ZIP`). On macOS, it signs with `codesign` and builds the DMG with `hdiutil`; on Linux, it needs `rcodesign` and libdmg-hfsplus `dmg` on `PATH` (or `RCODESIGN` / `DMG_TOOL`). End-to-end tests: `npm run e2e` and `npm run e2e:features` after `npm run build` (Playwright; on Linux, run under `xvfb-run`; see [docs/TESTING.md](docs/TESTING.md)).
+`package:mac` needs the official `electron-v44.4.5-darwin-arm64.zip` in `deps/` (or `ELECTRON_DARWIN_ZIP`). On macOS it signs with `codesign` and builds the DMG with `hdiutil`; on Linux it needs `rcodesign` and libdmg-hfsplus `dmg`. End-to-end tests: `npm run e2e` and `npm run e2e:features` after `npm run build` (Playwright; on Linux run them under `xvfb-run`, see [docs/TESTING.md](docs/TESTING.md)).
 
-## Documentation (Chinese)
+## Documentation (in Chinese)
 
-[STATUS](docs/STATUS.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [SECURITY](docs/SECURITY.md) · [TESTING](docs/TESTING.md) · [ART_PIPELINE](docs/ART_PIPELINE.md) · [INSTALL_MAC](docs/INSTALL_MAC.md) · [RELEASE_NOTES](RELEASE_NOTES.md)
+[Status](docs/STATUS.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY.md) · [Testing](docs/TESTING.md) · [Art pipeline](docs/ART_PIPELINE.md) · [Install](docs/INSTALL_MAC.md)
 
 ## License
 
