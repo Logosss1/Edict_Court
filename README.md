@@ -1,4 +1,4 @@
-# Edict for Mac
+# Edict - Three Provinces and Six Ministries Multi-Agent Collaborative Programming Workstation
 
 English | [Chinese (Simplified)](README.zh-CN.md)
 
