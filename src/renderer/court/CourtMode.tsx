@@ -6,6 +6,7 @@ import { useStore, setUI, getState, selectTask, toast, openTaskTab, openPanel } 
 import { call } from '../api';
 import { createCourtGame, type CourtGame } from './game';
 import type { CourtModel, CourtView, SceneKey, Weather } from './game/model';
+import { dayKey, isMorning, tickSession, type Session } from './game/schedule';
 import type { Activity, AgentId, Task, Tier } from '../../shared/types';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL, TIER_SHORT } from '../../shared/court';
 import { statusLabel } from '../panels/Monitor';
@@ -69,12 +70,21 @@ export function tasksHandledBy(tasks: Task[], id: AgentId): Task[] {
 }
 
 const SCENES: { key: SceneKey; label: string; kbd: string; desc: string }[] = [
-  { key: 'taihe', label: '太和殿', kbd: '⌘1', desc: '百官上朝，奏折在这里呈给皇上御批' },
-  { key: 'guangchang', label: '太和殿广场', kbd: '', desc: '殿前广场，往南出太和门、午门到承天门' },
-  { key: 'junjichu', label: '军机处值房', kbd: '⌘2', desc: '旨意折子墙和流转链' },
-  { key: 'liubu', label: '六部值房', kbd: '⌘3', desc: '各部办差现场与办过的旨意' },
-  { key: 'chengtian', label: '承天门', kbd: '⌘4', desc: '告示榜，击鼓上朝' },
+  { key: 'yutu', label: '舆图', kbd: '', desc: '宫城总图：各处有几人、谁在办差，点哪里去哪里' },
+  { key: 'taihe', label: '太和殿', kbd: '⌘1', desc: '上朝时百官在此站班，奏折在这里呈给皇上御批；不上朝时是空殿' },
+  { key: 'guangchang', label: '广场', kbd: '', desc: '太和殿广场：日晷报时，早朝前百官在此候朝' },
+  { key: 'junjichu', label: '军机处', kbd: '⌘2', desc: '折子墙（旨意看板）；不上朝时三省在这里拟旨、审议、派发' },
+  { key: 'liubu', label: '六部院', kbd: '⌘3', desc: '六部值房同在一院，走进哪间看哪部办差' },
+  { key: 'donggong', label: '东宫', kbd: '', desc: '太子书房：不上朝时太子在此分拣旨意' },
+  { key: 'chengtian', label: '承天门', kbd: '⌘4', desc: '告示榜，登闻鼓（击鼓上朝）' },
 ];
+/** places just to look at */
+const SIGHTS: { key: SceneKey; label: string }[] = [
+  { key: 'yuhuayuan', label: '御花园' },
+  { key: 'gongdao', label: '宫道长街' },
+  { key: 'jiaolou', label: '角楼' },
+];
+const IDLE_CHOICES = [3, 5, 10, 20];
 
 function latestPerAgent(acts: Record<string, Activity[]>): Record<string, Activity | undefined> {
   const out: Record<string, Activity | undefined> = {};
@@ -135,6 +145,26 @@ export function CourtMode({ active }: { active: boolean }) {
   const ceremony = useStore((s) => s.ui.ceremony);
   const stats = useTodayStats();
   const court = useCourtLayout();
+  // 朝会: morning court opens by itself (6–9); 上朝 opens it any time; no input for a while ends it
+  const [idleMin, setIdleMin] = useState(() => Number(readPref('edict.court.idleMin', '5')) || 5);
+  const sess = useRef<Session>({ active: false, manual: false, lastInput: Date.now(), dismissed: readPref('edict.court.dismissed', '') });
+  const [session, setSessionState] = useState(false);
+  const [room, setRoom] = useState<AgentId | null>(null);
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const touch = () => {
+    sess.current.lastInput = Date.now();
+  };
+  const commit = (s: Session) => {
+    sess.current = s;
+    setSessionState(s.active);
+    writePref('edict.court.dismissed', s.dismissed);
+  };
+  const openSession = () => commit({ ...sess.current, active: true, manual: true, lastInput: Date.now() });
+  const closeSession = () => {
+    const h = game.current?.hour() ?? new Date().getHours();
+    commit({ ...sess.current, active: false, manual: false, dismissed: isMorning(h) ? dayKey(new Date()) : sess.current.dismissed });
+  };
 
   const debate = useMemo(() => {
     const live = debates.filter((d) => d.status === 'running' || d.status === 'idle' || d.status === 'paused').sort((a, b) => b.updatedAt - a.updatedAt);
@@ -150,8 +180,9 @@ export function CourtMode({ active }: { active: boolean }) {
       emperorSaid: human ? { text: human.content.replace(/^皇上/, '').replace(/^(下旨（\w+）：|于朝堂插话：)/, ''), at: human.at } : null,
       totalsText: `今日下旨 ${stats.issued} · 结案 ${stats.done} · 待批 ${stats.gates} · ${fmtTokens(stats.tokens)} tok`,
       court,
+      session,
     };
-  }, [tasks, agents, approvals, debate, news, memorials, activities, selectedTaskId, dept, ceremony, stats.issued, stats.done, stats.gates, stats.tokens, court]);
+  }, [tasks, agents, approvals, debate, news, memorials, activities, selectedTaskId, dept, ceremony, stats.issued, stats.done, stats.gates, stats.tokens, court, session]);
 
   // boot Phaser once
   useEffect(() => {
@@ -164,13 +195,23 @@ export function CourtMode({ active }: { active: boolean }) {
         setUI({ review: { taskId: id, tab: 'timeline' } });
       },
       openReview: (id: string) => setUI({ review: { taskId: id } }),
-      clickApproval: () => toast('请在右下角「高风险操作」卡片中准许或驳回', 'info'),
+      clickApproval: (id: string) => {
+        const el = document.querySelector(`.approvals-dock [data-ap-id="${id}"]`);
+        if (!el) return toast('请在右下角的请旨卡片中定夺', 'info');
+        el.scrollIntoView({ block: 'nearest' });
+        el.classList.remove('flash');
+        void (el as HTMLElement).offsetWidth;
+        el.classList.add('flash');
+      },
       clickNotice: (i: number) => {
         const n = getState().news[i];
         if (n?.link) void call('openExternal', n.link);
         else if (n) toast(n.title, 'info');
       },
-      ceremonyDone: () => setUI({ ceremony: false, courtScene: 'taihe' }),
+      ceremonyDone: () => {
+        openSession();
+        setUI({ ceremony: false, courtScene: 'taihe' });
+      },
       sceneChanged: () => {
         setHover(null);
         setMenu(null);
@@ -185,6 +226,11 @@ export function CourtMode({ active }: { active: boolean }) {
       gotoScene: (key) => setUI({ courtScene: key }),
       sound: (c) => cue(c),
       replayDone: () => setReplaying(null),
+      activity: () => touch(),
+      roomEntered: (d) => {
+        setRoom(d);
+        if (d && d !== getState().ui.courtDept) setUI({ courtDept: d });
+      },
     }, ui.courtScene, { weather }).then((g) => {
       if (disposed) return g.destroy();
       game.current = g;
@@ -229,6 +275,28 @@ export function CourtMode({ active }: { active: boolean }) {
     if (ceremony && active && scene !== 'chengtian') setUI({ courtScene: 'chengtian' });
   }, [ceremony, active, scene]);
 
+  // the session clock: open morning court, close on idle (checked every few seconds)
+  useEffect(() => {
+    if (!ready) return;
+    const tick = () => {
+      const g = game.current;
+      if (!g) return;
+      // while the court is not on screen nothing opens, and the idle clock stands still
+      if (!activeRef.current) {
+        if (!sess.current.active) return;
+        sess.current.lastInput = Date.now();
+      }
+      const { s, event } = tickSession(sess.current, new Date(), g.hour(), idleMin * 60000);
+      if (event) commit(s);
+    };
+    tick();
+    const t = setInterval(tick, 4000);
+    return () => clearInterval(t);
+  }, [ready, idleMin]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (scene !== 'liubu') setRoom(null);
+  }, [scene]);
+
   // the emperor walks with the arrow keys (Space = 召见, Esc = 回御座) — only while no text field or dialog has focus
   const modalOpen = !!agentDialog || !!review || !!history;
   useEffect(() => {
@@ -245,6 +313,7 @@ export function CourtMode({ active }: { active: boolean }) {
       if (WALK_KEYS.has(e.code) || e.code === 'Space' || e.code === 'Escape') {
         e.preventDefault();
         setMenu(null);
+        touch();
         if (!e.repeat || WALK_KEYS.has(e.code)) game.current?.key(e.code, true);
       }
     };
@@ -292,17 +361,21 @@ export function CourtMode({ active }: { active: boolean }) {
   const W = 640 * zoom;
   const H = 360 * zoom;
   return (
-    <div className="court" data-testid="court">
+    <div className="court" data-testid="court" onPointerDownCapture={touch}>
       <div className="court-hud pixel">
         {SCENES.map((s) => (
-          <button key={s.key} className={`px-btn ${scene === s.key ? 'on' : ''}`} onClick={() => setUI({ courtScene: s.key })} {...tip(s.label, s.desc, s.kbd, 'below')}>
+          <button key={s.key} className={`px-btn ${scene === s.key ? 'on' : ''}`} onClick={() => setUI({ courtScene: s.key })} {...tip(s.label, s.desc, s.kbd, 'below')} data-testid={`court-scene-${s.key}`}>
             {s.label}
           </button>
         ))}
+        <select className="px-select" value={SIGHTS.some((x) => x.key === scene) ? scene : ''} onChange={(e) => e.target.value && setUI({ courtScene: e.target.value as SceneKey })} {...tip('游览', '只供观赏的地方：随意走走，景色随时辰、季节变化', undefined, 'below')} data-testid="court-sights">
+          <option value="">游览…</option>
+          {SIGHTS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+        </select>
         {scene === 'liubu' && (
           <span className="px-sub">
             {MINISTRIES.map((m) => (
-              <button key={m} className={`px-btn sm ${dept === m ? 'on' : ''}`} onClick={() => setUI({ courtDept: m })}>
+              <button key={m} className={`px-btn sm ${dept === m ? 'on' : ''}`} onClick={() => { setUI({ courtDept: m }); setRoom(m); }}>
                 {AGENT_MAP[m].name}
               </button>
             ))}
@@ -325,14 +398,21 @@ export function CourtMode({ active }: { active: boolean }) {
             奏折待批 ×{gates.length}
           </button>
         )}
-        <button className="px-btn" onClick={() => setUI({ ceremony: true, courtScene: 'chengtian' })}>上朝</button>
+        {session ? (
+          <button className="px-btn on" onClick={() => { closeSession(); }} {...tip('退朝', `朝会进行中。${idleMin} 分钟不操作也会自动退朝`, undefined, 'below')} data-testid="court-session">退朝</button>
+        ) : (
+          <button className="px-btn" onClick={() => setUI({ ceremony: true, courtScene: 'chengtian' })} {...tip('上朝', '击鼓上朝，百官入太和殿站班；清晨 6–9 点会自动早朝', undefined, 'below')} data-testid="court-session">上朝</button>
+        )}
+        <select className="px-select" value={idleMin} onChange={(e) => { const v = Number(e.target.value); setIdleMin(v); writePref('edict.court.idleMin', String(v)); }} {...tip('自动退朝', '朝会中多久不操作就自动退朝', undefined, 'below')} data-testid="court-idle">
+          {IDLE_CHOICES.map((m) => <option key={m} value={m}>{m} 分钟退朝</option>)}
+        </select>
         <button className="px-btn" onClick={() => setUI({ mode: 'workbench' })}>回工作台 ⌘J</button>
       </div>
       <div className="court-stage-host" ref={host}>
         <div className="court-stage" style={{ width: W, height: H }}>
           <div ref={stage} className="court-canvas" />
           {!ready && <div className="court-loading pixel">朝堂布置中…</div>}
-          {ready && scene === 'liubu' && <LiubuScreen dept={dept} zoom={zoom} />}
+          {ready && scene === 'liubu' && room && <LiubuScreen dept={room} zoom={zoom} onClose={() => setRoom(null)} />}
           {ready && hover && !menu && <HoverCard h={hover} zoom={zoom} />}
           {ready && menu && (
             <AgentMenu
@@ -445,6 +525,9 @@ function HistoryPop({ id, onClose, onReplay }: { id: AgentId; onClose: () => voi
               <span className={`px-chip st-${t.state}`}>{STATE_LABEL[t.state]}</span>
               <span className="px-muted">{fmtTime(t.updatedAt)}</span>
               {TERMINAL.includes(t.state) && <button className="px-btn sm" onClick={() => onReplay(t.id)} title="在太和殿重演这道旨意的流转">回放</button>}
+              {(t.questions ?? []).filter((q) => q.agentId === id).map((q) => (
+                <div key={q.id} className="ch-q px-muted">问：{q.question}{q.answer ? ` · 答：${q.answer}` : ' · 待示下'}</div>
+              ))}
             </div>
           ))}
         </div>

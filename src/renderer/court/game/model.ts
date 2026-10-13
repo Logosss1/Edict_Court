@@ -4,9 +4,9 @@ import type { AgentId, AgentRuntime, ApprovalRequest, Debate, NewsItem, Task, Me
 import type { PanelId } from '../../store';
 import type { CourtLayout } from '../../../shared/design';
 
-export type SceneKey = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian';
+export type SceneKey = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian' | 'donggong' | 'yuhuayuan' | 'gongdao' | 'jiaolou' | 'yutu';
 export type Weather = 'clear' | 'rain' | 'snow' | 'petals';
-export type SoundCue = 'drum' | 'bell' | 'meow' | 'chirp' | 'chime' | 'gong';
+export type SoundCue = 'drum' | 'bell' | 'meow' | 'chirp' | 'chime' | 'gong' | 'whip';
 
 /** the world is 640×360 units; art is drawn at 2× detail */
 export const WORLD_W = 640;
@@ -28,6 +28,8 @@ export interface CourtModel {
   totalsText: string;
   /** the chosen 协同设计's own court layout (null = built-in seating) */
   court: CourtView | null;
+  /** court is in session (morning court, or 上朝 called by the emperor) */
+  session: boolean;
 }
 
 export interface CourtView {
@@ -54,6 +56,10 @@ export interface CourtEvents {
   gotoScene: (key: SceneKey) => void;
   sound: (cue: SoundCue) => void;
   replayDone: () => void;
+  /** the emperor did something in the court (keeps a session from timing out) */
+  activity: () => void;
+  /** 六部院: the emperor walked into a ministry's room (null = back in the courtyard) */
+  roomEntered: (dept: AgentId | null) => void;
 }
 
 export const FONT = 'FusionPixel, "PingFang SC", monospace';

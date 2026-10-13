@@ -706,7 +706,7 @@ export class Runtime {
     this.approvals.set(ap.id, ap);
     this.audit.record(req.agentId, 'approval_requested', { tool: req.tool, summary: req.summary, risk: req.risk, reason: req.reason, kind: req.kind ?? 'action' }, req.taskId);
     this.emit({ type: 'approval', approval: ap });
-    this.notifyDesktop('attention', req.risk === 'high' ? '高风险操作待确认' : req.kind === 'write_task' ? '写任务待批准' : req.kind === 'question' ? '官员请旨' : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
+    this.notifyDesktop('attention', req.risk === 'high' ? '高风险操作待确认' : req.kind === 'write_task' ? '写任务待批准' : req.kind === 'question' ? (req.agentId === 'taizi' ? '太子请旨' : '官员请旨') : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
     if (req.taskId) this.setAgent(req.agentId, { status: 'waiting', activity: `等待批准：${req.summary}` });
     const signal = req.taskId ? this.controllers.get(req.taskId)?.signal : undefined;
     return new Promise<ApprovalDecision>((resolve) => {

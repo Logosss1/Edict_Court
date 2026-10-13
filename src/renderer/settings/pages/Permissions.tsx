@@ -1,5 +1,5 @@
 // 权限与审批: default permission mode, write-task confirmation and resume, always-allow rules per workspace,
-// release / deploy opt-in, and the 请旨 timeout used in 全自动.
+// release / deploy opt-in, 太子追问 at triage, and the 请旨 timeout used in 全自动.
 import { useMemo, useState } from 'react';
 import { useStore, openTaskTab, toast } from '../../store';
 import { call } from '../../api';
@@ -218,8 +218,14 @@ export function PermissionsPage() {
           <Warn>只对当前工作区生效；切到别的项目仍会逐次确认。高风险命令不受这个开关影响。</Warn>
         </Sec>
 
+        <Sec title="太子追问" note="· 旨意不清楚时，太子先问一句再办">
+          <Row label="分拣时允许太子先问一句" desc="只在缺少会改变做法的关键信息时问（指的是哪个项目、两种理解差别很大、要求互相矛盾），每道旨意至多一次；也可以直接回「不必问，照办」。勾选「直接下旨」时不问。">
+            <Toggle on={s.taiziAsk !== false} onChange={(v) => void up({ taiziAsk: v })} label="太子追问" testid="taizi-ask" />
+          </Row>
+        </Sec>
+
         <Sec title="请旨" note="· 官员拿不准时会停下来问你（ask_emperor）" right={mode === 'auto' ? <Badge tone="ok">全自动 · 生效中</Badge> : <Badge tone="off">仅在全自动模式下生效</Badge>}>
-          <Row label="无人答复时自动继续" desc="全自动模式下，请旨过这么多分钟没人回答，就按官员说的默认做法继续（没说就自行判断，并在结论里写明）；0 = 一直等。其他模式总是等你回答。">
+          <Row label="无人答复时自动继续" desc="全自动模式下，请旨过这么多分钟没人回答，就按官员说的默认做法继续（没说就自行判断，并在结论里写明；太子追问则照太子所拟）；0 = 一直等。其他模式总是等你回答。">
             <NumField value={s.askTimeoutMin} min={0} max={1440} unit="分钟" label="请旨无人答复多少分钟后按默认继续" testid="ask-timeout" onCommit={(v) => void up({ askTimeoutMin: v })} />
           </Row>
         </Sec>

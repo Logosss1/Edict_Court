@@ -15,6 +15,8 @@ const KIND_HEAD: Record<string, { icon: string; label: string }> = {
   loop: { icon: 'refresh', label: '疑似重复操作' },
   worktree: { icon: 'merge', label: '结案 · 工作树如何处理' },
 };
+/** 太子追问: the prince's one question at triage (he is not an official) */
+const PRINCE_HEAD = { icon: 'help', label: '太子请旨' };
 
 /** Choices to show: the request's own, or 准许 / 驳回 for plain approvals. */
 export function choicesOf(a: ApprovalRequest): ApprovalChoice[] {
@@ -74,7 +76,8 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
   const node = useStore((s) => (a.taskId && a.nodeId ? s.tasks.find((t) => t.id === a.taskId)?.nodes.find((n) => n.id === a.nodeId) : undefined));
   const c = choices[sel];
   const needNote = c?.comment === 'required';
-  const head = a.risk === 'high' && a.kind !== 'question' ? { icon: 'alert', label: '高风险操作 · 须皇上确认' } : KIND_HEAD[a.kind ?? ''] ?? { icon: 'shield', label: '操作待批准' };
+  const kindHead = a.kind === 'question' && a.agentId === 'taizi' ? PRINCE_HEAD : KIND_HEAD[a.kind ?? ''];
+  const head = a.risk === 'high' && a.kind !== 'question' ? { icon: 'alert', label: '高风险操作 · 须皇上确认' } : kindHead ?? { icon: 'shield', label: '操作待批准' };
 
   const decide = async (i = sel) => {
     const ch = choices[i];

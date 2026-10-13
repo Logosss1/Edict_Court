@@ -23,8 +23,12 @@ export interface CourtGame {
   stopReplay(): void;
   /** for tests: pin the clock to an hour (null = real time) */
   setHour(h: number | null): void;
+  /** the court's clock (real local time unless pinned) */
+  hour(): number;
+  /** for tests: the current scene's placement data (doors, seats…) */
+  spots(): Record<string, any>;
   /** for tests: the officials standing in the current scene */
-  officials(): { key: string; label: string; x: number; y: number; seat: boolean; seated: boolean; anim: string }[];
+  officials(): { key: string; label: string; x: number; y: number; seat: boolean; seated: boolean; anim: string; moving: boolean }[];
 }
 
 export async function createCourtGame(parent: HTMLElement, model: CourtModel, events: CourtEvents, initial: SceneKey, opts: { weather?: Weather } = {}): Promise<CourtGame> {
@@ -36,6 +40,7 @@ export async function createCourtGame(parent: HTMLElement, model: CourtModel, ev
   }
   const bridge: Bridge & { initialScene?: SceneKey } = {
     model, events, current: null, initialScene: initial, keys: new Set(), weather: opts.weather ?? 'clear', arrivedFrom: null, lit: {}, pendingReplay: null, hourOverride: null,
+    places: {}, cameFrom: {}, flowSeen: null, lastSession: null, procession: false,
   };
   const scenes = makeScenes(P, bridge);
   let canvasZoom = 1;
@@ -118,11 +123,19 @@ export async function createCourtGame(parent: HTMLElement, model: CourtModel, ev
     setHour(h) {
       bridge.hourOverride = h;
       cur()?.applyTime?.();
+      cur()?.syncAll?.(bridge.model);
+    },
+    spots() {
+      return cur()?.spots ?? {};
+    },
+    hour() {
+      const d = new Date();
+      return bridge.hourOverride ?? d.getHours() + d.getMinutes() / 60;
     },
     officials() {
       const c = cur();
       if (!c) return [];
-      return [...c.officials.entries()].map(([key, o]: [string, any]) => ({ key, label: o.tag?.text ?? '', x: o.x, y: o.y, seat: !!o.seat, seated: !!o.seated, anim: o.current }));
+      return [...c.officials.entries()].map(([key, o]: [string, any]) => ({ key, label: o.tag?.text ?? '', x: o.x, y: o.y, seat: !!o.seat, seated: !!o.seated, anim: o.current, moving: !!o.moving }));
     },
   };
 }

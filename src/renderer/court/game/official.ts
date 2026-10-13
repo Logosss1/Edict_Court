@@ -100,6 +100,18 @@ export class Official {
   homeFacing: Facing | null = null;
   /** placed by a design's court layout (not one of the built-in officials) */
   seat = false;
+  /** walking in through a door / out of the scene (scripted, the status pose waits) */
+  moving = false;
+  leaving = false;
+  /** taken out of his seat to come before the emperor (请旨 / 递折子) */
+  borrowed = false;
+  /** while set, a click does this instead of the usual menu */
+  clickOverride: (() => void) | null = null;
+  /** last time he greeted the emperor walking by; since when the emperor has stood behind him */
+  greetAt = 0;
+  behindSince = 0;
+  /** bumps whenever a new scripted walk starts, so an older one stops */
+  tok = 0;
 
   constructor(scene: any, key: string, x: number, y: number, o: OfficialOpts = {}) {
     this.scene = scene;
@@ -111,7 +123,7 @@ export class Official {
     this.sprite = scene.add.sprite(Math.round(x), Math.round(y), key, 0).setOrigin(0.5, 1).setScale(SPRITE_SCALE).setDepth(y);
     if (o.onClick || o.onHover) {
       this.sprite.setInteractive({ useHandCursor: !!o.onClick, pixelPerfect: true, alphaTolerance: 1 });
-      if (o.onClick) this.sprite.on('pointerdown', (p: any) => { p?.event?.stopPropagation?.(); o.onClick!(this); });
+      if (o.onClick) this.sprite.on('pointerdown', (p: any) => { p?.event?.stopPropagation?.(); if (this.clickOverride) this.clickOverride(); else o.onClick!(this); });
       this.sprite.on('pointerover', () => { this.sprite.setTint(0xfff1c8); o.onHover?.(this, true); });
       this.sprite.on('pointerout', () => { this.sprite.clearTint(); o.onHover?.(this, false); });
     }
@@ -218,7 +230,7 @@ export class Official {
       return;
     }
     this.lastBubble = shown;
-    if (holdMs) this.bubbleUntil = Date.now() + holdMs;
+    this.bubbleUntil = holdMs ? Date.now() + holdMs : 0;
     if (!this.bubbleText) {
       this.bubble = this.scene.add.graphics().setDepth(5000);
       this.bubbleText = nativeText(this.scene, 0, 0, '', { color: '#1a1220', wordWrap: { width: 192, useAdvancedWrap: true }, lineSpacing: 2 }).setDepth(5001);
@@ -226,6 +238,13 @@ export class Official {
     this.bubbleText.setText(shown);
     (this.bubble as any).kind = kind;
     this.layoutBubble();
+  }
+
+  /** drop a line that was said for a while only (say(..., holdMs)) once that while is over */
+  expireBubble() {
+    if (!this.bubbleUntil || Date.now() < this.bubbleUntil) return;
+    this.bubbleUntil = 0;
+    this.clearBubble();
   }
 
   clearBubble(force = false) {

@@ -7,7 +7,7 @@ import { call } from './api';
 export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help' | 'settings';
 /** 设置中心 pages (one editor tab, left nav) */
 export type SettingsSection = 'appearance' | 'storage' | 'providers' | 'routing' | 'runtime' | 'permissions' | 'canon' | 'mcp' | 'skills' | 'lsp' | 'acp' | 'worktrees' | 'audit' | 'help';
-export type CourtScene = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian';
+export type CourtScene = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian' | 'donggong' | 'yuhuayuan' | 'gongdao' | 'jiaolou' | 'yutu';
 
 export interface Tab {
   id: string;

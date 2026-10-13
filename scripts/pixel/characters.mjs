@@ -34,6 +34,7 @@ const ROBES = {
   teal: [C.BLU_D, C.BLU, C.TEAL, C.SKY],
   blue: [C.BLU_D, C.BLU_D, C.BLU, C.SKY],
   steel: [C.STONE_D, C.STONE_D, C.STONE, C.STONE_L],
+  slate: [C.TILE_D, C.TILE, C.TILE_L, C.HILL], // 内侍's blue-grey 贴里
 };
 
 export const CHARACTERS = {
@@ -53,6 +54,8 @@ export const CHARACTERS = {
   guard: { robe: 'red', hat: 'helmet', hold: 'halberd', beard: 'mustache', belt: 'black', armor: true },
   lady: { robe: 'red', hat: 'bun', hold: 'none', beard: 'none', belt: 'none', lady: true },
   clerk: { robe: 'teal', hat: 'cap', hold: 'scroll', beard: 'none', belt: 'black', fish: false },
+  // 内侍: beardless, blue-grey pleated 贴里 with a cross collar, small soft cap, 拂尘 in the crook of the arm
+  eunuch: { robe: 'slate', hat: 'softcap', hold: 'whisk', beard: 'none', belt: 'sash', fish: false, eunuch: true },
 };
 
 const CX = 32;
@@ -205,6 +208,37 @@ function halberd(b, x, top, bottom) {
   b.poly([[x + 2, top + 9], [x + 8, top + 7], [x + 7, top + 11], [x + 2, top + 12]], C.STONE);
   b.rect(x - 2, top + 13, 5, 3, C.RED);
   b.set(x - 2, top + 16, C.RED); b.set(x + 2, top + 16, C.RED_L);
+}
+
+/** 拂尘 fly-whisk: (x, y) = the hands holding the handle; the handle leans up to the right shoulder and the
+ *  white horsetail falls over the left forearm. `len` = tail length, `swing` shifts the tail tip sideways. */
+function whisk(b, x, y, len = 22, swing = 0) {
+  b.line(x + 1, y, x + 9, y - 14, C.WOOD);
+  b.line(x + 2, y, x + 10, y - 14, C.BROWN);
+  b.set(x + 9, y - 15, C.GOLD); b.set(x + 10, y - 15, C.GOLD_D); b.set(x + 9, y - 16, C.GOLD_L);
+  // horsetail: bound tight at the ferrule, fanning out into loose strands, ragged tips
+  for (let k = 0; k < len; k++) {
+    const t = k / len;
+    const mid = x - 1 - Math.round(t * 4) + Math.round(t * t * swing);
+    const w = Math.round(1 + t * 3.2);
+    for (let i = -w; i <= w; i++) {
+      if (k > len - 4 && (i + 9) % 3 === (len - k) % 3) continue; // separate strands at the tips
+      const c = i === -w ? C.JADE : i >= w - 1 ? C.STONE_L : (i + 9) % 3 === 0 ? C.PLASTER_S : C.JADE;
+      b.set(mid + i, y + 1 + k, c);
+    }
+  }
+  for (const [dx, extra] of [[-3, 2], [0, 3], [2, 1]]) b.vline(x - 5 + Math.round(swing) + dx, y + len, y + len + extra, dx === 2 ? C.STONE_L : C.JADE);
+  b.rect(x - 1, y - 1, 3, 3, C.GOLD); b.set(x - 1, y - 1, C.GOLD_L); b.set(x + 1, y + 1, C.GOLD_D); // ferrule
+}
+/** whisk seen from the side, carried in the front hand at (x, y) */
+function whiskSide(b, x, y, swing = 0) {
+  b.line(x, y, x + 5, y - 10, C.WOOD);
+  b.set(x + 5, y - 11, C.GOLD);
+  b.rect(x - 1, y, 2, 2, C.GOLD);
+  for (let k = 0; k < 16; k++) {
+    const xx = x - 1 - Math.round((k / 16) * (3 + swing));
+    b.set(xx, y + 2 + k, C.JADE); b.set(xx - 1, y + 2 + k, k % 3 ? C.JADE : C.PLASTER_S); b.set(xx + 1, y + 2 + k, C.STONE_L);
+  }
 }
 
 // ───────────────────────── marks ─────────────────────────
@@ -382,6 +416,17 @@ function hatFront(b, cx, top, spec, f) {
       b.hline(cx - 9, cx - 3, top + 7, C.STONE_D);
       break;
     }
+    case 'softcap': {
+      // 内侍 soft round cap hugging the skull, a dark band at the brow and a little red knot on top
+      b.ellipse(cx, top + 6, 10, 6, C.BLACK);
+      b.rect(cx - 10, top + 6, 21, 5, C.BLACK);
+      b.hline(cx - 10, cx + 10, top + 10, C.TILE_D);
+      b.line(cx - 6, top + 2, cx - 8, top + 6, C.STONE_D); // sheen, light from the top-left
+      b.set(cx - 5, top + 1, C.STONE_D);
+      b.ellipse(cx, top - 1, 2, 1, C.RED);
+      b.set(cx - 1, top - 2, C.RED_L);
+      break;
+    }
   }
   void f;
 }
@@ -476,6 +521,15 @@ function headSide(b, cx, top, spec, f) {
       b.rect(cx - 9, top + 6, 18, 6, C.BLACK);
       b.rect(cx - 3, top + 1, 7, 5, C.BLACK);
       break;
+    case 'softcap':
+      b.ellipse(cx - 1, top + 6, 10, 6, C.BLACK);
+      b.rect(cx - 11, top + 6, 20, 6, C.BLACK);
+      b.hline(cx - 10, cx + 8, top + 11, C.TILE_D);
+      b.line(cx - 4, top + 1, cx - 7, top + 5, C.STONE_D);
+      b.ellipse(cx - 1, top - 1, 2, 1, C.RED);
+      // two short soft flaps at the back of the cap
+      b.rect(cx - 12, top + 9, 3, 7, C.BLACK);
+      break;
   }
 }
 
@@ -534,7 +588,21 @@ function robe(b, cx, top, spec, dir, o) {
   } else {
     for (let y = top + 22; y < bottom - 1; y++) b.set(cx + 2 + Math.round(sway * ((y - top) / (bottom - top))), y, sh);
   }
-  if (dir === 'front') {
+  if (spec.eunuch && dir !== 'side') {
+    // 曳撒 pleats from the waist to the hem
+    for (let y = top + 23; y < bottom - 1; y++) {
+      const hw = halfAt(y) - 3, t = (y - top) / (bottom - top), sx = Math.round(sway * t);
+      for (let x = -hw + 3; x < hw - 1; x += 4) b.set(cx + x + sx + Math.round((x / hw) * (y - top - 23) / 12), y, sh);
+    }
+  }
+  if (dir === 'front' && spec.eunuch) {
+    // 交领: white inner collar crossing right over left
+    b.line(cx - 6, top, cx + 2, top + 9, C.JADE);
+    b.line(cx - 5, top, cx + 3, top + 9, C.JADE);
+    b.line(cx - 4, top, cx + 3, top + 8, sh);
+    b.line(cx + 6, top, cx + 1, top + 5, C.JADE);
+    b.hline(cx - 3, cx + 3, top - 1, C.SKIN_S);
+  } else if (dir === 'front') {
     // round collar 圆领 with white under-collar at the throat
     b.ellipse(cx, top + 1, 6, 3, sh);
     b.ellipse(cx, top + 1, 4, 2, C.JADE);
@@ -552,9 +620,17 @@ function robe(b, cx, top, spec, dir, o) {
   if (spec.belt !== 'none') {
     const by = top + 19;
     const bw = (dir === 'side' ? 10 : 15) + plump;
-    const plate = spec.belt === 'gold' ? C.GOLD : spec.belt === 'jade' ? C.JADE : spec.belt === 'silver' ? C.STONE_L : C.STONE;
+    const plate = spec.belt === 'gold' ? C.GOLD : spec.belt === 'jade' ? C.JADE : spec.belt === 'silver' ? C.STONE_L : spec.belt === 'sash' ? C.RED_M : C.STONE;
     b.rect(cx - bw, by, bw * 2 + 1, 3, C.BLACK);
-    for (let x = cx - bw + 1; x <= cx + bw; x += 4) { b.set(x, by + 1, plate); b.set(x + 1, by + 1, plate); }
+    if (spec.belt === 'sash') { b.hline(cx - bw + 1, cx + bw - 1, by + 1, plate); b.set(cx - bw + 2, by, C.RED); }
+    else for (let x = cx - bw + 1; x <= cx + bw; x += 4) { b.set(x, by + 1, plate); b.set(x + 1, by + 1, plate); }
+    if (spec.belt === 'sash' && dir === 'front') {
+      // 牙牌 (ivory pass) hanging from the sash on a red cord
+      b.vline(cx - 9, by + 3, by + 5, C.RED);
+      b.rect(cx - 10, by + 6, 3, 5, C.JADE);
+      b.vline(cx - 8, by + 6, by + 10, C.STONE_L);
+      b.set(cx - 9, by + 11, C.RED);
+    }
     if (dir === 'front') {
       // ends hanging
       b.rect(cx + 8, by + 3, 2, 6, C.BLACK);
@@ -645,7 +721,7 @@ function frame(spec, f) {
   const headTop = 8 + bob + lean;
   const bodyTop = 33 + bob + Math.round(lean / 2);
   const sy = bodyTop + 3;
-  const ctx = { cx, sy, bodyTop, headTop, b };
+  const ctx = { cx, sy, bodyTop, headTop, b, swing: f.sway ?? 0 };
   const dir = f.dir ?? 'front';
   if (spec.hold === 'halberd' && dir !== 'side') halberd(b, cx + 19, headTop - 14, FOOT - 1);
   if (dir === 'front') {
@@ -664,6 +740,7 @@ function frame(spec, f) {
     // sleeves hang at the sides
     sleeve(b, spec, cx - 12, sy, cx - 15 + (f.step ?? 0) * 2, sy + 30, { w0: 5, w1: 7, droop: 3 });
     sleeve(b, spec, cx + 12, sy, cx + 15 - (f.step ?? 0) * 2, sy + 30, { w0: 5, w1: 7, droop: 3, shadeTop: true });
+    if (spec.hold === 'whisk') { b.line(cx + 9, sy + 3, cx + 13, sy - 6, C.WOOD); b.set(cx + 13, sy - 7, C.GOLD); b.set(cx + 14, sy - 6, C.BROWN); }
     headBack(b, cx, headTop, spec);
     if (spec.hold === 'halberd') halberd(b, cx + 19, headTop - 14, FOOT - 1);
   } else {
@@ -679,6 +756,7 @@ function frame(spec, f) {
     if (spec.hold === 'hu') hu(b, hx + 2, hy + 1, 18, 2);
     else if (spec.hold === 'scroll') scrollRolled(b, hx - 2, hy - 2, 10);
     else if (spec.hold === 'book') bookClosed(b, hx - 3, hy - 6);
+    else if (spec.hold === 'whisk') whiskSide(b, hx + 1, hy, f.step ?? 0);
   }
   for (const m of f.marks ?? []) m(b, ctx);
   b.outline(C.INK);
@@ -736,13 +814,21 @@ function kneelFrame(b, spec, f) {
   b.hline(cx - 23, cx + 23, FOOT, deep);
   b.hline(cx - 20, cx + 20, FOOT - 12, sh); // knees
   b.vline(cx, FOOT - 11, FOOT - 1, sh);
-  b.ellipse(cx, bodyTop + 1, 6, 3, sh);
-  b.ellipse(cx, bodyTop + 1, 4, 2, C.JADE);
+  if (spec.eunuch) {
+    // 交领 + pleats spread over the knees
+    b.line(cx - 6, bodyTop, cx + 2, bodyTop + 9, C.JADE); b.line(cx - 5, bodyTop, cx + 3, bodyTop + 9, C.JADE);
+    b.line(cx - 4, bodyTop, cx + 3, bodyTop + 8, sh); b.line(cx + 6, bodyTop, cx + 1, bodyTop + 5, C.JADE);
+    for (let x = cx - 18; x <= cx + 16; x += 4) b.vline(x, FOOT - 10, FOOT - 2, sh);
+  } else {
+    b.ellipse(cx, bodyTop + 1, 6, 3, sh);
+    b.ellipse(cx, bodyTop + 1, 4, 2, C.JADE);
+  }
   if (spec.roundels) for (const [x, y] of [[cx - 7, bodyTop + 9], [cx + 7, bodyTop + 9], [cx - 12, FOOT - 6], [cx + 12, FOOT - 6]]) { b.ellipse(x, y, 3, 3, C.GOLD_L); b.ellipse(x, y, 2, 2, C.GOLD); b.set(x, y, C.RED); }
   if (spec.belt !== 'none') {
     const plate = spec.belt === 'gold' ? C.GOLD : spec.belt === 'jade' ? C.JADE : C.STONE_L;
     b.rect(cx - 15, bodyTop + 17, 31, 3, C.BLACK);
-    for (let x = cx - 14; x <= cx + 15; x += 4) { b.set(x, bodyTop + 18, plate); b.set(x + 1, bodyTop + 18, plate); }
+    if (spec.belt === 'sash') b.hline(cx - 14, cx + 14, bodyTop + 18, C.RED_M);
+    else for (let x = cx - 14; x <= cx + 15; x += 4) { b.set(x, bodyTop + 18, plate); b.set(x + 1, bodyTop + 18, plate); }
   }
   if (spec.armor || spec.armorVest) { b.rect(cx - 12, bodyTop + 2, 25, 14, C.STONE); for (let y = bodyTop + 5; y < bodyTop + 16; y += 3) b.hline(cx - 12, cx + 12, y, C.STONE_D); }
   if (spec.lady) shawl(b, cx, bodyTop, 0);
@@ -750,7 +836,7 @@ function kneelFrame(b, spec, f) {
   headFront(b, cx, headTop, spec, f);
   hatFront(b, cx, headTop, spec, f);
   const ctx = { cx, sy, bodyTop, headTop, b };
-  arms(b, spec, ctx, { l: [-4, 18], r: [4, 18], ...f, items: f.items ?? ((bb, c, lh, rh) => { if (spec.hold === 'hu' && !sit) hu(bb, cx, lh[1] + 2, 18); void rh; }) });
+  arms(b, spec, ctx, { l: [-4, 18], r: [4, 18], ...f, items: f.items ?? ((bb, c, lh, rh) => { if (spec.hold === 'hu' && !sit) hu(bb, cx, lh[1] + 2, 18); else if (spec.hold === 'whisk' && !sit) whisk(bb, cx, lh[1] + 1, 16, 2); void rh; }) });
   for (const m of f.marks ?? []) m(b, ctx);
   b.outline(C.INK);
   return b;
@@ -762,6 +848,7 @@ const H = (spec) => (b, ctx, lh) => {
   if (spec.hold === 'hu') hu(b, ctx.cx, lh[1] + 2, 20);
   else if (spec.hold === 'scroll') scrollRolled(b, ctx.cx - 6, lh[1] - 4, 12);
   else if (spec.hold === 'book') bookClosed(b, ctx.cx - 5, lh[1] - 10);
+  else if (spec.hold === 'whisk') whisk(b, ctx.cx, lh[1] + 1, 22, ctx.swing ?? 0);
 };
 const CLASP = { l: [-3, 24], r: [3, 24] };
 
@@ -781,7 +868,7 @@ function animFrames(name, spec) {
     case 'walk_side':
       return [1, 0, -1, 0].map((st) => ({ dir: 'side', step: st, bob: st === 0 ? 1 : 0, sway: -st * 2 }));
     case 'talk':
-      return [0, 1, 2, 1].map((k) => ({ ...base, r: [16 + k, -2 - k * 2], hideR: false, mouth: k % 2 ? 'closed' : 'open', items: (b, ctx, lh) => { if (spec.hold === 'hu') hu(b, lh[0] + 1, lh[1] + 2, 20); } }));
+      return [0, 1, 2, 1].map((k) => ({ ...base, r: [16 + k, -2 - k * 2], hideR: false, mouth: k % 2 ? 'closed' : 'open', items: (b, ctx, lh) => { if (spec.hold === 'hu') hu(b, lh[0] + 1, lh[1] + 2, 20); else if (spec.hold === 'whisk') whisk(b, lh[0] + 1, lh[1] + 1, 20); } }));
     case 'think':
       return [0, 0, 1, 1].map((k, i) => ({ ...base, r: [6, -3], l: [4, 14], eyes: i === 1 ? 'closed' : 'up', items: undefined, marks: i >= 2 ? [(b, c) => { b.set(c.cx + 16, c.headTop + 2 - k, C.SKY_L); b.set(c.cx + 19, c.headTop - 2 - k, C.SKY_L); b.set(c.cx + 18, c.headTop - 1 - k, C.SKY_L); }] : [] }));
     case 'kneel':
@@ -800,7 +887,7 @@ function animFrames(name, spec) {
       ];
     case 'bow':
       // 作揖: hands raised together, body bending
-      return [0, 2, 4, 2].map((lean, i) => ({ ...base, lean, l: [-2, 12 + lean], r: [2, 12 + lean], eyes: lean > 2 ? 'closed' : 'down', mouth: i === 2 ? 'closed' : 'closed', items: (b, ctx, lh) => { if (spec.hold === 'hu') hu(b, ctx.cx, lh[1] + 3, 20); } }));
+      return [0, 2, 4, 2].map((lean, i) => ({ ...base, lean, l: [-2, 12 + lean], r: [2, 12 + lean], eyes: lean > 2 ? 'closed' : 'down', mouth: i === 2 ? 'closed' : 'closed', items: (b, ctx, lh) => { if (spec.hold === 'hu') hu(b, ctx.cx, lh[1] + 3, 20); else if (spec.hold === 'whisk') whisk(b, ctx.cx, lh[1] + 1, 20, 1); } }));
     case 'present':
       // 执笏奏事: tablet raised before the face
       return [0, 1, 0, 1].map((k) => ({ ...base, l: [-2, 2 + k * 2], r: [2, 2 + k * 2], mouth: k ? 'open' : 'closed', items: (b, ctx, lh) => (spec.hold === 'hu' || free ? hu(b, ctx.cx, lh[1] + 2, 22) : scrollRolled(b, ctx.cx - 6, lh[1] - 3, 12)) }));

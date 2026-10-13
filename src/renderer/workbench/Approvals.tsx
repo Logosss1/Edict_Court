@@ -1,37 +1,18 @@
 // Approval dock for 朝堂 mode. In the workbench the same requests are decision cards in the agent pane
-// (ChoiceCard), with a one-line notice there for other edicts, so the dock stays out of the way.
-import { useState } from 'react';
+// (ChoiceCard), with a one-line notice there for other edicts, so the dock stays out of the way. The
+// dock uses the same cards, so 请旨 questions (options, a written answer) can be answered in the court.
 import { useStore } from '../store';
-import { call } from '../api';
-import { Icon } from '../common/Icon';
-import { AGENT_MAP } from '../../shared/court';
+import { ChoiceCard } from './ChoiceCard';
 
 export function ApprovalsDock() {
   const aps = useStore((s) => s.approvals.filter((a) => a.status === 'pending'));
   const mode = useStore((s) => s.ui.mode);
-  const [open, setOpen] = useState<string | null>(null);
   if (!aps.length || mode !== 'court') return null;
   return (
-    <div className={`approvals-dock ${mode}`} data-testid="approvals-dock">
-      {aps.slice(0, 4).map((a) => (
-        <div key={a.id} className={`approval-card ${a.risk}`}>
-          <div className="ac-head">
-            <Icon name={a.risk === 'high' ? 'alert' : 'shield'} size={14} />
-            <b>{a.risk === 'high' ? '高风险操作 · 须皇上确认' : '操作待批准'}</b>
-            <span className="muted small">{AGENT_MAP[a.agentId]?.name} · {a.taskId}</span>
-          </div>
-          <div className="ac-summary">{a.summary}</div>
-          <div className="muted small">{a.reason}</div>
-          {open === a.id && <pre className="ac-detail">{a.detail}</pre>}
-          <div className="gate-actions">
-            <button className="link" onClick={() => setOpen(open === a.id ? null : a.id)}>{open === a.id ? '收起' : '详情'}</button>
-            <span style={{ flex: 1 }} />
-            <button className="btn sm danger" onClick={() => call('decideApproval', a.id, false)} data-testid="approval-deny">驳回</button>
-            <button className="btn sm primary" onClick={() => call('decideApproval', a.id, true)} data-testid="approval-approve">准许</button>
-          </div>
-        </div>
-      ))}
-      {aps.length > 4 && <div className="muted small">另有 {aps.length - 4} 项待批…</div>}
+    <div className="approvals-dock" data-testid="approvals-dock">
+      {/* not "active": the court uses Esc and the arrow keys for walking */}
+      {aps.slice(0, 3).map((a) => <ChoiceCard key={a.id} a={a} active={false} />)}
+      {aps.length > 3 && <div className="muted small">另有 {aps.length - 3} 项待批…</div>}
     </div>
   );
 }

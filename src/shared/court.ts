@@ -113,3 +113,10 @@ export function agentName(id: string): string {
   if (id === 'system') return '系统';
   return AGENT_MAP[id as AgentId]?.name ?? id;
 }
+
+/** 请旨的称呼：太子称「父皇，…」，百官称「皇上，…」；已经以 父皇 / 皇上 / 陛下 开头的原样返回。 */
+export function courtAddress(agentId: string, question: string): string {
+  const q = question.trim();
+  if (/^(父皇|皇上|陛下)/.test(q)) return q;
+  return `${agentId === 'taizi' ? '父皇' : '皇上'}，${q}`;
+}

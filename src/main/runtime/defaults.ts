@@ -29,6 +29,7 @@ export function defaultSettings(): Settings {
     acpEnabled: false,
     acpHighRiskInEdictOnly: true,
     askTimeoutMin: 10,
+    taiziAsk: true,
     canon: [],
     commandSnapshots: true,
     worktreePerEdict: true,
