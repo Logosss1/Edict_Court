@@ -32,6 +32,7 @@ export function defaultSettings(): Settings {
     canon: [],
     commandSnapshots: true,
     worktreePerEdict: true,
+    notify: 'all',
   };
 }
 

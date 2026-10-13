@@ -413,6 +413,8 @@ export interface AllowRule {
   key: string;
   label: string;
   at: number;
+  /** the edict (and official) whose approval card granted it */
+  source?: { taskId: string; title: string; agentId?: string };
 }
 
 export interface WorkspacePerms {
@@ -654,6 +656,32 @@ export interface Settings {
   commandSnapshots: boolean;
   /** each court edict on a git repository works in its own worktree (branch edict/<id>), merged on 结案 */
   worktreePerEdict: boolean;
+  /** desktop notifications (window not focused): all · only what needs the emperor · none */
+  notify: NotifyPref;
+}
+
+export type NotifyPref = 'all' | 'attention' | 'off';
+
+/** 存储与备份: where the data lives and the copies made of it. */
+export interface StorageBackup {
+  name: string;
+  at: number;
+  bytes: number;
+}
+export interface StorageInfo {
+  dataDir: string;
+  dbFile: string;
+  dbBytes: number;
+  walBytes: number;
+  /** meta.origin: fresh | import:1.x | import:backup | unknown */
+  origin: string;
+  /** backup-1.x-<stamp> folder made when 1.x JSON data was imported */
+  importBackup?: string;
+  /** rows per table (tasks, memorials …) */
+  counts: Record<string, number>;
+  backups: StorageBackup[];
+  /** API keys are encrypted with the system keychain (safeStorage) */
+  encrypted: boolean;
 }
 
 export type CanonKind = 'forbid' | 'rule' | 'preference' | 'lesson';

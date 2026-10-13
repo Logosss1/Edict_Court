@@ -235,6 +235,16 @@ export class Runtime {
     this.emit({ type: 'toast', level, message });
   }
 
+  /**
+   * Desktop notification (shown by the host only while the window is not focused), gated by settings.notify:
+   * 'attention' = only what needs the emperor (approvals, 奏折待批, blocked edicts, health alerts); 'off' = none.
+   */
+  notifyDesktop(kind: 'attention' | 'info', title: string, body: string) {
+    const pref = this.settings.notify ?? 'all';
+    if (pref === 'off' || (pref === 'attention' && kind !== 'attention')) return;
+    this.opts.notify?.(title, body);
+  }
+
   /** Write-behind: one row when `kind`/`id` are given, otherwise everything that changed. */
   persist(kind?: DocKind, id?: string) {
     if (kind) return this.store.markDirty(kind, id);
@@ -410,7 +420,7 @@ export class Runtime {
         if (h === 'alert' && !this.alerted.has(a.id)) {
           this.alerted.add(a.id);
           this.activity('error', `${agentName(a.id)} 已 ${Math.round(idle / 1000)} 秒无心跳`, { taskId: a.taskId, agentId: a.id });
-          this.opts.notify?.('Agent 健康告警', `${agentName(a.id)} 长时间无响应`);
+          this.notifyDesktop('attention', 'Agent 健康告警', `${agentName(a.id)} 长时间无响应`);
         }
       }
     }
@@ -595,7 +605,7 @@ export class Runtime {
     task.gate = { ...gate, since: now() };
     this.audit.record('system', 'gate_open', { kind: gate.kind, message: gate.message }, task.id);
     this.activity('gate', `⏸ 待皇上御批：${gate.message}`, { taskId: task.id, data: { kind: gate.kind } });
-    this.opts.notify?.('奏折待批', `${task.title}：${gate.message}`);
+    this.notifyDesktop('attention', '奏折待批', `${task.title}：${gate.message}`);
     this.touch(task);
   }
 
@@ -696,7 +706,7 @@ export class Runtime {
     this.approvals.set(ap.id, ap);
     this.audit.record(req.agentId, 'approval_requested', { tool: req.tool, summary: req.summary, risk: req.risk, reason: req.reason, kind: req.kind ?? 'action' }, req.taskId);
     this.emit({ type: 'approval', approval: ap });
-    this.opts.notify?.(req.risk === 'high' ? '高风险操作待确认' : req.kind === 'write_task' ? '写任务待批准' : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
+    this.notifyDesktop('attention', req.risk === 'high' ? '高风险操作待确认' : req.kind === 'write_task' ? '写任务待批准' : req.kind === 'question' ? '官员请旨' : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
     if (req.taskId) this.setAgent(req.agentId, { status: 'waiting', activity: `等待批准：${req.summary}` });
     const signal = req.taskId ? this.controllers.get(req.taskId)?.signal : undefined;
     return new Promise<ApprovalDecision>((resolve) => {
@@ -750,8 +760,9 @@ export class Runtime {
     return !!(root && this.settings.workspacePerms?.[root]?.releaseAlways);
   }
 
-  addAllowRules(scope: 'task' | 'workspace', task: Task | undefined, keys: string[], label: string) {
-    const rules = keys.map((key) => ({ key, label, at: now() }));
+  addAllowRules(scope: 'task' | 'workspace', task: Task | undefined, keys: string[], label: string, agentId?: string) {
+    const source = task ? { taskId: task.id, title: task.title, ...(agentId ? { agentId } : {}) } : undefined;
+    const rules: AllowRule[] = keys.map((key) => ({ key, label, at: now(), ...(source ? { source } : {}) }));
     if (scope === 'task') {
       if (!task) return;
       task.allowRules = [...(task.allowRules ?? []).filter((r) => !keys.includes(r.key)), ...rules];
@@ -775,9 +786,18 @@ export class Runtime {
     if (!cur) return;
     perms[root] = { ...cur, rules: cur.rules.filter((r) => r.key !== key) };
     this.settings = { ...this.settings, workspacePerms: perms };
-    this.audit.record('emperor', 'allow_rule_removed', { root, key });
+    this.audit.record('emperor', 'allow_rule_removed', { scope: 'workspace', root, key });
     this.saveSettings();
     this.emit({ type: 'settings', settings: this.settings });
+  }
+
+  /** Revoke a 「本旨意内不再询问」 rule before the edict ends. */
+  removeTaskAllowRule(taskId: string, key: string) {
+    const t = this.getTask(taskId);
+    if (!t.allowRules?.some((r) => r.key === key)) return;
+    t.allowRules = t.allowRules.filter((r) => r.key !== key);
+    this.audit.record('emperor', 'allow_rule_removed', { scope: 'task', key }, taskId);
+    this.touch(t);
   }
 
   setReleaseAlways(root: string, on: boolean) {
@@ -1101,7 +1121,7 @@ export class Runtime {
     this.emit({ type: 'memorial', memorial: m });
     if (task.state === 'Done') {
       this.pushNews({ title: `捷报：「${task.title}」已完成`, source: '军机处', category: '朝廷', summary: task.result?.summary?.slice(0, 120) });
-      this.opts.notify?.('旨意完成', task.title);
+      this.notifyDesktop('info', '旨意完成', task.title);
     }
     // 结案 dialog for an edict's own worktree (after the caller finished, e.g. cancel() closing its cards)
     if (task.worktree?.status === 'active') setImmediate(() => raiseWorktreeCard(this, task));

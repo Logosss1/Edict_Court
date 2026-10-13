@@ -856,6 +856,16 @@ export class SqliteStore {
     return { busy: Number(r?.busy ?? 0), log: Number(r?.log ?? 0), checkpointed: Number(r?.checkpointed ?? 0) };
   }
 
+  /**
+   * Write a consistent, compacted copy of the database to `file` (VACUUM INTO reads one snapshot, WAL included;
+   * the copy has no -wal / -shm of its own). The target must not exist. Flush pending marks first.
+   */
+  backupTo(file: string): void {
+    this.assertOpen();
+    if (this.frames.length) throw new Error('SqliteStore.backupTo() cannot run inside transaction()');
+    this.db.prepare('VACUUM INTO ?').run(file);
+  }
+
   /** PRAGMA quick_check (default) or the slower integrity_check + foreign_key_check (full). */
   integrityCheck(full = false): { ok: boolean; errors: string[] } {
     this.assertOpen();
