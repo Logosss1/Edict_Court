@@ -16,6 +16,7 @@ import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt
 export { parseConclusion, type ExecConclusion } from './execPolicy';
 import { flowDecideGate, flowStep } from './flow';
 import { canonBlock } from './canon';
+import { askPrince, parsePrinceAsk, princeWaiting, type PrinceAsk } from './askEmperor';
 import { hasOwnTree, prepareWorkspace } from './worktrees';
 import { expandMcpRefs } from '../mcp/refs';
 import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
@@ -80,6 +81,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
   // 太子分拣
   let title = typed.replace(/\s+/g, ' ').slice(0, 20);
   let triageOutput = '{"type":"edict","reason":"皇上直接下旨"}';
+  let ask: PrinceAsk | null = null; // 太子追问 (never with 直接下旨, and Solo has no prince)
   const session: Session = { id: uid('ss'), title: typed.slice(0, 30), source: 'taizi-chat', agentId: 'taizi', messages: [{ role: 'user', content: text, at: now() }], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
   if (!input.forceEdict) {
     rt.sessions.set(session.id, session);
@@ -87,7 +89,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     const ta = rt.agents.get('taizi');
     if (ta) ta.sessions++;
     const r = await runAgent({ rt, agentId: 'taizi', session, prompt: `皇上输入：\n${text}`, maxTokens: 800, temperature: 0.2, label: '太子分拣' });
-    let j = extractJson<{ type?: string; title?: string; reply?: string; reason?: string }>(r.text);
+    let j = extractJson<{ type?: string; title?: string; reply?: string; reason?: string; question?: string; options?: string[]; assume?: string }>(r.text);
     if (!j) {
       const r2 = await runAgent({ rt, agentId: 'taizi', session, history: r.messages, prompt: '请只输出规定的 JSON 对象。', maxTokens: 600, temperature: 0, label: '太子分拣（格式修正）' });
       j = extractJson(r2.text);
@@ -103,14 +105,17 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
       return { kind: 'chat', sessionId: session.id, reply: j.reply };
     }
     if (j?.title) title = String(j.title).slice(0, 40);
-    session.messages.push({ role: 'assistant', content: `已分拣为旨意：${title}`, at: now() });
+    if (rt.settings.taiziAsk !== false) ask = parsePrinceAsk(j);
+    session.messages.push({ role: 'assistant', content: ask ? `已分拣为旨意：${title}（先向父皇请旨：${ask.question}）` : `已分拣为旨意：${title}`, at: now() });
     session.status = 'done';
     rt.emit({ type: 'session', session });
   }
   const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: pinned ? false : (input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan)), templateId: input.templateId, effort: input.effort, design: pinned });
   task.nodes.push({ id: 'triage', kind: 'triage', agentId: 'taizi', label: '太子分拣', status: 'done', attempts: 1, startedAt: now(), endedAt: now(), exitStatus: 'ok', output: triageOutput, usage: session.usage });
   rt.transition(task, 'Taizi', 'taizi', '太子接旨分拣');
-  void drive(rt, task.id);
+  // the edict waits in 太子分拣 until the emperor answers; the answer drives it on
+  if (ask) askPrince(rt, task, ask);
+  else void drive(rt, task.id);
   return { kind: 'task', taskId: task.id };
 }
 
@@ -148,6 +153,8 @@ export async function drive(rt: Runtime, taskId: string): Promise<void> {
       if (!t) return;
       ws = t.workspace;
       if (TERMINAL.includes(t.state) || t.state === 'Blocked' || t.paused || t.gate) return;
+      // 太子追问 still unanswered (put again after a restart): nothing moves, not even the worktree
+      if (t.state === 'Taizi' && princeWaiting(rt, t)) return;
       // its own worktree is made when the edict leaves triage, before anything reads or writes files
       const missing = await prepareWorkspace(rt, t);
       if (missing) {

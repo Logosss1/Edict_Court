@@ -370,6 +370,8 @@ export interface EdictQuestion {
   nodeId?: string;
   question: string;
   options: string[];
+  /** 太子追问: what the prince goes with on 「不必问，照办」 or when nobody answers */
+  assume?: string;
   answer?: string;
   how?: 'option' | 'free' | 'self' | 'timeout' | 'none';
   at: number;
@@ -650,6 +652,8 @@ export interface Settings {
   acpHighRiskInEdictOnly: boolean;
   /** 全自动 mode only: an unanswered 请旨 (ask_emperor) continues on the default after this many minutes (0 = wait) */
   askTimeoutMin: number;
+  /** 太子追问: at triage the prince may ask one short question when the edict is unclear (default on) */
+  taiziAsk?: boolean;
   /** 典章: the emperor's standing rules, preferences and lessons, injected into prompts by keyword */
   canon: CanonEntry[];
   /** record files changed by run_command (shadow git snapshots before / after each command) */

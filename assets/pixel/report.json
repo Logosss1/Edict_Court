@@ -14,23 +14,43 @@
  },
  "scenes": {
   "taihe": {
+   "colors": 46,
+   "ok": true
+  },
+  "guangchang": {
+   "colors": 46,
+   "ok": true
+  },
+  "chengtian": {
    "colors": 45,
    "ok": true
   },
   "junjichu": {
-   "colors": 42,
+   "colors": 43,
    "ok": true
   },
   "liubu": {
-   "colors": 45,
+   "colors": 46,
    "ok": true
   },
-  "chengtian": {
+  "donggong": {
+   "colors": 43,
+   "ok": true
+  },
+  "yuhuayuan": {
    "colors": 47,
    "ok": true
   },
-  "guangchang": {
-   "colors": 39,
+  "gongdao": {
+   "colors": 46,
+   "ok": true
+  },
+  "jiaolou": {
+   "colors": 47,
+   "ok": true
+  },
+  "yutu": {
+   "colors": 35,
    "ok": true
   }
  },
@@ -98,6 +118,10 @@
   "clerk": {
    "frames": 116,
    "colors": 28
+  },
+  "eunuch": {
+   "frames": 116,
+   "colors": 34
   }
  }
 }

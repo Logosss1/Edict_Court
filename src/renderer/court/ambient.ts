@@ -61,6 +61,7 @@ export function cue(name: SoundCue, vol = 1) {
     case 'drum': return drum(t, vol);
     case 'chirp': return chirp(t, vol);
     case 'meow': return meow(t, vol);
+    case 'whip': return whip(t, vol);
   }
 }
 
@@ -108,6 +109,26 @@ function drum(t: number, vol: number) {
     n.buffer = buf;
     env(ng, tt, 0.35 * vol, 0.12, 0.002);
     n.connect(lp).connect(ng).connect(master!);
+    n.start(tt);
+  }
+}
+
+/** 鸣鞭: three sharp cracks of the ceremonial whip (静鞭) that open and close court */
+function whip(t: number, vol: number) {
+  for (let k = 0; k < 3; k++) {
+    const tt = t + k * 0.55;
+    const len = Math.floor(ctx!.sampleRate * 0.09);
+    const buf = ctx!.createBuffer(1, len, ctx!.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+    const n = ctx!.createBufferSource();
+    const hp = ctx!.createBiquadFilter();
+    const g = ctx!.createGain();
+    hp.type = 'highpass';
+    hp.frequency.value = 1800;
+    n.buffer = buf;
+    env(g, tt, 0.7 * vol, 0.08, 0.001);
+    n.connect(hp).connect(g).connect(master!);
     n.start(tt);
   }
 }

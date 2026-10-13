@@ -335,7 +335,9 @@ select.input { padding: 4px 6px; }
 .change-row.reverted { opacity: .45; text-decoration: line-through; }
 
 /* approvals dock */
-.approvals-dock { position: fixed; right: 16px; bottom: 16px; z-index: 300; width: 380px; display: flex; flex-direction: column; gap: 8px; }
+.approvals-dock { position: fixed; right: 16px; bottom: 16px; z-index: 300; width: 380px; display: flex; flex-direction: column; gap: 8px; max-height: calc(100vh - 140px); overflow: auto; }
+.approvals-dock .choice-card.flash { animation: apflash .9s 2; }
+@keyframes apflash { 50% { box-shadow: 0 0 0 3px var(--gold), var(--shadow); } }
 .approvals-dock.workbench { bottom: 150px; }
 .approval-card { padding: 10px 12px; border-radius: 10px; background: var(--panel); border: 1px solid var(--line2); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 5px; animation: slidein .2s; }
 .approval-card.high { border-color: var(--danger); box-shadow: 0 0 0 1px var(--danger), var(--shadow); }
@@ -669,7 +671,8 @@ select.input { padding: 4px 6px; }
 .court-menu button:disabled { opacity: .45; cursor: default; }
 .court-history { width: min(620px, 92vw); max-height: 70vh; display: flex; flex-direction: column; }
 .ch-list { overflow: auto; display: flex; flex-direction: column; gap: 2px; }
-.ch-row { display: flex; align-items: center; gap: 8px; padding: 3px 4px; border-bottom: 1px dashed rgba(110,26,28,.18); }
+.ch-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 3px 4px; border-bottom: 1px dashed rgba(110,26,28,.18); }
+.ch-q { flex-basis: 100%; padding-left: 8px; font-size: 12px; }
 .ch-row:hover { background: rgba(217,178,90,.15); }
 .ch-title { flex: 1; min-width: 0; text-align: left; border: none; background: none; color: #2b2118; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .ch-title:hover { color: var(--cin); text-decoration: underline; }

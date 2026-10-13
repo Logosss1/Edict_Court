@@ -14,6 +14,7 @@ xvfb-run -a npx tsx e2e/smoke.ts          # 启动冒烟：打开构建好的应
 ```
 - `e2e/features.ts` 的段（`ONLY=` 的取值，逗号分隔；不设则全跑）：`effort`、`error`、`preview`、`mcp`、`designs`、`designer`、`manage`、`tips`、`sidebar`、`worktree`。
 - 截图目录由 `SHOTS` 指定：`flow.ts` / `features.ts` 默认写进 `docs/screenshots/`（会改动仓库里的截图），`court-smoke.ts` 默认写到脚本里设定的临时目录；`smoke.ts` 的截图路径写死在脚本里。`EDICT_ELECTRON` 可换 Electron 可执行文件，`APP_DIR` 可让两个冒烟脚本启动别处的构建。每个脚本都用临时数据目录，不碰你的 EdictData。
+- 2.0.3 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 196/196；`e2e/flow.ts` 21/21；`e2e/features.ts` 79/79；`e2e/court-smoke.ts` 通过。
 - 2.0.0 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 179/179；`e2e/flow.ts` 21/21；`e2e/features.ts` 78/78；`e2e/court-smoke.ts` 与 `e2e/smoke.ts` 通过。
 
 ## 1. 单元测试（纯逻辑）

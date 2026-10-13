@@ -8,7 +8,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PALETTE } from './pixel/raster.mjs';
 import { buildSheet, CHARACTERS, ANIMS, FW, FH, COLS, LAYOUT } from './pixel/characters.mjs';
-import { buildScenes, buildProps, SW, SH, SCALE } from './pixel/scenes.mjs';
+import { buildProps, SW, SH, SCALE } from './pixel/scenes.mjs';
+import { buildTopDown } from './pixel/td/index.mjs';
 
 const MAX_COLORS = 48;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -38,13 +39,22 @@ for (const key of Object.keys(CHARACTERS)) {
 fs.writeFileSync(path.join(out, 'chars', 'atlas.json'), JSON.stringify({ frameWidth: FW, frameHeight: FH, columns: COLS, displayScale: LAYOUT.displayScale, anims: ANIMS, characters: Object.keys(CHARACTERS) }, null, 1));
 
 // scenes (background + hotspot / placement data in world units)
-const scenes = buildScenes();
+// the top-down court (scripts/pixel/td); the old front-view halls in scenes.mjs are no longer drawn
+const scenes = buildTopDown();
+// everyone who can appear in a scene: officials come and go by the hour, visitors and errand-runners
+// (eunuchs inside the palace, clerks outside) can walk into any hall
+const ALL = ['emperor', 'taizi', 'zhongshu', 'menxia', 'shangshu', 'hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'zaochao', 'solo', 'eunuch', 'clerk'];
 const sceneChars = {
-  taihe: ['emperor', 'taizi', 'zhongshu', 'menxia', 'shangshu', 'hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'guard', 'lady'],
-  junjichu: ['clerk', 'shangshu', 'zaochao', 'emperor'],
-  liubu: ['hubu', 'libu', 'bingbu', 'xingbu', 'gongbu', 'libu_hr', 'clerk', 'emperor'],
-  chengtian: ['guard', 'zaochao', 'zhongshu', 'menxia', 'shangshu', 'taizi', 'emperor'],
-  guangchang: ['guard', 'emperor'],
+  taihe: [...ALL, 'guard', 'lady'],
+  guangchang: [...ALL, 'guard', 'lady'],
+  chengtian: [...ALL, 'guard', 'lady'],
+  junjichu: [...ALL, 'lady'],
+  liubu: [...ALL, 'guard', 'lady'],
+  donggong: [...ALL, 'lady'],
+  yuhuayuan: [...ALL, 'lady', 'guard'],
+  gongdao: [...ALL, 'lady', 'guard'],
+  jiaolou: [...ALL, 'lady', 'guard'],
+  yutu: [],
 };
 const props = buildProps();
 for (const [k, b] of Object.entries(props)) write(path.join(out, 'props', `${k}.png`), b.toPNG());

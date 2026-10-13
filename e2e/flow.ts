@@ -161,15 +161,15 @@ const ok = (step: string, cond: boolean, note?: string) => {
   await win.click('[data-testid=memorial-review] [data-testid=gate-approve]');
   const t2b = await waitTask((t) => t.id === t2.id && (t.state === 'Doing' || t.gate?.kind === 'final'), 30000);
   ok('L2 涂改方案：按修改后的方案执行', t2b.planHistory.at(-1).author === 'emperor' && t2b.plan.subtasks.length === 1);
-  await win.click('.court-hud .px-btn:has-text("六部值房")');
+  await win.click('[data-testid=court-scene-liubu]');
   await win.waitForTimeout(1500);
   await shot('10-court-liubu');
-  await win.click('.court-hud .px-btn:has-text("军机处值房")');
+  await win.click('[data-testid=court-scene-junjichu]');
   await win.waitForTimeout(1500);
   await shot('11-court-junjichu');
   const t2c = await waitTask((t) => t.id === t2.id && t.gate?.kind === 'final', 40000);
   ok('Full Court：尚书派发 + 门下审议成果', t2c.nodes.some((n: any) => n.kind === 'dispatch' && n.status === 'done') && t2c.nodes.some((n: any) => n.kind === 'result_review' && n.status === 'done'));
-  await win.click('.court-hud .px-btn:has-text("太和殿")');
+  await win.click('[data-testid=court-scene-taihe]');
   await win.waitForTimeout(1500);
   await win.click('[data-testid=court-gates]');
   await win.waitForSelector('[data-testid=memorial-review]');
@@ -211,7 +211,12 @@ const ok = (step: string, cond: boolean, note?: string) => {
   await win.click('.court-hud .px-btn:has-text("承天门")');
   await win.waitForTimeout(1200);
   await shot('14-court-chengtian');
-  await win.click('.court-hud .px-btn:has-text("上朝")');
+  // the real clock may have opened morning court already (6–9 local): close it first, then call court by hand
+  if ((await win.textContent('[data-testid=court-session]'))?.trim() === '退朝') {
+    await win.click('[data-testid=court-session]');
+    await win.waitForTimeout(800);
+  }
+  await win.click('[data-testid=court-session]');
   await win.waitForTimeout(1800);
   await shot('15-court-ceremony');
   await win.waitForTimeout(4500);

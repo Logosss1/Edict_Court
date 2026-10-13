@@ -1,6 +1,20 @@
 # Release Notes
 
-Release descriptions (English and Chinese) are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
+Release descriptions are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
+
+## 2.0.3
+
+**What's new**
+- **A living palace.** The court runs on your Mac's clock. Morning court opens by itself between 6 and 9; during the day officials work in their own offices, in the evening they leave one by one, and at night the halls are empty. Call court at any time from the court toolbar or with the drum at Chengtian Gate; an idle court ends after a few minutes (3, 5, 10 or 20, your choice).
+- **Ten scenes.** The Hall of Supreme Harmony, the Palace Square, Chengtian Gate, the Privy Council, the Six Ministries Office, the Eastern Palace, the Imperial Garden, the Long Palace Street, the Corner Tower and a palace map you can click to travel. Doors follow the palace layout, and you and the officials walk through them.
+- **The work, acted out.** Officials carry memorials between offices, runners take messages from hall to hall, rejected plans come back stamped, and an official who needs your decision walks to wherever you are and kneels to ask. Officials bow when you pass, and a ministry that is busy is excused from court and keeps working.
+- **Details.** The real phase of the moon, the seasons, festival lanterns and fireworks, a palace cat, and koi you can feed in the garden.
+- **The Crown Prince asks first.** When an edict is ambiguous, the Crown Prince asks one short question with likely answers before the court starts work, then carries on with your answer. Other officials ask in their own voice. You can turn this off in Settings › Permissions & approvals.
+
+**Changes**
+- Decision cards in court mode offer the same choices as in the workbench, including answering an official's question, and they stay in the corner of the window instead of scrolling away.
+
+**Install**: download `Edict-2.0.3-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data is kept when you install over 2.0.x.
 
 ## 2.0.2
 
