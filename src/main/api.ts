@@ -23,6 +23,9 @@ import { addCanon, canonFromReview, projectRules, removeCanon, updateCanon } fro
 import { worktreeCreate, worktreeDiffStat, worktreeFinish, worktreeList, worktreeOnDelete, worktreeOpen, worktreeRemove } from './runtime/worktrees';
 import type { WorktreeAction } from '../shared/types';
 import { backupNow, backupPath, storageInfo } from './runtime/storage';
+import { saveWebSettings, testSearch, webStatus } from './runtime/webTools';
+import type { SandboxSettings, SearchConfig, SearchProviderKind, WebSettings } from '../shared/types';
+import { addSandboxWritable, removeSandboxWritable, sandboxStatus, saveSandboxSettings } from './runtime/sandboxRun';
 
 /** Editor-side LSP calls: a missing / disabled server is a normal answer (with install hints), not an error. */
 async function lspSoft<T>(fn: () => Promise<T>): Promise<{ ok: true; result: T } | { ok: false; reason: string; message: string; candidates: { id: string; name: string; hint: string; homepage: string; note?: string }[] }> {
@@ -110,6 +113,15 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
 
     // ── settings / models
     updateSettings: (patch: Partial<Settings>) => rt.updateSettings(patch),
+    // ── 联网与搜索 (2.1)
+    webStatus: () => webStatus(rt),
+    saveWebSettings: (patch: Partial<WebSettings>, key?: { provider: SearchProviderKind; value: string } | null) => saveWebSettings(rt, patch, key),
+    testSearch: (cfg: SearchConfig | null, key?: string) => testSearch(rt, cfg, key),
+    // ── 命令沙箱 (2.1)
+    sandboxStatus: () => sandboxStatus(rt),
+    saveSandboxSettings: (patch: Partial<SandboxSettings>) => saveSandboxSettings(rt, patch),
+    addSandboxWritable: (root: string, dir: string) => addSandboxWritable(rt, root, dir),
+    removeSandboxWritable: (root: string, dir: string) => removeSandboxWritable(rt, root, dir),
     setAgentModel: (agentId: AgentId, ref: ModelRef | null) => rt.setAgentModel(agentId, ref),
     upsertProvider: (cfg: ProviderConfig, apiKey?: string | null) => rt.upsertProvider(cfg, apiKey),
     deleteProvider: (id: string) => rt.deleteProvider(id),
@@ -213,6 +225,13 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
 
     // ── workspace & editor
     openFolder: () => host.openFolderDialog(),
+    /** choose a folder without opening it as the workspace (e.g. a writable folder for the command sandbox) */
+    pickFolder: async (title?: string) => {
+      const w = host.getWindow();
+      const o = { title: title ?? '选择文件夹', properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] };
+      const r = w ? await dialog.showOpenDialog(w, o) : await dialog.showOpenDialog(o);
+      return r.canceled ? null : (r.filePaths[0] ?? null);
+    },
     setWorkspace: (p: string) => rt.setWorkspace(p),
     tree: (p?: string) => ws().tree(p ?? '.'),
     readFile: (p: string) => ws().read(p),

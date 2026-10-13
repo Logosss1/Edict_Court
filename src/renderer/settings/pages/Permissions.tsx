@@ -9,6 +9,7 @@ import { agentName, TERMINAL } from '../../../shared/court';
 import type { AllowRule, PermissionMode, Settings } from '../../../shared/types';
 import { Badge, Page, Row, Sec, Toggle, Warn } from '../ui';
 import { NumField, baseName, fmtStamp } from './numField';
+import { SandboxSection } from './SandboxSection';
 import './permissions.css';
 
 const MODES: { id: PermissionMode; label: string; icon: string; desc: string; warn?: boolean }[] = [
@@ -43,6 +44,7 @@ interface RuleRow {
 function RuleWhat({ k, label }: { k: string; label: string }) {
   if (k.startsWith('cmd:')) return <><code>{k.slice(4)}</code> 及其参数</>;
   if (k === 'tool:write') return <>写文件（write / edit）</>;
+  if (k.startsWith('web:')) return <>抓取网页 <code>{k.slice(4)}</code></>;
   if (k.startsWith('mcp:')) {
     const [server, tool] = k.slice(4).split('/');
     return <>MCP <code>{server} / {tool}</code></>;
@@ -207,6 +209,8 @@ export function PermissionsPage() {
             </div>
           )}
         </Sec>
+
+        <SandboxSection root={root} />
 
         <Sec
           title="发版与部署"

@@ -8,7 +8,7 @@ export const DESIGN_SCHEMA = 'edict.collab/1';
 export const BUILTIN_DESIGN_ID = 'edict-court';
 
 export type DesignPhase = 'plan' | 'review' | 'dispatch' | 'execute' | 'report' | 'confirm';
-export type StepType = 'agent' | 'plan' | 'review' | 'fanout' | 'summary' | 'gate';
+export type StepType = 'agent' | 'plan' | 'review' | 'fanout' | 'summary' | 'gate' | 'check';
 export type StepOutput = 'text' | 'plan' | 'verdict' | 'conclusion';
 export type ToolAccess = 'none' | 'read' | 'write';
 
@@ -49,8 +49,8 @@ export interface StepSpec {
   inputs?: string[]; // step ids whose latest output is given as context (default: every earlier step)
   parallel?: boolean; // run together with the previous step (same phase)
   output: StepOutput;
-  planStep?: string; // fanout: which plan step's subtasks to execute
-  onReject?: { goto: string; max: number }; // review / gate: where a rejection sends the flow, and the limit
+  planStep?: string; // fanout: which plan step's subtasks to execute; check: whose 需求说明 to check
+  onReject?: { goto: string; max: number }; // review / gate: where a rejection sends the flow, and the limit; check: the fan-out that does make-up subtasks, and how many rounds
   gate?: 'plan' | 'final'; // review: ask the emperor after an approval; gate: kind of human gate
   optional?: boolean; // may be skipped when blocked (Phase 3 self-healing)
   timeoutSec?: number;
@@ -244,7 +244,7 @@ export function validateDesign(input: unknown): ValidationResult & { design?: Co
   steps.forEach((s, i) => {
     if (!s || typeof s !== 'object') return;
     const where = `步骤「${s.label || s.id}」`;
-    if (!['agent', 'plan', 'review', 'fanout', 'summary', 'gate'].includes(s.type)) errors.push(`${where} 类型无效：${s.type}`);
+    if (!['agent', 'plan', 'review', 'fanout', 'summary', 'gate', 'check'].includes(s.type)) errors.push(`${where} 类型无效：${s.type}`);
     if (!PHASE_ORDER.includes(s.phase)) errors.push(`${where} 阶段无效：${s.phase}`);
     const pi = PHASE_ORDER.indexOf(s.phase);
     if (pi < lastPhase) errors.push(`${where} 的阶段（${PHASE_LABEL[s.phase]}）早于前一步——步骤必须按 规划→审议→派发→执行→汇总→确认 的顺序排列（回退请用审议的「封驳回到」）`);
@@ -253,7 +253,7 @@ export function validateDesign(input: unknown): ValidationResult & { design?: Co
       if (!s.role || !roleIds.has(s.role)) errors.push(`${where} 需要指定已存在的执行角色`);
     }
     if (typeof s.instruction !== 'string' || s.instruction.length > 8000) errors.push(`${where} 的说明缺失或过长`);
-    const expectOut: Record<string, StepOutput[]> = { agent: ['text', 'conclusion'], plan: ['plan'], review: ['verdict'], fanout: ['conclusion'], summary: ['text'], gate: ['verdict'] };
+    const expectOut: Record<string, StepOutput[]> = { agent: ['text', 'conclusion'], plan: ['plan'], review: ['verdict'], fanout: ['conclusion'], summary: ['text'], gate: ['verdict'], check: ['text'] };
     if (expectOut[s.type] && !expectOut[s.type].includes(s.output)) errors.push(`${where} 的产出类型应为 ${expectOut[s.type].join(' / ')}`);
     if (s.type === 'plan') {
       planSteps++;
@@ -265,17 +265,23 @@ export function validateDesign(input: unknown): ValidationResult & { design?: Co
       const p = s.planStep ? steps.find((x) => x.id === s.planStep) : undefined;
       if (!p || p.type !== 'plan' || (stepIds.get(p.id) ?? 99) >= i) errors.push(`${where}（分派执行）必须引用它之前的一个规划步骤`);
     }
+    if (s.type === 'check') {
+      const p = s.planStep ? steps.find((x) => x.id === s.planStep) : undefined;
+      if (!p || p.type !== 'plan' || (stepIds.get(p.id) ?? 99) >= i) errors.push(`${where}（对照检查）必须引用它之前的一个规划步骤`);
+      const f = s.onReject ? steps.find((x) => x.id === s.onReject!.goto) : undefined;
+      if (s.onReject && (!f || f.type !== 'fanout' || f.planStep !== s.planStep)) errors.push(`${where} 的补办只能交回执行同一规划的「分派执行」步骤`);
+    }
     for (const inp of s.inputs ?? []) if (!stepIds.has(inp) || stepIds.get(inp)! >= i) errors.push(`${where} 的输入引用了不存在或在其后的步骤：${inp}`);
     if (s.parallel) {
       if (i === 0) errors.push(`${where} 是第一步，不能与上一步并行`);
       else if (steps[i - 1]?.phase !== s.phase) errors.push(`${where} 与上一步并行时必须处于同一阶段`);
-      if (['review', 'gate', 'plan', 'fanout'].includes(s.type)) errors.push(`${where}：${s.type} 类步骤不能并行`);
+      if (['review', 'gate', 'plan', 'fanout', 'check'].includes(s.type)) errors.push(`${where}：${s.type} 类步骤不能并行`);
     }
     if (s.onReject) {
-      if (s.type !== 'review' && s.type !== 'gate') errors.push(`${where}：只有审议 / 关卡步骤可以设置封驳去向`);
+      if (s.type !== 'review' && s.type !== 'gate' && s.type !== 'check') errors.push(`${where}：只有审议 / 关卡 / 对照检查步骤可以设置封驳去向`);
       const t = stepIds.get(s.onReject.goto);
       if (t === undefined || t >= i) errors.push(`${where} 的封驳去向必须是它之前的步骤`);
-      if (!Number.isInteger(s.onReject.max) || s.onReject.max < 0 || s.onReject.max > 10) errors.push(`${where} 的封驳上限应为 0~10`);
+      if (!Number.isInteger(s.onReject.max) || s.onReject.max < 0 || s.onReject.max > 10) errors.push(`${where} 的${s.type === 'check' ? '补办轮数' : '封驳上限'}应为 0~10`);
     } else if (s.type === 'review') errors.push(`${where}（审议）需要设置封驳去向与上限`);
     if (s.gate && !['plan', 'final'].includes(s.gate)) errors.push(`${where} 关卡类型无效`);
     if (s.type === 'gate' && !s.gate) errors.push(`${where}（关卡）需要指定关卡类型`);

@@ -1,6 +1,7 @@
 // Task widgets shared by the workbench and the court overlays (same actions, same data).
 import { useEffect, useState } from 'react';
-import type { MinistryId, ModelRef, Plan, RevertResult, RunNode, Subtask, Task, TaskState } from '../../shared/types';
+import type { MinistryId, ModelRef, Plan, RequirementCheck, Requirements, RevertResult, RunNode, Subtask, Task, TaskState } from '../../shared/types';
+import { VERDICT_LABEL, VERDICT_MARK, normReqId, reqLabel } from '../../shared/requirements';
 import { levelLabel } from '../../shared/reasoning';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL } from '../../shared/court';
 import { call } from '../api';
@@ -104,6 +105,7 @@ export function PlanEditor({ plan, onChange, readOnly, task }: { plan: Plan; onC
     <div className={`plan-editor ${readOnly ? 'ro' : ''}`}>
       <label className="pe-label">方案概述</label>
       <textarea className="input" rows={2} value={plan.summary} readOnly={readOnly} onChange={(e) => set({ summary: e.target.value })} />
+      {plan.requirements && <RequirementsEditor plan={plan} readOnly={readOnly} onChange={(p) => onChange?.(p)} check={task?.requirementChecks?.at(-1)} />}
       <label className="pe-label">子任务（{plan.subtasks.length}）</label>
       {plan.subtasks.map((s, i) => (
         <div key={i} className="pe-sub" style={{ borderLeftColor: roleInfo(task, s.dept).color }}>
@@ -129,6 +131,13 @@ export function PlanEditor({ plan, onChange, readOnly, task }: { plan: Plan; onC
             <span className="muted small">依赖</span>
             <input className="input pe-deps" value={s.dependsOn.join(',')} readOnly={readOnly} onChange={(e) => setSub(i, { dependsOn: e.target.value.split(/[,，\s]+/).filter(Boolean) })} placeholder="S1,S2" />
           </div>
+          {plan.requirements && (
+            <div className="pe-row">
+              <span className="muted small">负责</span>
+              <CoversInput value={s.covers ?? []} readOnly={readOnly} onCommit={(covers) => setSub(i, { covers })} />
+              {s.supplement && <span className="pe-tag">补办</span>}
+            </div>
+          )}
         </div>
       ))}
       {!readOnly && (
@@ -140,6 +149,65 @@ export function PlanEditor({ plan, onChange, readOnly, task }: { plan: Plan; onC
       <textarea className="input" rows={2} value={plan.risks.join('\n')} readOnly={readOnly} onChange={(e) => set({ risks: e.target.value.split('\n').filter(Boolean) })} />
     </div>
   );
+}
+
+/** 需求说明 (2.1): goal, numbered acceptance criteria (with the latest check's verdicts), out of scope, constraints. */
+function RequirementsEditor({ plan, onChange, readOnly, check }: { plan: Plan; onChange: (p: Plan) => void; readOnly?: boolean; check?: RequirementCheck }) {
+  const r = plan.requirements!;
+  // any edit by the emperor makes the 需求说明 his own (no longer derived from the acceptance lines)
+  const setReq = (patch: Partial<Requirements>, subtasks = plan.subtasks) => onChange({ ...plan, subtasks, requirements: { ...r, ...patch, derived: undefined } });
+  const lines = (v: string) => v.split('\n').map((x) => x.trim()).filter(Boolean);
+  const nextId = () => {
+    let n = r.criteria.length + 1;
+    while (r.criteria.some((c) => c.id === `R${n}`)) n++;
+    return `R${n}`;
+  };
+  const verdict = (id: string) => check?.items.find((i) => i.id === id);
+  return (
+    <div className="pe-req" data-testid="plan-requirements">
+      <label className="pe-label">需求说明{r.derived ? <span className="muted"> · 由各子任务的验收标准整理</span> : null}</label>
+      <div className="pe-row"><span className="muted small">目标</span><input className="input" value={r.goal} readOnly={readOnly} onChange={(e) => setReq({ goal: e.target.value })} placeholder="一两句话说清要达成什么" /></div>
+      {r.criteria.map((c, k) => {
+        const v = verdict(c.id);
+        return (
+          <div key={c.id} className="pe-row pe-crit" data-testid={`req-${c.id}`}>
+            <span className="pe-id">{reqLabel(c.id)}</span>
+            <input className="input" value={c.text} readOnly={readOnly} onChange={(e) => setReq({ criteria: r.criteria.map((x, j) => (j === k ? { ...x, text: e.target.value } : x)) })} placeholder="可以核对的验收标准" />
+            {v && (
+              <span className={`pe-verdict ${v.verdict}`} title={[v.evidence && `证据：${v.evidence}`, v.note].filter(Boolean).join('\n') || VERDICT_LABEL[v.verdict]}>
+                {VERDICT_MARK[v.verdict]} {VERDICT_LABEL[v.verdict]}
+              </span>
+            )}
+            {!readOnly && (
+              <button className="icon-btn" title="删去这条" onClick={() => setReq({ criteria: r.criteria.filter((_, j) => j !== k) }, plan.subtasks.map((s) => (s.covers?.includes(c.id) ? { ...s, covers: s.covers.filter((x) => x !== c.id) } : s)))}>
+                <Icon name="trash" size={13} />
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {!readOnly && (
+        <button className="btn sm" onClick={() => setReq({ criteria: [...r.criteria, { id: nextId(), text: '' }] })}>
+          <Icon name="plus" size={12} /> 增补一条验收标准
+        </button>
+      )}
+      {(!readOnly || r.outOfScope.length > 0) && (
+        <div className="pe-row"><span className="muted small">不做</span><textarea className="input" rows={1} value={r.outOfScope.join('\n')} readOnly={readOnly} onChange={(e) => setReq({ outOfScope: lines(e.target.value) })} placeholder="明确不做的事，一行一条" /></div>
+      )}
+      {(!readOnly || r.constraints.length > 0) && (
+        <div className="pe-row"><span className="muted small">约束</span><textarea className="input" rows={1} value={r.constraints.join('\n')} readOnly={readOnly} onChange={(e) => setReq({ constraints: lines(e.target.value) })} placeholder="必须遵守的规矩，一行一条" /></div>
+      )}
+    </div>
+  );
+}
+
+/** 「负责」: the criteria a subtask delivers, typed as 需1,需2 (R1 / 1 also accepted). */
+function CoversInput({ value, onCommit, readOnly }: { value: string[]; onCommit: (v: string[]) => void; readOnly?: boolean }) {
+  const shown = value.map(reqLabel).join(',');
+  const [text, setText] = useState(shown);
+  useEffect(() => setText(shown), [shown]);
+  const commit = () => onCommit([...new Set(text.split(/[,，、\s]+/).map(normReqId).filter((x): x is string => !!x))]);
+  return <input className="input pe-deps" value={text} readOnly={readOnly} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && commit()} placeholder="需1,需2" />;
 }
 
 // ───────── Gate card: 准奏 / 封驳 / 涂改 ─────────

@@ -6,6 +6,7 @@ import { Icon } from '../common/Icon';
 import { fmtAgo } from '../common/format';
 import { useAttention, type AttentionItem } from '../common/attention';
 import { openWorktreeDialog } from './WorktreeDialog';
+import { SearchSetupDialog } from '../settings/pages/Web';
 
 const KIND_ICON: Record<AttentionItem['kind'], string> = {
   write_task: 'edit', question: 'help', approval: 'shield', risk: 'alert', plan: 'scroll', final: 'scroll', decide: 'gate', blocked: 'alert', merge: 'merge',
@@ -30,6 +31,7 @@ async function run(p: Promise<unknown>, ok?: string) {
 /** Inline buttons for one item: the common answers, plus 更多… to open the full card. */
 export function AttnActions({ it }: { it: AttentionItem }) {
   const [busy, setBusy] = useState(false);
+  const [setup, setSetup] = useState(false);
   const go = (p: () => Promise<unknown>, ok?: string) => async () => {
     setBusy(true);
     await run(p(), ok);
@@ -57,6 +59,17 @@ export function AttnActions({ it }: { it: AttentionItem }) {
           {has('merge') && <button className="btn sm primary" onClick={() => openWorktreeDialog(a.taskId!, 'merge')} data-testid="attn-wt-merge">合并</button>}
           {has('keep') && <button className={`btn sm ${has('merge') ? '' : 'primary'}`} disabled={busy} onClick={go(() => call('decideApproval', a.id, true, 'keep'))} data-testid="attn-wt-keep">保留分支</button>}
           {has('discard') && <button className="btn sm" onClick={() => openWorktreeDialog(a.taskId!, 'discard')} data-testid="attn-wt-discard">丢弃</button>}
+        </div>
+      );
+    }
+    // 上疏 for search: 配置 opens the setup; the petition is answered once the service is saved
+    if (a.kind === 'search_setup') {
+      return (
+        <div className="a-act">
+          <button className="btn sm primary" onClick={() => setSetup(true)} data-testid="attn-choice-configure">配置搜索服务</button>
+          {choices.some((c) => c.id === 'fetch_only') && <button className="btn sm" disabled={busy} onClick={go(() => call('decideApproval', a.id, true, 'fetch_only'), '这道旨意只用抓取')} data-testid="attn-choice-fetch_only">只用抓取</button>}
+          {more()}
+          {setup && <SearchSetupDialog onClose={() => setSetup(false)} onSaved={() => { setSetup(false); void run(call('decideApproval', a.id, true, 'configure'), '搜索服务已设好，接着搜索'); }} />}
         </div>
       );
     }

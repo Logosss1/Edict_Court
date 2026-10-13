@@ -28,6 +28,7 @@ import { previewHostFor, taskIdFromPreviewHost } from '../services/preview';
 import type { FetchLike, ProviderRuntime } from '../llm/types';
 import { listRemoteModels, streamLlm } from '../llm/adapters';
 import { PROVIDER_PRESETS } from '../llm/presets';
+import { checklistItems } from '../../shared/requirements';
 
 export interface SecretStore {
   get(id: string): string | null;
@@ -1334,7 +1335,7 @@ export class Runtime {
   // ───────────────────────── recovery ─────────────────────────
   private recoverInterrupted() {
     // nodes that only read or talk can simply run again; anything that may have changed files waits for the emperor
-    const NO_TOOLS_KINDS = ['triage', 'debate', 'plan', 'review', 'dispatch', 'summary', 'result_review'];
+    const NO_TOOLS_KINDS = ['triage', 'debate', 'plan', 'review', 'dispatch', 'summary', 'result_review', 'check'];
     const resumable = (n: RunNode) => this.settings.autoResumeSafe !== false && (n.sideEffects === false || (n.sideEffects === undefined && NO_TOOLS_KINDS.includes(n.kind)));
     for (const t of this.tasks.values()) {
       if (TERMINAL.includes(t.state)) continue;
@@ -1419,6 +1420,9 @@ export function buildMemorial(task: Task): Memorial {
   if (task.skillsUsed?.length) stages.splice(stages.length - 1, 0, { key: 'skills', label: '所用技能', at: task.skillsUsed[0].at, items: task.skillsUsed.map((u) => `${agentName(u.agentId)} 加载 ${u.name}（sha256:${u.sha256.slice(0, 12)}）`) });
   // E1: what the officials asked the emperor, and the answers they worked from
   if (task.questions?.length) stages.splice(stages.length - 1, 0, { key: 'questions', label: '请旨记录', at: task.questions[0].at, items: task.questions.map((q) => `${agentName(q.agentId)} 问：${q.question} —— ${q.answer ? `答：${q.answer}` : '未答复'}`) });
+  // 2.1 需求对照: every acceptance criterion, its verdict and the evidence
+  const checklist = checklistItems(task);
+  if (checklist.length) stages.splice(stages.length - 1, 0, { key: 'requirements', label: '需求对照', at: task.requirementChecks?.at(-1)?.at ?? firstAt(byKind('plan')), items: checklist });
   return {
     taskId: task.id, title: task.title, edict: task.edict, tier: task.tier, finalState: task.state, archivedAt: now(), stages,
     artifacts: task.result?.artifacts ?? [], usage: task.usage,

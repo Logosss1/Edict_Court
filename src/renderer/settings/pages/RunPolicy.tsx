@@ -18,6 +18,7 @@ export function RunPolicyPage() {
   const s = useStore((st) => st.settings);
   const up = (p: Partial<Settings>) => call('updateSettings', p);
   const budgets = s.budgets ?? { solo: 0, lite: 0, full: 0 };
+  const rc = { ...{ lite: true, full: true, maxSupplement: 1 }, ...s.requirementCheck };
   return (
     <Page icon="zap" title="运行策略" lead="每道旨意花多少、走几道审批、几位官员同时开工。预算和封驳上限在下旨时定下，其余改动立即生效。" testid="settings-runtime">
       <div className="runp">
@@ -55,6 +56,18 @@ export function RunPolicyPage() {
           </Row>
           <Row label="回奏须御批结案" desc="尚书省回奏后由你确认才结案；关掉则回奏后自动结案">
             <Toggle on={!!s.finalGate} onChange={(v) => void up({ finalGate: v })} label="回奏须御批结案" testid="final-gate" />
+          </Row>
+        </Sec>
+
+        <Sec title="需求对照" note="· 中书省先写需求说明，六部做完后门下省逐条检查，满足的要有证据">
+          <Row label="Full Court：需求说明与对照检查" desc="规划时列出目标、不做的事和逐条验收标准；执行完对照检查，没做到的交回原部补办">
+            <Toggle on={s.requirementCheck?.full !== false} onChange={(v) => void up({ requirementCheck: { ...rc, full: v } })} label="Full Court 需求说明与对照检查" testid="req-check-full" />
+          </Row>
+          <Row label="Court Lite：需求说明与对照检查" desc="多一次规划内容和一次检查，会多花一些 token">
+            <Toggle on={s.requirementCheck?.lite !== false} onChange={(v) => void up({ requirementCheck: { ...rc, lite: v } })} label="Court Lite 需求说明与对照检查" testid="req-check-lite" />
+          </Row>
+          <Row label="补办轮数" desc="检查出没做到的需求，最多交回补办几轮（0–3）；补完仍没做到的，御批时标为成果存疑">
+            <NumField value={rc.maxSupplement} min={0} max={3} unit="轮" label="补办轮数" testid="req-check-rounds" onCommit={(v) => void up({ requirementCheck: { ...rc, maxSupplement: v } })} />
           </Row>
         </Sec>
 

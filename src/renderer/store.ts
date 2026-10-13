@@ -6,7 +6,7 @@ import { call } from './api';
 
 export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help' | 'settings';
 /** 设置中心 pages (one editor tab, left nav) */
-export type SettingsSection = 'appearance' | 'storage' | 'providers' | 'routing' | 'runtime' | 'permissions' | 'canon' | 'mcp' | 'skills' | 'lsp' | 'acp' | 'worktrees' | 'audit' | 'help';
+export type SettingsSection = 'appearance' | 'storage' | 'providers' | 'routing' | 'runtime' | 'permissions' | 'canon' | 'web' | 'mcp' | 'skills' | 'lsp' | 'acp' | 'worktrees' | 'audit' | 'help';
 export type CourtScene = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian' | 'donggong' | 'yuhuayuan' | 'gongdao' | 'jiaolou' | 'yutu';
 
 export interface Tab {
@@ -312,7 +312,7 @@ export function openTab(tab: Tab) {
 }
 
 export const SETTINGS_TITLE: Record<SettingsSection, string> = {
-  appearance: '外观与通知', storage: '存储与备份', providers: '模型服务', routing: '官员模型与路由', runtime: '运行策略', permissions: '权限与审批', canon: '典章',
+  appearance: '外观与通知', storage: '存储与备份', providers: '模型服务', routing: '官员模型与路由', runtime: '运行策略', permissions: '权限与审批', canon: '典章', web: '联网与搜索',
   mcp: '连接服务', skills: '技能', lsp: '语言服务', acp: '编辑器接入', worktrees: '工作树', audit: '审计日志', help: '使用说明',
 };
 

@@ -178,6 +178,11 @@
 .sub-row .st.bad { color: var(--danger); }
 .sub-row .st.muted { color: var(--muted); }
 .sub-row .st.live { color: var(--blue); }
+.plan-card .pc-req { border-top: 1px dashed var(--line); border-bottom: 1px dashed var(--line); padding: 3px 0; margin: 2px 0; }
+.plan-card .pc-req-h { display: flex; gap: 6px; align-items: center; font-size: 11.5px; }
+.plan-card .pc-req-h .muted { margin-left: auto; font-size: 11px; }
+.plan-card .pc-req-h .bad { color: var(--danger); }
+.plan-card .pc-req .sub-row { padding-left: 14px; }
 .sub-row .st.live::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 4px; vertical-align: 1px; animation: pulse 1.4s ease-in-out infinite; }
 .act.verdict { display: flex; gap: 6px; align-items: flex-start; font-size: 12px; padding: 5px 9px; border-radius: 7px; line-height: 1.45; }
 .act.verdict > svg { flex: none; margin-top: 2px; }

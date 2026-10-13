@@ -6,6 +6,7 @@ import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { agentName } from '../../shared/court';
 import { openWorktreeDialog } from './WorktreeDialog';
+import { SearchSetupDialog } from '../settings/pages/Web';
 import type { ApprovalChoice, ApprovalRequest } from '../../shared/types';
 
 const KIND_HEAD: Record<string, { icon: string; label: string }> = {
@@ -14,6 +15,9 @@ const KIND_HEAD: Record<string, { icon: string; label: string }> = {
   escalate: { icon: 'key', label: '请求加权限' },
   loop: { icon: 'refresh', label: '疑似重复操作' },
   worktree: { icon: 'merge', label: '结案 · 工作树如何处理' },
+  search_setup: { icon: 'globe', label: '官员上疏 · 需要联网搜索' },
+  web_domain: { icon: 'globe', label: '抓取网页 · 新网站' },
+  sandbox: { icon: 'lock', label: '命令被沙箱拦下' },
 };
 /** 太子追问: the prince's one question at triage (he is not an official) */
 const PRINCE_HEAD = { icon: 'help', label: '太子请旨' };
@@ -72,6 +76,7 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
   const [sel, setSel] = useState(0);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
+  const [setup, setSetup] = useState(false);
   const noteRef = useRef<HTMLInputElement>(null);
   const node = useStore((s) => (a.taskId && a.nodeId ? s.tasks.find((t) => t.id === a.taskId)?.nodes.find((n) => n.id === a.nodeId) : undefined));
   const c = choices[sel];
@@ -79,9 +84,15 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
   const kindHead = a.kind === 'question' && a.agentId === 'taizi' ? PRINCE_HEAD : KIND_HEAD[a.kind ?? ''];
   const head = a.risk === 'high' && a.kind !== 'question' ? { icon: 'alert', label: '高风险操作 · 须皇上确认' } : kindHead ?? { icon: 'shield', label: '操作待批准' };
 
-  const decide = async (i = sel) => {
+  const decide = async (i = sel, configured = false) => {
     const ch = choices[i];
     if (!ch || busy) return;
+    // 上疏 for search: 「配置搜索服务」 first opens the setup; the card is answered once it is saved
+    if (a.kind === 'search_setup' && ch.id === 'configure' && !configured) {
+      setSel(i);
+      setSetup(true);
+      return;
+    }
     if (ch.comment === 'required' && !note.trim()) {
       setSel(i);
       noteRef.current?.focus();
@@ -98,9 +109,10 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
   const decideRef = useRef(decide);
   decideRef.current = decide;
 
-  // keyboard: 1–9 pick, ⏎ confirm, Esc deny — only for the first card, and not while typing elsewhere
+  // keyboard: 1–9 pick, ⏎ confirm, Esc deny — only for the first card, not while typing elsewhere, and not while
+  // the search setup is open over it (Esc there closes the setup, it does not deny)
   useEffect(() => {
-    if (!active) return;
+    if (!active || setup) return;
     const onKey = (e: KeyboardEvent) => {
       const el = document.activeElement as HTMLElement | null;
       const inNote = el === noteRef.current;
@@ -125,7 +137,7 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [active, choices]);
+  }, [active, choices, setup]);
 
   return (
     <div className={`choice-card ${a.risk === 'high' ? 'high' : ''} kind-${a.kind ?? 'action'}`} data-ap-id={a.id} data-testid="choice-card">
@@ -135,6 +147,7 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
       </div>
       <div className="cc-t">{a.summary}</div>
       {a.detail && <Detail text={a.detail} />}
+      {setup && <SearchSetupDialog onClose={() => setSetup(false)} onSaved={() => { setSetup(false); void decide(choices.findIndex((x) => x.id === 'configure'), true); }} />}
       {a.kind === 'worktree' && a.taskId && <button className="link small cc-more" onClick={() => openWorktreeDialog(a.taskId!)} data-testid="cc-worktree-open">查看改动明细与提交说明…</button>}
       {a.reason && a.kind !== 'question' && !a.summary.includes(a.reason) && <div className="cc-why muted">{a.reason}</div>}
       <div className="cc-opts" role="radiogroup" aria-label="选择">

@@ -7,6 +7,7 @@ import electronBinary from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import http from 'node:http';
 import { startMockLlm, defaultBrain } from '../tests/mockLlm';
 
 const SHOTS = process.env.SHOTS ?? path.resolve('docs/screenshots');
@@ -28,6 +29,8 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
       if (c.system.includes('独相') && c.lastUser.includes('PREVIEWTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'index.html', wait_ms: 300 } }] };
       if (c.system.includes('独相') && c.lastUser.includes('MCPTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'mcp__demo__echo', args: { text: '朕知道了' } }] };
       if (c.system.includes('独相') && c.lastUser.includes('PREVIEWACT') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'click.html', actions: [{ fill: '#name', value: '魏征' }, { click: '#go' }, { assertText: '已点名：李靖', timeoutMs: 300 }] } }] };
+      if (c.system.includes('独相') && c.lastUser.includes('SEARCHTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'web_search', args: { query: 'Electron 最新版本' } }] };
+      if (c.system.includes('独相') && c.lastUser.includes('SEARCHTEST')) return { text: '查到了：Electron 的发布页列出了最新版本。' };
       if (c.system.includes('独相') && (c.lastUser.includes('PREVIEWTEST') || c.lastUser.includes('MCPTEST') || c.lastUser.includes('PREVIEWACT'))) return { text: '已验证。' };
       return base(c);
     },
@@ -636,6 +639,71 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     ok('合并后主工作区有旨意提交和合并提交，工作树目录已清理', log.includes('实现 greet（e2e）') && !!done.worktree.mergeCommit && fs.existsSync(path.join(repo, 'greet.js')) && !fs.existsSync(t.worktree.path), log.replace(/\n/g, ' | '));
     await inv('setWorkspace', ws);
     await win.waitForTimeout(400);
+  }
+
+  if (want('v21')) {
+    // 2.1 联网: an official needs search and none is set → 上疏 card → setup dialog right on the card → the search runs
+    const sx = http.createServer((_q, res) => {
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ results: [{ title: 'Electron Releases', url: 'https://releases.electronjs.org/', content: '每个版本的发布说明' }] }));
+    });
+    await new Promise<void>((r) => sx.listen(0, '127.0.0.1', () => r()));
+    const sxUrl = `http://127.0.0.1:${(sx.address() as { port: number }).port}`;
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: null, composerHidden: false }));
+    const r: any = await inv('submit', { text: 'SEARCHTEST 查一下 Electron 最新版本', tier: 'solo', multiAgent: false });
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ selectedTaskId: id }), r.taskId);
+    await win.waitForSelector('[data-testid=choice-card]:has-text("上疏")', { timeout: 20000 });
+    await shot('70-search-petition');
+    const opts = await win.$$eval('[data-testid=choice-card] [data-testid^=ap-opt-]', (els) => els.map((e) => e.getAttribute('data-testid')));
+    ok('官员要搜索而没设搜索服务时上疏：配置 / 只用抓取 / 驳回', ['ap-opt-configure', 'ap-opt-fetch_only', 'ap-opt-deny'].every((x) => opts.includes(x)), opts.join(','));
+    await win.click('[data-testid=choice-card] [data-testid=ap-opt-configure]');
+    await win.click('[data-testid=choice-card] [data-testid=ap-confirm]');
+    await win.waitForSelector('[data-testid=search-setup-dialog]');
+    await win.click('[data-testid=search-setup-dialog] [data-testid=search-prov-searxng]');
+    await win.fill('[data-testid=search-setup-dialog] [data-testid=search-url]', sxUrl);
+    await win.click('[data-testid=search-setup-dialog] [data-testid=search-test]');
+    await win.waitForSelector('[data-testid=search-setup-dialog] [data-testid=search-test-result]');
+    const tr = (await win.textContent('[data-testid=search-setup-dialog] [data-testid=search-test-result]')) ?? '';
+    ok('上疏卡片里的搜索设置可以先测试', tr.includes('可以用'), tr.slice(0, 60));
+    await shot('71-search-setup-dialog');
+    await win.click('[data-testid=search-setup-dialog] [data-testid=search-save]');
+    const done = await waitTask((x) => x.id === r.taskId && (x.state === 'Done' || x.gate?.kind === 'final' || x.state === 'Blocked'), 30000);
+    const ws21: any = await inv('webStatus');
+    const searched = ((await inv('auditList', r.taskId)) as any[]).some((e: any) => e.action === 'web_search' && e.detail?.ok === true && e.detail?.hits === 1);
+    ok('存好的搜索服务进了设置，这次搜索接着执行', ws21.searchReady && ws21.web.search?.provider === 'searxng' && done.state !== 'Blocked' && searched, `${done.state} ${ws21.web.search?.provider} searched=${searched}`);
+    sx.close();
+
+    // settings pages
+    await win.evaluate(() => (window as any).__openSettings('web'));
+    await win.waitForSelector('[data-testid=search-form]');
+    ok('「联网与搜索」页：抓取默认允许，当前搜索服务标为在用', (await win.getAttribute('[data-testid=web-fetch-allow]', 'aria-checked')) === 'true' && ((await win.textContent('[data-testid=search-prov-searxng]')) ?? '').includes('在用'));
+    await shot('72-settings-web');
+    await win.evaluate(() => (window as any).__openSettings('permissions'));
+    await win.waitForSelector('text=命令沙箱');
+    await win.locator('text=命令沙箱').first().scrollIntoViewIfNeeded();
+    await shot('73-settings-sandbox');
+    ok('「权限与审批」页有命令沙箱一节', await win.locator('[data-testid=sandbox-reset]').count() > 0 || (await win.textContent('body'))!.includes('命令沙箱'));
+    await win.evaluate(() => (window as any).__openSettings('runtime'));
+    await win.waitForSelector('[data-testid=req-check-lite]');
+    await win.locator('[data-testid=req-check-lite]').scrollIntoViewIfNeeded();
+    await shot('74-settings-requirements');
+    ok('「运行策略」页有需求对照的开关与补办轮数', await win.locator('[data-testid=req-check-full]').count() === 1 && await win.locator('[data-testid=req-check-rounds]').count() === 1);
+
+    // 需求说明 on the plan card, check verdicts, checklist in the memorial
+    const e: any = await inv('submit', { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true, forceEdict: true });
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ selectedTaskId: id }), e.taskId);
+    const te = await waitTask((x) => x.id === e.taskId && (x.state === 'Done' || x.gate || x.state === 'Blocked'), 40000);
+    ok('Court Lite：需求说明写进方案，对照检查逐条有证据', !!te.plan?.requirements?.criteria?.length && te.requirementChecks?.at(-1)?.items.every((i: any) => i.verdict === 'met' && i.evidence), JSON.stringify(te.requirementChecks?.at(-1)?.items?.map((i: any) => i.verdict)));
+    await win.waitForSelector('[data-testid=plan-card]', { timeout: 10000 });
+    if (!(await win.locator('[data-testid=plan-req]').count())) await win.click('[data-testid=plan-card] .h');
+    await win.waitForSelector('[data-testid=plan-req]', { timeout: 5000 }).catch(() => null);
+    if (await win.locator('[data-testid=plan-req] .pc-req-h').count()) await win.click('[data-testid=plan-req] .pc-req-h');
+    await win.waitForTimeout(300);
+    const pr = (await win.textContent('[data-testid=plan-req]').catch(() => '')) ?? '';
+    ok('方案卡列出需求与对照结果', pr.includes('需1') && pr.includes('满足'), pr.slice(0, 80));
+    await shot('75-plan-card-requirements');
+    if (te.state === 'Done') ok('奏折里有「需求对照」', ((await inv('memorialMarkdown', e.taskId)) as string).includes('需求对照'));
   }
 
   const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json', 'edict.db', 'edict.db-wal'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));

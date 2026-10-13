@@ -5,6 +5,7 @@ import { Icon } from '../common/Icon';
 import { AGENT_MAP, TERMINAL } from '../../shared/court';
 import type { RunNode, SubtaskEffect, Task } from '../../shared/types';
 import { verdictOf } from './ActivityStream';
+import { VERDICT_LABEL, VERDICT_MARK, checkTally, coverage, reqLabel } from '../../shared/requirements';
 
 const EFFECT: Record<SubtaskEffect, { label: string; cls: string; tip: string }> = {
   read: { label: '只读', cls: '', tip: '只读文件与分析，和其他只读子任务并行' },
@@ -57,15 +58,52 @@ export function PlanCard({ task }: { task: Task }) {
       {shown && (
         <>
           {plan.summary && <div className="pc-sum muted">{plan.summary}</div>}
+          {plan.requirements && <RequirementRows task={task} />}
           {rows.map(({ s, st }) => {
             const eff = EFFECT[s.effect ?? 'read'];
             return (
               <div key={s.id} className="sub-row" data-testid={`plan-sub-${s.id}`}>
                 <code className="sid">{s.id}</code>
-                <span className="ellipsis st-title" title={`${s.title}\n${s.detail}`}>{s.title}</span>
+                <span className="ellipsis st-title" title={`${s.title}\n${s.detail}${s.covers?.length ? `\n负责：${s.covers.map(reqLabel).join('、')}` : ''}`}>{s.title}</span>
                 <span className={`eff ${eff.cls}`} title={eff.tip}>{eff.label}</span>
                 <span className="muted dept">{AGENT_MAP[s.dept]?.name}</span>
                 <span className={`st ${st.cls}`}>{st.text}</span>
+              </div>
+            );
+          })}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** 需求说明 rows: each criterion, who delivers it, and the latest 对照检查 verdict with its evidence. */
+function RequirementRows({ task }: { task: Task }) {
+  const [open, setOpen] = useState(false);
+  const plan = task.plan!;
+  const chk = task.requirementChecks?.at(-1);
+  const k = chk ? checkTally(chk) : null;
+  const cov = coverage(plan);
+  return (
+    <div className="pc-req" data-testid="plan-req">
+      <div className="pc-req-h clickable" onClick={() => setOpen(!open)}>
+        <Icon name={open ? 'chevronDown' : 'chevronRight'} size={10} />
+        需求说明 · {cov.length} 条
+        <span className={`muted ${k?.unmet ? 'bad' : ''}`}>
+          {k ? `对照检查${chk!.round > 1 ? `第 ${chk!.round} 轮` : ''}：满足 ${k.met}/${k.total}${k.unmet ? `，未满足 ${k.unmet}` : ''}${k.unknown ? `，无法判断 ${k.unknown}` : ''}` : '待对照检查'}
+        </span>
+      </div>
+      {open && (
+        <>
+          {plan.requirements!.goal && <div className="pc-sum muted">目标：{plan.requirements!.goal}</div>}
+          {cov.map((c) => {
+            const v = chk?.items.find((i) => i.id === c.id);
+            return (
+              <div key={c.id} className="sub-row" data-testid={`plan-req-${c.id}`}>
+                <code className="sid">{reqLabel(c.id)}</code>
+                <span className="ellipsis st-title" title={[c.text, v?.evidence && `证据：${v.evidence}`, v?.note].filter(Boolean).join('\n')}>{c.text}</span>
+                <span className="muted dept">{c.by.join('、') || '无人负责'}</span>
+                <span className={`st ${v ? (v.verdict === 'met' ? 'ok' : v.verdict === 'unmet' ? 'bad' : 'muted') : 'muted'}`}>{v ? `${VERDICT_MARK[v.verdict]} ${VERDICT_LABEL[v.verdict]}` : '—'}</span>
               </div>
             );
           })}

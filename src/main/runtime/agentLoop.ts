@@ -9,6 +9,7 @@ import { streamLlm } from '../llm/adapters';
 import { SOULS } from './souls';
 import { executeTool, describeToolCall, TOOL_SPECS, type ToolName } from './tools';
 import { mcpResourceToolSpecsFor } from '../mcp/resourceTools';
+import { webToolEnabled } from './webTools';
 import { skillRole } from '../../shared/skills';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { estimateTokens, sleep, truncate, uid, redactSecrets } from './util';
@@ -293,7 +294,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
     }
   };
   // built-in tools + MCP tools granted to this agent (read-only toolsets only see MCP tools marked read)
-  const tools = o.tools?.length ? [...o.tools.map((t) => TOOL_SPECS[t]), ...rt.mcp.toolSpecsFor(agentId, !o.tools.includes('write_file')), ...mcpResourceToolSpecsFor(rt, agentId)] : undefined;
+  const tools = o.tools?.length ? [...o.tools.filter((t) => webToolEnabled(rt, t)).map((t) => TOOL_SPECS[t]), ...rt.mcp.toolSpecsFor(agentId, !o.tools.includes('write_file')), ...mcpResourceToolSpecsFor(rt, agentId)] : undefined;
   let messages: LlmMessage[] = [...(o.history ?? []), { role: 'user', content: o.prompt }];
   const maxSteps = o.maxSteps ?? (tools ? 24 : 1);
   const signal = o.signal ?? (task ? rt.signalFor(task.id, node?.id) : undefined);
@@ -398,7 +399,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
 }
 
 /** Built-in tools that only read: consecutive calls to these run concurrently within one step. */
-const PARALLEL_SAFE = new Set<string>(['list_dir', 'read_file', 'search', 'outline', 'load_skill', 'view_changes', 'lsp', 'mcp_list_resources', 'mcp_read_resource']);
+const PARALLEL_SAFE = new Set<string>(['list_dir', 'read_file', 'search', 'outline', 'load_skill', 'view_changes', 'lsp', 'mcp_list_resources', 'mcp_read_resource', 'web_fetch']);
 
 /** Split one step's tool calls into batches: runs of read-only built-ins together, everything else alone, order kept. */
 export function toolBatches<T extends { name: string }>(calls: T[]): T[][] {

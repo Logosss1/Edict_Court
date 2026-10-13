@@ -330,6 +330,14 @@ select.input { padding: 4px 6px; }
 .pe-id { font: 600 11px var(--mono); color: var(--gold); width: 26px; }
 .pe-deps { width: 90px !important; }
 .plan-editor.ro .input { border-color: transparent; background: transparent; resize: none; }
+.pe-req { display: flex; flex-direction: column; gap: 4px; border: 1px dashed var(--line); border-radius: 6px; padding: 6px; }
+.pe-req .pe-row > .muted.small { width: 26px; flex: none; }
+.pe-crit .pe-id { width: 30px; }
+.pe-verdict { flex: none; font-size: 11px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--line); white-space: nowrap; cursor: default; }
+.pe-verdict.met { color: var(--ok, #3a9a5b); }
+.pe-verdict.unmet { color: var(--danger, #d2453b); border-color: currentColor; }
+.pe-verdict.unknown { color: var(--muted); }
+.pe-tag { flex: none; font-size: 10px; padding: 0 5px; border-radius: 6px; background: var(--gold); color: var(--bg); }
 .changes-list { display: flex; flex-direction: column; gap: 3px; }
 .change-row { display: flex; align-items: center; gap: 6px; font-size: 12px; }
 .change-row.reverted { opacity: .45; text-decoration: line-through; }

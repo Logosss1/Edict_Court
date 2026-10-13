@@ -82,6 +82,10 @@ export interface Subtask {
   dependsOn: string[];
   /** missing = read */
   effect?: SubtaskEffect;
+  /** 需求说明: ids of the acceptance criteria this subtask delivers */
+  covers?: string[];
+  /** added by the requirement check to make up an unmet requirement */
+  supplement?: boolean;
 }
 
 /** What the emperor granted one exec node: write (normal permission mode), write_free (no asks except high risk), readonly. */
@@ -91,6 +95,33 @@ export interface Plan {
   summary: string;
   subtasks: Subtask[];
   risks: string[];
+  /** 需求说明 (2.1): written by 中书省 before the subtasks; absent on older plans */
+  requirements?: Requirements;
+}
+
+/** One numbered acceptance criterion of the 需求说明 (ids R1, R2 … shown as 需1, 需2 …). */
+export interface Requirement {
+  id: string;
+  text: string;
+}
+export interface Requirements {
+  goal: string;
+  outOfScope: string[];
+  criteria: Requirement[];
+  constraints: string[];
+  /** the planner gave none: criteria were taken from the subtasks' acceptance lines */
+  derived?: boolean;
+}
+
+export type RequirementVerdict = 'met' | 'unmet' | 'unknown';
+/** 对照检查: every criterion judged against the recorded evidence after the ministries finish. */
+export interface RequirementCheck {
+  round: number;
+  at: number;
+  nodeId: string;
+  items: { id: string; text: string; verdict: RequirementVerdict; evidence: string; note?: string }[];
+  /** make-up subtasks this check added */
+  supplements: string[];
 }
 
 export interface PlanVersion {
@@ -121,6 +152,7 @@ export type NodeKind =
   | 'exec'
   | 'summary'
   | 'result_review'
+  | 'check'
   | 'solo'
   | 'step';
 
@@ -262,6 +294,10 @@ export interface Task {
   skillsUsed?: SkillUse[]; // load_skill calls during this edict
   canonUsed?: string[]; // 典章 entries injected into this edict's prompts
   questions?: EdictQuestion[]; // 请旨 (ask_emperor) asked during this edict
+  /** 联网: the emperor chose 「只用抓取」 or declined setting up search for this edict (asked once per edict) */
+  webSearchDeclined?: boolean;
+  /** 需求对照检查 results, newest last */
+  requirementChecks?: RequirementCheck[];
   execRound?: number; // 1 = first execution; >1 = rework rounds
   rework?: { round: number; targets: string[]; feedback: string; by: 'menxia' | 'emperor' };
 }
@@ -362,7 +398,7 @@ export interface Activity {
   streaming?: boolean;
 }
 
-export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree';
+export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree' | 'search_setup' | 'sandbox' | 'web_domain';
 
 export interface EdictQuestion {
   id: string;
@@ -423,6 +459,8 @@ export interface WorkspacePerms {
   rules: AllowRule[];
   /** release / deploy commands (git push, npm publish, deploy CLIs) run without asking in this workspace */
   releaseAlways?: boolean;
+  /** 命令沙箱: extra folders commands in this workspace may write */
+  sandboxWritable?: string[];
 }
 
 export interface DebateMessage {
@@ -471,7 +509,7 @@ export interface Session {
 }
 
 export interface MemorialStage {
-  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'questions' | 'skills' | 'report';
+  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'questions' | 'skills' | 'requirements' | 'report';
   label: string;
   at?: number;
   items: string[];
@@ -662,9 +700,51 @@ export interface Settings {
   worktreePerEdict: boolean;
   /** desktop notifications (window not focused): all · only what needs the emperor · none */
   notify: NotifyPref;
+  /** 联网: web_fetch policy and the search service officials use */
+  web: WebSettings;
+  /** 命令沙箱: officials' commands run under macOS sandbox-exec */
+  sandbox: SandboxSettings;
+  /** 需求说明与对照检查, per tier; maxSupplement = rounds of make-up subtasks for unmet requirements */
+  requirementCheck: { lite: boolean; full: boolean; maxSupplement: number };
 }
 
 export type NotifyPref = 'all' | 'attention' | 'off';
+
+/** 联网 (2.1): web_fetch is on by default; web_search works once a search service is set. */
+export type WebFetchPolicy = 'allow' | 'ask' | 'off';
+export type SearchProviderKind = 'brave' | 'tavily' | 'searxng' | 'model';
+export interface SearchConfig {
+  provider: SearchProviderKind;
+  /** SearXNG base URL */
+  url?: string;
+  /** 模型自带搜索: which configured model searches */
+  model?: ModelRef;
+}
+export interface WebSettings {
+  fetch: WebFetchPolicy;
+  search: SearchConfig | null;
+  /** fetch = 'ask': domains the emperor allowed permanently */
+  domains: string[];
+}
+/** What the renderer may know about the search setup (never the keys themselves). */
+export interface WebStatus {
+  web: WebSettings;
+  hasKey: Record<SearchProviderKind, boolean>;
+  /** a search service is chosen and has what it needs */
+  searchReady: boolean;
+}
+
+/** 命令沙箱 (2.1): what officials' commands may write and read; network on by default. */
+export interface SandboxSettings {
+  enabled: boolean;
+  network: boolean;
+  /** extra writable folders for every workspace (besides the workspace, temp and package caches) */
+  writable: string[];
+  /** package-manager caches that stay writable (editable) */
+  caches: string[];
+  /** folders commands may not read */
+  denyRead: string[];
+}
 
 /** 存储与备份: where the data lives and the copies made of it. */
 export interface StorageBackup {

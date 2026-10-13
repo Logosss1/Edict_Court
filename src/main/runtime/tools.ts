@@ -4,7 +4,7 @@ import type { AgentId, ApprovalChoice, FileChange, PermissionMode, PreviewResult
 import type { ToolSpec } from '../llm/types';
 import type { Runtime } from './runtime';
 import { allowedByRules, classifyCommand, decide, effectiveMode, isLookCommand, PERMISSION_LABEL, ruleFor, type RiskVerdict, type ToolClass } from './permissions';
-import { runCommand } from '../services/exec';
+import { runOfficialCommand } from './sandboxRun';
 import { sha256, truncate } from './util';
 import { PathBoundaryError, type Workspace } from '../services/workspace';
 import { OVERSIZE, type ShadowChange } from '../services/shadowSnapshot';
@@ -14,11 +14,12 @@ import { executeMcpResourceTool, isMcpResourceTool } from '../mcp/resourceTools'
 import { skillRole } from '../../shared/skills';
 import { LSP_TOOL_SPEC, describeLspCall, runLspTool } from '../lsp/tool';
 import { ASK_EMPEROR_SPEC, askEmperor } from './askEmperor';
+import { WEB_FETCH_SPEC, WEB_SEARCH_SPEC, webFetchTool, webSearchTool } from './webTools';
 
-export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'lsp' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page' | 'ask_emperor';
+export type ToolName = 'list_dir' | 'read_file' | 'search' | 'outline' | 'lsp' | 'write_file' | 'edit_file' | 'delete_file' | 'run_command' | 'load_skill' | 'view_changes' | 'preview_page' | 'ask_emperor' | 'web_fetch' | 'web_search';
 
-export const READ_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'load_skill'];
-export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page', 'ask_emperor'];
+export const READ_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'load_skill', 'web_fetch', 'web_search'];
+export const ALL_TOOLS: ToolName[] = ['list_dir', 'read_file', 'search', 'outline', 'lsp', 'write_file', 'edit_file', 'delete_file', 'run_command', 'load_skill', 'preview_page', 'ask_emperor', 'web_fetch', 'web_search'];
 
 const S = (props: Record<string, unknown>, required: string[]) => ({ type: 'object', properties: props, required, additionalProperties: false });
 
@@ -74,12 +75,14 @@ export const TOOL_SPECS: Record<ToolName, ToolSpec> = {
   },
   lsp: LSP_TOOL_SPEC,
   ask_emperor: ASK_EMPEROR_SPEC,
+  web_fetch: WEB_FETCH_SPEC,
+  web_search: WEB_SEARCH_SPEC,
   view_changes: { name: 'view_changes', description: '查看本旨意迄今所有文件改动（统一 diff 摘要，系统记录，非 Agent 自述）', parameters: S({ path: { type: 'string', description: '可选：只看某文件' } }, []) },
 };
 
 const CLASS: Record<ToolName, ToolClass> = {
   list_dir: 'read', read_file: 'read', search: 'read', outline: 'read', lsp: 'read', load_skill: 'meta', view_changes: 'meta', ask_emperor: 'meta',
-  write_file: 'write', edit_file: 'write', delete_file: 'write', run_command: 'command', preview_page: 'read',
+  write_file: 'write', edit_file: 'write', delete_file: 'write', run_command: 'command', preview_page: 'read', web_fetch: 'read', web_search: 'read',
 };
 
 export interface ToolContext {
@@ -205,6 +208,8 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
 
   if (tool === 'preview_page') return previewPage(ctx, args);
   if (tool === 'ask_emperor') return askEmperor(ctx, args);
+  if (tool === 'web_fetch') return webFetchTool(ctx, args);
+  if (tool === 'web_search') return webSearchTool(ctx, args);
 
   // an edict works in its own worktree (or the workspace it was submitted on); chat in the open workspace
   const ws = rt.workspaceFor(task);
@@ -336,7 +341,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
       case 'run_command': {
         const cmd = str('command');
         const timeout = Math.min(600, Math.max(5, Number(args.timeout_sec) || 120)) * 1000;
-        const exec = () => runCommand(cmd, ws.root, { timeoutMs: timeout, signal: ctx.signal });
+        const exec = () => runOfficialCommand(ctx, cmd, ws.root, timeout);
         // R7: a command that may change files runs between two shadow snapshots; what differs is recorded like a
         // file-tool change (revertable). The edict's write lock is held here, so its own writes never interleave.
         const track = rt.settings.commandSnapshots !== false && !isLookCommand(cmd);
@@ -352,7 +357,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
           const big = rec.oversize ? `；其中 ${rec.oversize} 个超过 ${fmtSize(rt.snapshots.limits.maxFileBytes)}，只记了文件名，不能撤回` : '';
           note = `（命令改动了 ${rec.count} 个文件，已记录，可撤回${big}${s.truncated ? `；实际改动 ${s.total} 个，只记录了前 ${rec.count} 个` : ''}）`;
         }
-        const out = [`$ ${cmd}`, `exit=${r.exitCode}${r.timedOut ? '（超时被终止）' : ''} · ${r.durationMs}ms`, r.stdout && `stdout:\n${truncate(r.stdout, 8000)}`, r.stderr && `stderr:\n${truncate(r.stderr, 4000)}`, note].filter(Boolean).join('\n');
+        const out = [`$ ${cmd}`, `exit=${r.exitCode}${r.timedOut ? '（超时被终止）' : ''} · ${r.durationMs}ms`, r.stdout && `stdout:\n${truncate(r.stdout, 8000)}`, r.stderr && `stderr:\n${truncate(r.stderr, 4000)}`, r.sandboxNote, note].filter(Boolean).join('\n');
         return { ok: r.exitCode === 0 && !r.timedOut, output: out };
       }
     }
@@ -471,6 +476,10 @@ export const describeToolCall = (name: string, args: Record<string, unknown>): s
     }
     case 'ask_emperor':
       return `请旨：${String(args.question ?? '').slice(0, 80)}`;
+    case 'web_fetch':
+      return `抓取网页 ${String(args.url ?? '').slice(0, 120)}`;
+    case 'web_search':
+      return `联网搜索 “${String(args.query ?? '').slice(0, 80)}”`;
     case 'mcp_list_resources':
       return '列出 MCP 资源';
     case 'mcp_read_resource':

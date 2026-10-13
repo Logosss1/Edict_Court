@@ -20,7 +20,7 @@ export function endpointFor(p: ProviderRuntime): string {
   }
 }
 
-function headersFor(p: ProviderRuntime): Record<string, string> {
+export function headersFor(p: ProviderRuntime): Record<string, string> {
   const h: Record<string, string> = { 'content-type': 'application/json', accept: 'text/event-stream' };
   if (p.config.protocol === 'anthropic-messages') {
     if (p.apiKey) h['x-api-key'] = p.apiKey;

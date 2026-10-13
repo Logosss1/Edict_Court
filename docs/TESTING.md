@@ -12,7 +12,7 @@ xvfb-run -a npx tsx e2e/features.ts       # 功能（= npm run e2e:features）�
 xvfb-run -a npx tsx e2e/court-smoke.ts    # 朝堂冒烟
 xvfb-run -a npx tsx e2e/smoke.ts          # 启动冒烟：打开构建好的应用、截一张工作台
 ```
-- `e2e/features.ts` 的段（`ONLY=` 的取值，逗号分隔；不设则全跑）：`effort`、`error`、`preview`、`mcp`、`designs`、`designer`、`manage`、`tips`、`sidebar`、`worktree`。
+- `e2e/features.ts` 的段（`ONLY=` 的取值，逗号分隔；不设则全跑）：`effort`、`error`、`preview`、`mcp`、`designs`、`designer`、`manage`、`tips`、`sidebar`、`worktree`、`v21`。
 - 截图目录由 `SHOTS` 指定：`flow.ts` / `features.ts` 默认写进 `docs/screenshots/`（会改动仓库里的截图），`court-smoke.ts` 默认写到脚本里设定的临时目录；`smoke.ts` 的截图路径写死在脚本里。`EDICT_ELECTRON` 可换 Electron 可执行文件，`APP_DIR` 可让两个冒烟脚本启动别处的构建。每个脚本都用临时数据目录，不碰你的 EdictData。
 - 2.0.3 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 196/196；`e2e/flow.ts` 21/21；`e2e/features.ts` 79/79；`e2e/court-smoke.ts` 通过。
 - 2.0.0 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 179/179；`e2e/flow.ts` 21/21；`e2e/features.ts` 78/78；`e2e/court-smoke.ts` 与 `e2e/smoke.ts` 通过。
@@ -58,6 +58,13 @@ xvfb-run -a npx tsx e2e/smoke.ts          # 启动冒烟：打开构建好的应
 - `tests/acp.test.ts`：协议层（initialize、错误处理、会话与模式、提示与内容块、取消、权限往返：普通风险可「始终允许」、高风险从不）；`0600` 套接字、按编辑器名称批准、拒绝即断开、停止时删除套接字、不发 initialize 的连接被断开；stdio 桥接；对真实运行时（mock LLM）的端到端：Solo 流式输出与真实 diff、会话恢复回放、审批发往编辑器、取消、Court Lite 发送方案并停在御批关卡、编辑器目录与工作区不一致时须同意切换；编辑器配置片段。
 - `tests/skillpack.test.ts`：内置技能包的名称、职责、说明长度、正文结构、发版 / 部署的风险提示措辞、引用的工具名与相互引用。`tests/skills2.test.ts`：只给职责官员配备、另配 / 调整职责 / 恢复；1.x 未改过的技能原地升级、改过的保留；`load_skill` 只能加载职责或已配备的技能并记入旨意与奏折；链接技能的来源哈希与检查更新。
 - `e2e/flow.ts`：写任务开工与命令执行以 Agent 栏的选项卡呈现。`e2e/features.ts` 的 `sidebar`：活动栏「待办」、网页预览侧栏、协同设计直达、右键增减常用页面、标题栏切换朝堂；`tips`：活动栏（含底部连接服务、权限等）与下旨框的悬停说明；`mcp`：在新的「连接服务（MCP）」页保存本地服务（原生确认框由测试替身代点）并让官员调用其工具；`worktree`：Git 仓库里的旨意在自己的工作树分支上办、期间主工作区一个文件都不动、结案对话框列出文件 / 行数 / 经手的部、合并是默认选项、合并后主工作区有旨意提交与合并提交且工作树目录已清理。
+
+### v2.1 新增
+- `tests/web.test.ts`（假网络、假 DNS、假搜索服务）：内网 / 回环 / 链路本地地址判定（含 IPv4 映射的 IPv6）与 DNS 解析后再判定；网页转文本（标题、链接、实体、脚本与样式去除）；`webFetch` 每一跳重定向都重查、内网目标从不请求、跳数上限、非文本拒绝、404 的正文保留、字数与 2 MB 上限、GBK 编码；四种搜索后端（Brave、Tavily、SearXNG 及其 403 提示、模型自带搜索：Anthropic 与 Responses，后者不支持时回退旧工具名）；`web_fetch` 工具的允许 / 每次询问（准一次、本旨意、永久、驳回）/ 关闭；`web_search` 上疏：每道旨意只问一次、配置后保存并接着搜索、Key 不进设置与审计、Key 错误、删除 Key、打开配置却没保存按驳回处理、全自动模式超时只用抓取；设置保存的规整。
+- `tests/sandbox.test.ts`：沙箱规则文件（只有拒绝项、路径转义、网络规则）；`~` 展开与真实路径；`git` 公共目录（假文件与真实 git 工作树）；从命令输出识别被拦下的写 / 读 / 联网；策略默认值、数据目录不可读、工作区可写目录增删、设置保存；`run_command` 被拦下时的选项卡（假沙箱后端）：作罢、重跑一次、允许本工作区写该目录，关网时的联网失败，发版命令不进沙箱，关闭沙箱；系统没有沙箱时只提示一次。**真实 `sandbox-exec` 测试只在 macOS 上运行**（工作区外写入被拒、密钥目录读取被拒、普通命令照常、关网后本机回环可连而外网不通），Linux 上跳过。
+- `tests/requirements.test.ts`：需求说明的解析（编号规整、负责关系）与由验收标准推出；对照检查结果的解析（判定同义词、无证据的「满足」降级）；补办子任务的生成；Court Lite 全流程（对照检查用经济模型、顺序、提示词、奏折「需求对照」）；一轮补办后满足；补办后仍未满足 → 停在御批（关掉结案御批时按封驳上限处理、补办轮数为 0）；关闭对照检查；Full Court 方案御览中皇上改方案后推出的需求说明随之重推；复制的设计带「对照检查」步骤、校验规则与解释器里的补办。
+- `tests/runtime.test.ts`：奏折多出「需求对照」一节。
+- `e2e/features.ts` 的 `v21`：Solo 官员要搜索时的上疏卡片（配置 / 只用抓取 / 驳回）→ 配置窗口选 SearXNG（本机假服务）、测试、保存 → 设置里出现该服务、这次搜索接着执行并记入审计；「联网与搜索」「权限与审批 › 命令沙箱」「运行策略 › 需求对照」三个设置页；Court Lite 旨意的方案卡列出需求与对照结果、奏折有「需求对照」。
 
 ## 3. 端到端 UI（mock LLM，Linux + Xvfb，真实 Electron）
 先 `npm run build`。`npm run e2e`（`e2e/flow.ts`，Playwright `_electron`）：在 UI 中添加模型服务并测试连接 → 打开工作区 → 输入框下旨 → Agent 栏的写任务 / 命令选项卡 → 御批结案 → 看板 → Editor 打开 Agent 产物、磁盘改动实时刷新 → 问题面板 TS 诊断 → 终端交互 → 全局搜索 → Full Court 在**朝堂奏折批阅浮层**中涂改方案并放行 → 六部值房 / 军机处 → 朝堂内准奏 → 议政中通过**皇上口谕框**插话 → Solo → 承天门上朝仪式 → 全部面板 → 审计校验 → Key 未落盘。截图输出到 `docs/screenshots/`，结果写入 `docs/screenshots/e2e-results.json`。

@@ -11,6 +11,7 @@ import { RunPolicyPage } from './pages/RunPolicy';
 import { PermissionsPage } from './pages/Permissions';
 import { CanonPage } from './pages/Canon';
 import { McpPage } from './pages/Mcp';
+import { WebPage } from './pages/Web';
 import { SkillsPage } from './pages/Skills';
 import { LspPage } from './pages/Lsp';
 import { AcpPage } from './pages/Acp';
@@ -39,6 +40,7 @@ function pageFor(id: SettingsSection): ReactNode {
     case 'runtime': return <RunPolicyPage />;
     case 'permissions': return <PermissionsPage />;
     case 'canon': return <CanonPage />;
+    case 'web': return <WebPage />;
     case 'mcp': return <McpPage />;
     case 'skills': return <SkillsPage />;
     case 'lsp': return <LspPage />;
