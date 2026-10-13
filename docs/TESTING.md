@@ -12,8 +12,9 @@ xvfb-run -a npx tsx e2e/features.ts       # 功能（= npm run e2e:features）�
 xvfb-run -a npx tsx e2e/court-smoke.ts    # 朝堂冒烟
 xvfb-run -a npx tsx e2e/smoke.ts          # 启动冒烟：打开构建好的应用、截一张工作台
 ```
-- `e2e/features.ts` 的段（`ONLY=` 的取值，逗号分隔；不设则全跑）：`effort`、`error`、`preview`、`mcp`、`designs`、`designer`、`manage`、`tips`、`sidebar`、`worktree`、`v21`。
+- `e2e/features.ts` 的段（`ONLY=` 的取值，逗号分隔；不设则全跑）：`effort`、`error`、`preview`、`mcp`、`designs`、`designer`、`manage`、`tips`、`sidebar`、`worktree`、`v21`、`sched`。
 - 截图目录由 `SHOTS` 指定：`flow.ts` / `features.ts` 默认写进 `docs/screenshots/`（会改动仓库里的截图），`court-smoke.ts` 默认写到脚本里设定的临时目录；`smoke.ts` 的截图路径写死在脚本里。`EDICT_ELECTRON` 可换 Electron 可执行文件，`APP_DIR` 可让两个冒烟脚本启动别处的构建。每个脚本都用临时数据目录，不碰你的 EdictData。
+- 2.1.0 第二批的结果（Linux + Xvfb，mock LLM）：单元 + 集成 234/234，另有 2 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 21/21；`e2e/features.ts` 100/100（含 `sched` 段 14 项）；`e2e/court-smoke.ts` 与 `e2e/smoke.ts`（正式构建）通过。还没在 Mac 上跑。
 - 2.1.0 第一批的结果（Linux + Xvfb，mock LLM）：单元 + 集成 222/222，另有 2 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 21/21；`e2e/features.ts` 88/88（含 `v21` 段 11 项）；`e2e/court-smoke.ts` 与 `e2e/smoke.ts` 通过。同一份代码在一台 Apple Silicon Mac 上：单元 + 集成 222/222（含 2 项真实沙箱测试），跳过 2 项（没装 pyright、python3 没有 Pillow）。
 - 2.0.3 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 196/196；`e2e/flow.ts` 21/21；`e2e/features.ts` 79/79；`e2e/court-smoke.ts` 通过。
 - 2.0.0 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 179/179；`e2e/flow.ts` 21/21；`e2e/features.ts` 78/78；`e2e/court-smoke.ts` 与 `e2e/smoke.ts` 通过。
@@ -65,6 +66,8 @@ xvfb-run -a npx tsx e2e/smoke.ts          # 启动冒烟：打开构建好的应
 - `tests/sandbox.test.ts`：沙箱规则文件（只有拒绝项、路径转义、网络规则）；`~` 展开与真实路径；`git` 公共目录（假文件与真实 git 工作树）；从命令输出识别被拦下的写 / 读 / 联网；策略默认值、数据目录不可读、工作区可写目录增删、设置保存；`run_command` 被拦下时的选项卡（假沙箱后端）：作罢、重跑一次、允许本工作区写该目录，关网时的联网失败，发版命令不进沙箱，关闭沙箱；系统没有沙箱时只提示一次。**真实 `sandbox-exec` 测试只在 macOS 上运行**，Linux 上跳过：工作区外写入被拒、密钥目录的文件读不到也列不出、普通命令照常、关网后本机回环可连而外网不通；旨意工作树里改文件、跑 node、`git commit` 都正常，提交进了仓库，主工作区和家目录不受影响。
 - `tests/requirements.test.ts`：需求说明的解析（编号规整、负责关系）与由验收标准推出；对照检查结果的解析（判定同义词、无证据的「满足」降级）；补办子任务的生成；Court Lite 全流程（对照检查用经济模型、顺序、提示词、奏折「需求对照」）；一轮补办后满足；补办后仍未满足 → 停在御批（关掉结案御批时按封驳上限处理、补办轮数为 0）；关闭对照检查；Full Court 方案御览中皇上改方案后推出的需求说明随之重推；复制的设计带「对照检查」步骤、校验规则与解释器里的补办。
 - `tests/runtime.test.ts`：奏折多出「需求对照」一节。
+- `tests/edict-schedule.test.ts`（定时旨意，第二批）：时间规则（每天、每周、早朝、每隔 N 小时按整步顺延、指定一次、跨年）与人话描述、错误提示；保存时的校验、编辑、停用、重启后还在；到点直接下旨（不经太子）、在排定的文件夹里办（即使打开的是别的文件夹）、标题与流转记录；上一次没办完则跳过并记一笔、立即执行一次不改平常的时间；错过的时间补跑一次（不按次数补）或跳过、刚到点不算错过；执行次数 / 截止日 / 指定一次到期自动结束，再启用时说明原因；文件夹没了记为没下成、下次再试；三档权限：只读（无工作树、写子任务改只读、不弹卡片、写入和命令被拒）、在旨意工作树里改（关掉「每道旨意一个工作树」也建、办事不弹卡片、主目录不动、高风险仍问）、非 git 文件夹退回每次都问、每次都问（全自动设置下仍弹写任务卡片）；官员提议：卡片三个选项、提议期间不能启用或立即执行、同一来源只提一次、准奏 / 先停用 / 不必、修改后保存即准奏且卡片关闭、提议不随来源旨意取消而作废、重启后再出卡片、删除时卡片关闭；定时旨意里不能再提议；电脑只在定时旨意真正办事时保持唤醒。
+- `e2e/features.ts` 的 `sched`：活动栏打开「定时旨意」页 → 新建表单（每周、加周六、08:30、在旨意工作树里改）的三次预览 → 保存后的规则、详情页的人话时间 → 立即执行一次：在 git 工作树里办完、主目录没动、执行记录与看板「定时」标记 → Solo 官员上疏提议 → 待办里的定时提议卡片 → 打开到「定时旨意」页 → 准奏后生效、待办里消失。
 - `e2e/features.ts` 的 `v21`：Solo 官员要搜索时的上疏卡片（配置 / 只用抓取 / 驳回）→ 配置窗口选 SearXNG（本机假服务）、测试、保存 → 设置里出现该服务、这次搜索接着执行并记入审计；「联网与搜索」「权限与审批 › 命令沙箱」「运行策略 › 需求对照」三个设置页；Court Lite 旨意的方案卡列出需求与对照结果、奏折有「需求对照」。
 
 ## 3. 端到端 UI（mock LLM，Linux + Xvfb，真实 Electron）
