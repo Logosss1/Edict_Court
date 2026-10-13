@@ -130,6 +130,17 @@ test('E4: remote skills keep the source hash; update check sees changes; update 
   assert.equal(s2.remoteSha256, chk.remoteSha);
   assert.ok(fs.readFileSync(s2.path, 'utf8').includes('v2'));
   await assert.rejects(checkSkillUpdate(rt, 'review'), /只有从链接添加/);
+  // editing it in the settings page (skillSave with originalName) keeps the link and flags the local edit
+  saveSkill(rt, { name: 'remote-one', originalName: 'remote-one', description: 'r', agents: ['gongbu'], content: '# 远程技能 v2\n我改过' });
+  const s3 = rt.skills.find((x) => x.name === 'remote-one')!;
+  assert.equal(s3.source, 'remote');
+  assert.equal(s3.sourceUrl, 'https://example.com/SKILL.md');
+  const chk2 = await checkSkillUpdate(rt, 'remote-one');
+  assert.equal(chk2.edited, true);
+  assert.equal(chk2.changed, false, 'the link still serves the version it was downloaded at');
+  // a copy is the emperor's own skill, not linked
+  saveSkill(rt, { name: 'remote-two', description: 'r', agents: [], content: 'x' });
+  assert.equal(rt.skills.find((x) => x.name === 'remote-two')!.source, 'local');
   rt.dispose();
   await mock.close();
 });

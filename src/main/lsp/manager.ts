@@ -96,6 +96,8 @@ export interface LspServerStatus {
   id: string; name: string; languages: string[]; extensions: string[];
   enabled: boolean; installed: boolean; path?: string; args?: string[]; version?: string; note?: string;
   running: boolean; instances: LspInstanceStatus[]; lastError?: string; installHint: string; homepage: string;
+  /** The emperor's own executable (+ args) instead of auto-detection, when set. */
+  custom?: { path: string; args?: string[] };
 }
 export interface LspStatus { enabled: boolean; servers: LspServerStatus[] }
 
@@ -352,6 +354,7 @@ export class LspManager {
           enabled: this.serverEnabled(def.id), installed: d.found, path: d.path, args: d.args, version: d.version, note: d.note,
           running: instances.some((x) => x.state === 'running'), instances, lastError: insts.map((x) => x.lastError).find(Boolean),
           installHint: d.installHint, homepage: d.homepage,
+          custom: this.config.servers[def.id]?.path ? { path: this.config.servers[def.id].path!, args: this.config.servers[def.id].args } : undefined,
         };
       }),
     };

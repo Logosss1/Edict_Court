@@ -269,13 +269,23 @@ app.whenReady().then(async () => {
     }
     if (e.type === 'settings') {
       nativeTheme.themeSource = e.settings.theme;
+      // the settings page toggles this live; open ACP sessions read it on their next approval
+      if (acp) acp.host.opts.highRiskInEdictOnly = e.settings.acpHighRiskInEdictOnly !== false;
       followAcp(!!e.settings.acpEnabled);
     }
   });
   const api = buildApi(rt, terminals, {
     openFolderDialog,
     getWindow: () => win,
-    acpStatus: () => ({ enabled: !!rt.settings.acpEnabled, listening: !!acp?.server.listening, socketPath: acp?.socketPath ?? '', connections: acp?.server.connections ?? 0, approvedClients: acp?.server.approvedClients() ?? [], sessions: acp?.host.listSessions() ?? [] }),
+    acpStatus: () => {
+      const running = new Set(acp?.host.activeSessions() ?? []);
+      // the settings page polls this every few seconds: one summary per session, not every turn's full text
+      const sessions = (acp?.host.listSessions() ?? []).map((s) => ({
+        id: s.id, cwd: s.cwd, modeId: s.modeId, client: s.client, createdAt: s.createdAt, updatedAt: s.updatedAt, turns: s.turns.length,
+        lastUser: s.turns[s.turns.length - 1]?.user.slice(0, 300), taskIds: s.turns.flatMap((t) => (t.taskId ? [t.taskId] : [])).reverse().slice(0, 10), running: running.has(s.id),
+      }));
+      return { enabled: !!rt.settings.acpEnabled, listening: !!acp?.server.listening, socketPath: acp?.socketPath ?? '', connections: acp?.server.connections ?? 0, approvedClients: acp?.server.approvedClients() ?? [], sessions };
+    },
     acpEditorConfig: () => zedAgentServerConfig({ appExecutable: process.execPath, bridgeScript: path.join(DIST, 'acp-bridge.js') }),
   });
   ipcMain.handle('rt:invoke', async (_e, method: string, args: unknown[]) => {
