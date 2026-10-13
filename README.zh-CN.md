@@ -1,4 +1,4 @@
-# Edict for Mac · 三省六部多智能体协作编程工作站
+# Edict · 三省六部多智能体协作编程工作站
 
 [English](README.md) | 中文
 
