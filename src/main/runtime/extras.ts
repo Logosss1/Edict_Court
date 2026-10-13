@@ -195,10 +195,13 @@ export function saveSkill(rt: Runtime, o: { name: string; description: string; a
   fs.mkdirSync(dir, { recursive: true });
   const body = parseFrontmatter(o.content).body.replace(/\s+$/, '');
   if (body.length > 200_000) throw new Error('技能正文过长（>200KB）');
-  // an edited built-in becomes the emperor's own copy (never overwritten by pack upgrades)
+  // an edited built-in becomes the emperor's own copy (never overwritten by pack upgrades); an edited skill
+  // added from a link keeps its link, so 检查更新 still works and warns before overwriting the edit
+  const linked = !o.source && !!o.originalName && prev?.source === 'remote' && !!prev.sourceUrl;
+  const source = o.source ?? (linked ? 'remote' : 'local');
   const meta: SkillMeta = {
-    name, description: o.description, agents: o.agents, duty: o.duty ?? prev?.duty ?? [], source: o.source ?? 'local', sourceUrl: o.sourceUrl, enabled: o.enabled !== false,
-    title: prev?.title, category: prev?.category, icon: prev?.icon, risk: prev?.risk, remoteSha256: o.remoteSha256 ?? (o.source === 'remote' ? prev?.remoteSha256 : undefined),
+    name, description: o.description, agents: o.agents, duty: o.duty ?? prev?.duty ?? [], source, sourceUrl: o.sourceUrl ?? (linked ? prev?.sourceUrl : undefined), enabled: o.enabled !== false,
+    title: prev?.title, category: prev?.category, icon: prev?.icon, risk: prev?.risk, remoteSha256: o.remoteSha256 ?? (source === 'remote' ? prev?.remoteSha256 : undefined),
   };
   fs.writeFileSync(path.join(dir, 'SKILL.md'), renderSkill(meta, body));
   if (o.originalName && o.originalName !== name) {
