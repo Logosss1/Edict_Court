@@ -117,19 +117,20 @@ async function ensureWorktree(rt: Runtime, t: Task): Promise<void> {
 }
 
 // ───────────────────────── 结案: merge / keep / discard ─────────────────────────
-const commitMessage = (t: Task) => `${t.title}（旨意 ${t.id}）\n\n由 Edict 旨意 ${t.id} 在独立工作树 ${t.worktree?.branch ?? ''} 中完成。\n\n${truncate(t.edict, 1500, '…')}`;
+/** Commit message for the worktree's changes: the emperor's own first line (结案 dialog) or the title, then the edict. */
+const commitMessage = (t: Task, subject?: string) => `${subject?.trim().split('\n')[0].slice(0, 200) || `${t.title}（旨意 ${t.id}）`}\n\n由 Edict 旨意 ${t.id} 在独立工作树 ${t.worktree?.branch ?? ''} 中完成。\n\n${truncate(t.edict, 1500, '…')}`;
 const mergeMessage = (t: Task) => `合并旨意 ${t.id}：${t.title}`;
 
 /** Merge (commit + git merge --no-ff into the main checkout), keep the branch, or discard it. Idempotent. */
-export async function finishWorktree(rt: Runtime, taskId: string, action: WorktreeAction, actor = 'emperor'): Promise<WorktreeFinishResult> {
+export async function finishWorktree(rt: Runtime, taskId: string, action: WorktreeAction, actor = 'emperor', o: { message?: string } = {}): Promise<WorktreeFinishResult> {
   if (!ACTIONS.includes(action)) throw new Error(`未知的处理方式：${action}`);
   const t = rt.getTask(taskId);
   const w = t.worktree;
   if (!w) throw new Error('此旨意没有独立工作树');
-  return serial(rt, `repo:${w.repoRoot}`, () => finishLocked(rt, t, w, action, actor));
+  return serial(rt, `repo:${w.repoRoot}`, () => finishLocked(rt, t, w, action, actor, o.message));
 }
 
-async function finishLocked(rt: Runtime, t: Task, w: EdictWorktree, action: WorktreeAction, actor: string): Promise<WorktreeFinishResult> {
+async function finishLocked(rt: Runtime, t: Task, w: EdictWorktree, action: WorktreeAction, actor: string, message?: string): Promise<WorktreeFinishResult> {
   const res = (ok: boolean, message: string): WorktreeFinishResult => ({ ok, action, status: w.status, message, branch: w.branch, path: w.path, commit: w.commit, mergeCommit: w.mergeCommit, conflicts: w.conflicts?.length ? w.conflicts : undefined });
   // asking again for what already happened just reports it
   if (w.status === 'merged' && action === 'merge') return res(true, `分支 ${w.branch} 已合并${w.mergeCommit ? `（合并提交 ${w.mergeCommit.slice(0, 7)}）` : ''}`);
@@ -143,7 +144,7 @@ async function finishLocked(rt: Runtime, t: Task, w: EdictWorktree, action: Work
   rt.audit.record(actor, 'worktree_finish', { action, from: w.status, branch: w.branch, path: w.path }, t.id);
   try {
     if (w.status === 'active' && action !== 'discard' && fs.existsSync(w.path)) {
-      const c = await git.commitAll(w.path, commitMessage(t), w.links);
+      const c = await git.commitAll(w.path, commitMessage(t, message), w.links);
       if (c.commit) {
         w.commit = c.commit;
         rt.audit.record('system', 'worktree_commit', { branch: w.branch, commit: c.commit, files: c.files.length }, t.id);
@@ -221,9 +222,9 @@ export function raiseWorktreeCard(rt: Runtime, t: Task, note?: string) {
   const exists = fs.existsSync(w.path);
   const files = [...new Set(t.changes.filter((c) => !c.reverted).map((c) => c.path))];
   const choices: ApprovalChoice[] = [
-    ...(done && exists ? [{ id: 'merge', label: '合并', hint: `提交改动，在主工作区 git merge --no-ff ${w.branch}${w.baseBranch ? `（并入 ${w.baseBranch}）` : ''}`, approve: true, tone: 'primary' as const }] : []),
-    { id: 'keep', label: '保留分支', hint: `提交改动并移除工作树目录，分支 ${w.branch} 留待日后合并`, approve: true, tone: done && exists ? ('default' as const) : ('primary' as const) },
-    { id: 'discard', label: '丢弃', hint: `移除工作树并删除分支 ${w.branch}，其中的改动不可恢复`, approve: true, tone: 'danger' as const },
+    ...(done && exists ? [{ id: 'merge', label: `合并到 ${w.baseBranch ?? '主工作区'}`, hint: `先提交到 ${w.branch}，再 git merge --no-ff 进${w.baseBranch ? ` ${w.baseBranch}` : '主工作区'}。有冲突会自动中止、保留分支，并列出冲突的文件`, approve: true, tone: 'primary' as const }] : []),
+    { id: 'keep', label: '保留分支', hint: `提交到 ${w.branch}，删掉工作树目录；以后可在「源代码管理 → 工作树」里合并或打开`, approve: true, tone: done && exists ? ('default' as const) : ('primary' as const) },
+    { id: 'discard', label: '丢弃', hint: `删除工作树和分支 ${w.branch}，这些改动不会保留`, approve: true, tone: 'danger' as const },
   ];
   const detail = [
     `分支：${w.branch}（基于 ${w.baseBranch ?? 'HEAD'} @ ${w.base.slice(0, 7)}）`,
@@ -248,7 +249,7 @@ export function raiseWorktreeCard(rt: Runtime, t: Task, note?: string) {
     let r: WorktreeFinishResult | null = null;
     if (ACTIONS.includes(d.choice as WorktreeAction)) {
       const action = d.choice as WorktreeAction;
-      r = await finishWorktree(rt, t.id, action).catch((e: Error) => ({ ok: false, action, status: w.status, message: e.message, branch: w.branch, path: w.path }));
+      r = await finishWorktree(rt, t.id, action, 'emperor', { message: d.comment }).catch((e: Error) => ({ ok: false, action, status: w.status, message: e.message, branch: w.branch, path: w.path }));
     } else if (!st(rt).quiet.delete(ap.id) && w.status === 'active' && rt.tasks.has(t.id)) {
       // answered without one of the three choices (plain 准许 / 驳回): nothing is merged or deleted
       rt.audit.record('emperor', 'worktree_deferred', { branch: w.branch, path: w.path, choice: d.choice }, t.id);
@@ -266,15 +267,15 @@ export function raiseWorktreeCard(rt: Runtime, t: Task, note?: string) {
 }
 
 /** API: what the edict detail calls later. Goes through the open card when there is one (so it closes). */
-export async function worktreeFinish(rt: Runtime, taskId: string, action: WorktreeAction): Promise<WorktreeFinishResult> {
+export async function worktreeFinish(rt: Runtime, taskId: string, action: WorktreeAction, message?: string): Promise<WorktreeFinishResult> {
   const t = rt.getTask(taskId);
   const c = pendingCard(rt, t.id);
   if (c && rt.approvals.get(c.apId)?.choices?.some((x) => x.id === action)) {
-    rt.decideApproval(c.apId, true, 'emperor', action);
+    rt.decideApproval(c.apId, true, 'emperor', action, message);
     const r = await c.done;
     if (r) return r;
   }
-  const r = await finishWorktree(rt, taskId, action);
+  const r = await finishWorktree(rt, taskId, action, 'emperor', { message });
   const open = r.ok ? pendingCard(rt, t.id) : undefined;
   if (open) closeCard(rt, open.apId);
   return r;
@@ -421,4 +422,11 @@ export async function worktreeRemove(rt: Runtime, p: string, o: { deleteBranch?:
   }
   rt.audit.record('emperor', 'worktree_remove', { path: e.path, branch: e.branch, deleteBranch: !!o.deleteBranch, branchDeleted, force: !!o.force });
   return { removed: true, path: e.path, branch: e.branch, branchDeleted, message: `已移除工作树 ${e.path}${note}` };
+}
+
+/** 结案 dialog: lines added / removed per file of an edict's worktree (or kept branch) against its base. */
+export async function worktreeDiffStat(rt: Runtime, taskId: string): Promise<git.DiffStatFile[]> {
+  const w = rt.getTask(taskId).worktree;
+  if (!w || w.status === 'merged' || w.status === 'discarded') return [];
+  return git.diffStat({ repo: w.repoRoot, base: w.base, branch: w.branch, dir: w.status === 'active' ? w.path : undefined, links: w.links });
 }

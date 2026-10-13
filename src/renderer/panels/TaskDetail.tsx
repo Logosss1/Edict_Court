@@ -10,6 +10,7 @@ import type { AgentId, RevertResult, RunNode, Task } from '../../shared/types';
 import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode, revertTaskChanges, runRevert } from './TaskWidgets';
 import { levelLabel } from '../../shared/reasoning';
 import { ActivityStream } from '../workbench/ActivityStream';
+import { openWorktreeDialog, worktreeLabel } from '../workbench/WorktreeDialog';
 
 type TabKey = 'nodes' | 'plan' | 'changes' | 'flow' | 'notes' | 'report' | 'live';
 
@@ -35,6 +36,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           <button className="btn sm" onClick={() => setUI({ mode: 'court', review: { taskId: task.id }, courtScene: 'taihe' })}><Icon name="crown" size={12} /> 朝堂批阅</button>
           {['Done', 'Cancelled'].includes(task.state) && <button className="btn sm" onClick={async () => { await navigator.clipboard.writeText(await call<string>('memorialMarkdown', task.id)); toast('奏折已复制为 Markdown', 'success'); }}><Icon name="copy" size={12} /> 复制奏折</button>}
         </div>
+        {task.worktree && <WorktreeBadge task={task} />}
         {task.state === 'Blocked' && (failedModelNode(task) ? <ModelErrorCard task={task} node={failedModelNode(task)!} /> : <div className="notice warn">⚠ 阻塞：{task.blockedReason}</div>)}
       </div>
       <div className="edict-text"><span className="muted small">原旨</span><div>{task.edict}</div></div>
@@ -82,6 +84,28 @@ function Nodes({ task }: { task: Task }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** The edict's git worktree: branch, status, path, last failure; 结案 choices once it is Done / Cancelled. */
+function WorktreeBadge({ task }: { task: Task }) {
+  const w = task.worktree!;
+  const l = worktreeLabel(task)!;
+  const terminal = ['Done', 'Cancelled'].includes(task.state);
+  return (
+    <div className="td-wt" data-testid="td-worktree">
+      <Icon name="branch" size={13} />
+      <code>{w.branch}</code>
+      <span className={`chip chip-sm ${l.tone === 'gold' ? 'warn' : ''}`}>{l.status}</span>
+      <span className="muted small ellipsis" title={w.path}>{w.status === 'active' ? w.path : w.status === 'merged' ? `合并提交 ${w.mergeCommit?.slice(0, 7) ?? '—'}` : w.status === 'kept' ? `最新提交 ${w.commit?.slice(0, 7) ?? '—'}` : ''}{w.conflicts?.length ? ` · 冲突：${w.conflicts.slice(0, 3).join('、')}` : w.error ? ` · ${w.error}` : ''}</span>
+      {((w.status === 'active' && terminal) || w.status === 'kept') && (
+        <>
+          {(w.status === 'kept' || task.state === 'Done') && <button className="btn sm primary" onClick={() => openWorktreeDialog(task.id, 'merge')} data-testid="td-wt-merge">合并…</button>}
+          {w.status === 'active' && <button className="btn sm" onClick={() => openWorktreeDialog(task.id, 'keep')}>保留分支…</button>}
+          <button className="btn sm" onClick={() => openWorktreeDialog(task.id, 'discard')}>{w.status === 'kept' ? '删除分支…' : '丢弃…'}</button>
+        </>
+      )}
+    </div>
   );
 }
 

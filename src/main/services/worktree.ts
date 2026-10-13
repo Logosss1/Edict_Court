@@ -232,3 +232,53 @@ export async function listWorktrees(repo: string): Promise<PorcelainWorktree[]> 
   }
   return list;
 }
+
+export interface DiffStatFile {
+  path: string;
+  added: number;
+  removed: number;
+  binary?: boolean;
+  /** untracked in the worktree (new file not yet committed) */
+  untracked?: boolean;
+}
+
+/**
+ * Lines added / removed per file for the 结案 dialog. With `dir` (the worktree still exists): everything in it
+ * against `base`, committed or not, untracked files counted line by line (links excluded). Without `dir`
+ * (a kept branch): `base...branch` in the repository.
+ */
+export async function diffStat(o: { repo: string; base: string; branch: string; dir?: string; links?: string[] }): Promise<DiffStatFile[]> {
+  const out = new Map<string, DiffStatFile>();
+  const parse = (txt: string) => {
+    for (const line of txt.split('\n')) {
+      const m = line.match(/^(-|\d+)\t(-|\d+)\t(.+)$/);
+      if (!m) continue;
+      const bin = m[1] === '-';
+      out.set(m[3], { path: m[3], added: bin ? 0 : Number(m[1]), removed: bin ? 0 : Number(m[2]), ...(bin ? { binary: true } : {}) });
+    }
+  };
+  if (o.dir && fs.existsSync(o.dir)) {
+    parse((await runGit(o.dir, ['diff', '--numstat', o.base, '--'])).out);
+    const links = new Set(o.links ?? []);
+    const untracked = nulList((await runGit(o.dir, ['ls-files', '--others', '--exclude-standard', '-z'])).out).filter((f) => ![...links].some((l) => f === l || f.startsWith(`${l}/`)));
+    for (const f of untracked.slice(0, 500)) {
+      let added = 0;
+      let binary = false;
+      try {
+        const st = fs.statSync(path.join(o.dir, f));
+        if (st.size > 2_000_000) binary = true;
+        else {
+          const buf = fs.readFileSync(path.join(o.dir, f));
+          if (buf.includes(0)) binary = true;
+          else added = buf.length ? buf.toString('utf8').split('\n').length - (buf[buf.length - 1] === 10 ? 1 : 0) : 0;
+        }
+      } catch {
+        continue;
+      }
+      out.set(f, { path: f, added, removed: 0, untracked: true, ...(binary ? { binary } : {}) });
+    }
+  } else {
+    parse((await runGit(o.repo, ['diff', '--numstat', `${o.base}...${o.branch}`, '--'])).out);
+  }
+  return [...out.values()].sort((a, b) => a.path.localeCompare(b.path));
+}

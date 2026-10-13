@@ -37,8 +37,9 @@ export function phaseOf(t: Task): Phase | 'done' {
 }
 
 /** Branch of the edict's own git worktree, when it has one. */
+/** The edict's own git worktree branch, while the worktree is in use or awaiting its 结案 choice. */
 export function wtBranch(t: Task): string | undefined {
-  return (t as Task & { worktree?: { branch?: string } }).worktree?.branch;
+  return t.worktree?.status === 'active' ? t.worktree.branch : undefined;
 }
 
 const startOfDay = () => {
@@ -66,14 +67,14 @@ export function Kanban() {
     mine: mineIds.size,
     running: live.filter((t) => t.state !== 'Blocked').length,
     blocked: live.filter((t) => t.state === 'Blocked').length,
-    worktree: live.filter((t) => wtBranch(t)).length,
+    worktree: tasks.filter((t) => wtBranch(t)).length,
   };
   const match = (t: Task) => {
     if (q && !`${t.title}\n${t.edict}\n${t.id}\n${wtBranch(t) ?? ''}\n${t.nodes.map((n) => n.label).join(' ')}`.toLowerCase().includes(q.toLowerCase())) return false;
     if (filter === 'mine') return mineIds.has(t.id);
     if (filter === 'running') return !TERMINAL.includes(t.state) && t.state !== 'Blocked';
     if (filter === 'blocked') return t.state === 'Blocked';
-    if (filter === 'worktree') return !!wtBranch(t) && !TERMINAL.includes(t.state);
+    if (filter === 'worktree') return !!wtBranch(t);
     return true;
   };
   const shown = tasks.filter(match);

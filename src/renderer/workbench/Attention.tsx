@@ -5,6 +5,7 @@ import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { fmtAgo } from '../common/format';
 import { useAttention, type AttentionItem } from '../common/attention';
+import { openWorktreeDialog } from './WorktreeDialog';
 
 const KIND_ICON: Record<AttentionItem['kind'], string> = {
   write_task: 'edit', question: 'help', approval: 'shield', risk: 'alert', plan: 'scroll', final: 'scroll', decide: 'gate', blocked: 'alert', merge: 'merge',
@@ -45,6 +46,17 @@ export function AttnActions({ it }: { it: AttentionItem }) {
           <button className={`btn sm ${a.risk === 'high' ? 'danger' : 'primary'}`} disabled={busy} onClick={go(() => call('decideApproval', a.id, true), '已准许')} data-testid="attn-approve">准许</button>
           <button className="btn sm" disabled={busy} onClick={go(() => call('decideApproval', a.id, false), '已驳回')} data-testid="attn-deny">驳回</button>
           {more('详情')}
+        </div>
+      );
+    }
+    // 结案 worktree: 合并 / 丢弃 open the dialog (diff + commit subject) preselected; 保留分支 is safe to do at once
+    if (it.kind === 'merge' && a.taskId) {
+      const has = (id: string) => choices.some((c) => c.id === id);
+      return (
+        <div className="a-act">
+          {has('merge') && <button className="btn sm primary" onClick={() => openWorktreeDialog(a.taskId!, 'merge')} data-testid="attn-wt-merge">合并</button>}
+          {has('keep') && <button className={`btn sm ${has('merge') ? '' : 'primary'}`} disabled={busy} onClick={go(() => call('decideApproval', a.id, true, 'keep'))} data-testid="attn-wt-keep">保留分支</button>}
+          {has('discard') && <button className="btn sm" onClick={() => openWorktreeDialog(a.taskId!, 'discard')} data-testid="attn-wt-discard">丢弃</button>}
         </div>
       );
     }

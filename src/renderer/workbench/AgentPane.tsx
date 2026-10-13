@@ -14,7 +14,7 @@ import { tip } from '../common/Tip';
 import { GateCard, ModelErrorCard, Pipeline, TaskControls, UsageLine, failedModelNode, revertTaskChanges, useSelectedTask } from '../panels/TaskWidgets';
 import { OtherPendingNotice, PendingChoices } from './ChoiceCard';
 import { PlanCard } from './PlanCard';
-import { wtBranch } from '../panels/Kanban';
+import { openWorktreeDialog, worktreeLabel } from './WorktreeDialog';
 
 export function AgentPane() {
   const task = useSelectedTask();
@@ -63,7 +63,11 @@ export function AgentPane() {
             <div className="ap-title-row">
               <StateChip state={task.state} />
               {task.design && !task.design.native ? <span className="tier-tag design-tag" title={`协同设计 ${task.design.name} v${task.design.version} · ${task.design.hash.slice(0, 12)}`}>{task.design.name} v{task.design.version}</span> : <span className="tier-tag">{TIER_SHORT[task.tier]}</span>}
-              {wtBranch(task) ? <span className="wt-chip" title="这道旨意在自己的 git 工作树里办，结案时再决定合并、保留分支或丢弃" data-testid="ap-branch"><Icon name="branch" size={11} /> {wtBranch(task)}</span> : <code className="muted small">{task.id}</code>}
+              {task.worktree && task.worktree.status !== 'discarded' ? (
+                <button className={`wt-chip ${task.worktree.status}`} {...tip(`分支 ${task.worktree.branch} · ${worktreeLabel(task)?.status}`, task.worktree.status === 'active' ? '这道旨意在自己的 git 工作树里办，你的工作区不受影响；结案时再决定合并、保留分支或丢弃' : task.worktree.status === 'kept' ? '分支已保留，点开可合并或删除' : '已合并进主工作区', undefined, 'below')} onClick={() => (task.worktree!.status === 'merged' ? undefined : TERMINAL.includes(task.state) ? openWorktreeDialog(task.id) : undefined)} data-testid="ap-branch">
+                  <Icon name="branch" size={11} /> {task.worktree.branch}
+                </button>
+              ) : <code className="muted small">{task.id}</code>}
               {task.paused && <span className="chip chip-sm warn">已叫停</span>}
             </div>
             <Pipeline task={task} />

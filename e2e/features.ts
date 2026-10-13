@@ -6,6 +6,7 @@ import { _electron as electron } from 'playwright';
 import electronBinary from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { startMockLlm, defaultBrain } from '../tests/mockLlm';
 
 const SHOTS = process.env.SHOTS ?? path.resolve('docs/screenshots');
@@ -594,6 +595,34 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.waitForTimeout(600);
     ok('标题栏「朝堂」切换到朝堂', await win.locator('[data-testid=court]').isVisible());
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
+  }
+
+  if (want('worktree')) {
+    // 2.0 per-edict git worktree: the edict runs on its own branch, the open checkout stays untouched; the 结案 dialog merges it
+    const repo = fs.mkdtempSync('/tmp/edict-e2e2-git-');
+    fs.writeFileSync(path.join(repo, 'README.md'), '# demo\n');
+    execSync('git init -q -b main && git add -A && git -c user.name=e2e -c user.email=e2e@example.com commit -qm init', { cwd: repo });
+    await inv('setWorkspace', repo);
+    await win.waitForTimeout(400);
+    const r: any = await inv('submit', { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true, forceEdict: true });
+    const t = await waitTask((x) => x.id === r.taskId && x.state === 'Done', 60000);
+    ok('Git 仓库里每道旨意在自己的工作树分支上办', !!t.worktree?.branch && t.worktree.status === 'active' && !t.worktree.path.startsWith(repo), `${t.worktree?.branch} ${t.worktree?.path}`);
+    const dirty = execSync('git status --porcelain', { cwd: repo }).toString().trim();
+    ok('办理期间主工作区一个文件都没动', !dirty && !fs.existsSync(path.join(repo, 'greet.js')), dirty);
+    await win.evaluate(() => (window as any).__openPanel('kanban'));
+    await win.click('[data-testid=attn-wt-merge]');
+    await win.waitForSelector('[data-testid=worktree-dialog]');
+    const files = (await win.textContent('[data-testid=wt-files]')) ?? '';
+    ok('结案对话框列出改动的文件、行数和经手的部', files.includes('greet.js') && /\+\d/.test(files) && files.includes('兵部'), files.slice(0, 120));
+    ok('合并是默认选项', (await win.getAttribute('[data-testid=wt-opt-merge]', 'aria-checked')) === 'true');
+    await shot('60-worktree-merge');
+    await win.fill('[data-testid=wt-msg]', '实现 greet（e2e）');
+    await win.click('[data-testid=wt-confirm]');
+    const done = await waitTask((x) => x.id === r.taskId && x.worktree?.status === 'merged', 30000);
+    const log = execSync('git log --format=%s -3', { cwd: repo }).toString();
+    ok('合并后主工作区有旨意提交和合并提交，工作树目录已清理', log.includes('实现 greet（e2e）') && !!done.worktree.mergeCommit && fs.existsSync(path.join(repo, 'greet.js')) && !fs.existsSync(t.worktree.path), log.replace(/\n/g, ' | '));
+    await inv('setWorkspace', ws);
+    await win.waitForTimeout(400);
   }
 
   const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json', 'edict.db', 'edict.db-wal'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));

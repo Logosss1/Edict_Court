@@ -6,6 +6,7 @@ import { TipLayer } from './common/Tip';
 import { fmtCost, fmtTokens, usageTokens } from './common/format';
 import { Workbench } from './workbench/Workbench';
 import { ApprovalsDock } from './workbench/Approvals';
+import { WorktreeDialogHost } from './workbench/WorktreeDialog';
 import { CommandPalette } from './workbench/CommandPalette';
 import { CeremonyOverlay } from './panels/Ceremony';
 import { PromptHost } from './common/Prompt';
@@ -94,6 +95,7 @@ export function App() {
       <TipLayer />
       <CommandPalette />
       <CeremonyOverlay />
+      <WorktreeDialogHost />
       <PromptHost />
     </div>
   );

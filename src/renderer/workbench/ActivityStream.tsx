@@ -247,7 +247,8 @@ function PreviewAct({ a, who, time }: { a: Activity; who: React.ReactNode; time:
     if (d.screenshot) void call<string | null>('blobImage', d.screenshot).then(setImg);
   }, [d.screenshot]);
   const errors = (d.console ?? []).filter((c) => c.level === 'error');
-  const rel = d.url?.startsWith('preview://ws/') ? decodeURIComponent(d.url.slice('preview://ws/'.length)) : d.url;
+  const wsUrl = d.url?.startsWith('preview://ws/');
+  const rel = d.url?.startsWith('preview://') ? decodeURIComponent(d.url.replace(/^preview:\/\/[^/]+\//, '')) : d.url;
   return (
     <div className="act act-preview" data-testid="act-preview">
       <div className="act-head">{who}{time}</div>
@@ -258,7 +259,8 @@ function PreviewAct({ a, who, time }: { a: Activity; who: React.ReactNode; time:
           <div className="muted small">{rel} · {d.width}×{d.height} · {d.loadMs}ms</div>
           <div className="small">控制台错误 {errors.length}{d.failed?.length ? ` · 资源失败 ${d.failed.length}` : ''}{d.blocked?.length ? ` · 已拦截外部请求 ${d.blocked.length}` : ''}</div>
           {errors.slice(0, 4).map((c, i) => <div key={i} className="small pv-err">✖ {c.step ? <span className="muted">[第 {c.step} 步] </span> : null}{c.message}</div>)}
-          {rel && <button className="btn sm" onClick={() => openPreview(rel)}><Icon name="globe" size={12} /> 打开预览</button>}
+          {rel && wsUrl && <button className="btn sm" onClick={() => openPreview(rel)}><Icon name="globe" size={12} /> 打开预览</button>}
+          {rel && !wsUrl && d.url?.startsWith('preview://wt-') && <div className="muted small">在旨意自己的工作树里预览；合并后可在工作区打开</div>}
         </div>
       </div>
       {!!d.steps?.length && <PreviewSteps steps={d.steps} />}

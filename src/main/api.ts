@@ -20,7 +20,7 @@ import type { TerminalManager } from './services/terminal';
 import { PERMISSION_LABEL } from './runtime/permissions';
 import { LspUnavailableError } from './lsp/manager';
 import { addCanon, canonFromReview, projectRules, removeCanon, updateCanon } from './runtime/canon';
-import { worktreeCreate, worktreeFinish, worktreeList, worktreeOnDelete, worktreeOpen, worktreeRemove } from './runtime/worktrees';
+import { worktreeCreate, worktreeDiffStat, worktreeFinish, worktreeList, worktreeOnDelete, worktreeOpen, worktreeRemove } from './runtime/worktrees';
 import type { WorktreeAction } from '../shared/types';
 import { backupNow, backupPath, storageInfo } from './runtime/storage';
 
@@ -92,7 +92,8 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
       return r;
     },
     /** 结案 dialog done later from the edict detail: merge / keep / discard its worktree (idempotent). */
-    worktreeFinish: (taskId: string, action: WorktreeAction) => worktreeFinish(rt, taskId, action),
+    worktreeFinish: (taskId: string, action: WorktreeAction, message?: string) => worktreeFinish(rt, taskId, action, message),
+    worktreeDiffStat: (taskId: string) => worktreeDiffStat(rt, taskId),
 
     // ── debate (朝堂议政)
     debateCreate: (topic: string, participants?: AgentId[], maxRounds?: number) => createDebate(rt, { topic, participants, maxRounds }),

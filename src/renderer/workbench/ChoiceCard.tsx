@@ -5,6 +5,7 @@ import { useStore, selectTask, toast } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { agentName } from '../../shared/court';
+import { openWorktreeDialog } from './WorktreeDialog';
 import type { ApprovalChoice, ApprovalRequest } from '../../shared/types';
 
 const KIND_HEAD: Record<string, { icon: string; label: string }> = {
@@ -131,6 +132,7 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
       </div>
       <div className="cc-t">{a.summary}</div>
       {a.detail && <Detail text={a.detail} />}
+      {a.kind === 'worktree' && a.taskId && <button className="link small cc-more" onClick={() => openWorktreeDialog(a.taskId!)} data-testid="cc-worktree-open">查看改动明细与提交说明…</button>}
       {a.reason && a.kind !== 'question' && !a.summary.includes(a.reason) && <div className="cc-why muted">{a.reason}</div>}
       <div className="cc-opts" role="radiogroup" aria-label="选择">
         {choices.map((ch, i) => (
@@ -162,7 +164,7 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
         />
       )}
       <div className="cc-foot">
-        <span className="muted">{active ? '数字键选择 · ⏎ 确定 · Esc 驳回' : '双击选项直接确定'}</span>
+        <span className="muted">{active ? `数字键选择 · ⏎ 确定${choices.some((x) => !x.approve) ? ' · Esc 驳回' : ''}` : '双击选项直接确定'}</span>
         <button className={`btn sm ${c && !c.approve ? 'danger' : 'primary'}`} disabled={busy || (needNote && !note.trim())} onClick={() => void decide()} data-testid="ap-confirm">
           {busy ? '…' : '确定'}
         </button>

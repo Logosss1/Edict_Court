@@ -8,7 +8,7 @@ import { startMockLlm } from './mockLlm';
 import { makeRuntime, tmpDir, waitFor, stateOf } from './helpers';
 import { submit, decideGate } from '../src/main/runtime/orchestrator';
 import { executeTool } from '../src/main/runtime/tools';
-import { worktreeCreate, worktreeFinish, worktreeList, worktreeOnDelete, worktreeOpen, worktreeRemove, repoHash } from '../src/main/runtime/worktrees';
+import { worktreeCreate, worktreeDiffStat, worktreeFinish, worktreeList, worktreeOnDelete, worktreeOpen, worktreeRemove, repoHash } from '../src/main/runtime/worktrees';
 import { mergeBranch } from '../src/main/services/worktree';
 import { isAllowedPreviewUrl, servePreview } from '../src/main/services/preview';
 import type { ApprovalRequest, Task } from '../src/shared/types';
@@ -467,6 +467,36 @@ test('worktreePerEdict off: edicts on a git repo work in the open workspace and 
   decideGate(rt, a, { approve: true });
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(pending(rt, 'worktree'), undefined, 'no 结案 card without a worktree');
+  rt.dispose();
+  await mock.close();
+});
+
+test('结案 dialog: per-file line counts of the worktree, and the emperor\'s commit subject', async () => {
+  const mock = await startMockLlm();
+  const rt = makeRuntime(mock.url);
+  const repo = makeRepo({ 'src/a.txt': 'one\ntwo\nthree\n' });
+  rt.setWorkspace(repo);
+  const id = await startEdict(rt);
+  const t = await toFinal(rt, id);
+  const w = t.worktree!;
+  // an edit to a tracked file on top of the agent's new files (untracked until the 结案 commit)
+  fs.writeFileSync(path.join(w.path, 'src/a.txt'), 'one\n2\nthree\nfour\n');
+  const stat = await worktreeDiffStat(rt, id);
+  const by = Object.fromEntries(stat.map((f) => [f.path, f]));
+  assert.deepEqual([by['src/a.txt'].added, by['src/a.txt'].removed], [2, 1]);
+  assert.equal(by['greet.js'].added, 1);
+  assert.equal(by['greet.js'].untracked, true);
+  assert.ok(!stat.some((f) => f.path.startsWith('node_modules')), 'dependency links are not changes');
+  const card = await close(rt, t);
+  rt.decideApproval(card.id, true, 'emperor', 'keep', '实现 greet（皇上改的提交说明）');
+  await settled(rt, t, 'kept');
+  assert.equal(gitc(repo, 'log', '-1', '--format=%s', w.branch), '实现 greet（皇上改的提交说明）');
+  // a kept branch: counted from base...branch in the repository
+  const kept = await worktreeDiffStat(rt, id);
+  assert.ok(kept.some((f) => f.path === 'src/a.txt' && f.added === 2 && f.removed === 1) && kept.some((f) => f.path === 'greet.js'));
+  await worktreeFinish(rt, id, 'merge', '不会用到');
+  assert.equal(t.worktree!.status, 'merged');
+  assert.deepEqual(await worktreeDiffStat(rt, id), []);
   rt.dispose();
   await mock.close();
 });
