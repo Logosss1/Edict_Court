@@ -90,17 +90,17 @@
     {
       "step": "交互断言失败：该步报错并给出当前文本，后续步骤不执行",
       "ok": true,
-      "note": "[\"已点击 button#go “点名”\",\"未找到文本 “不存在的文字”；当前文本：点名册 吏部 兵部 已核点名 已点名：（吏部）（已等待 205ms）\",\"未执行（第 2 步失败后中止）\"]"
+      "note": "[\"已点击 button#go “点名”\",\"未找到文本 “不存在的文字”；当前文本：点名册 吏部 兵部 已核点名 已点名：（吏部）（已等待 207ms）\",\"未执行（第 2 步失败后中止）\"]"
     },
     {
       "step": "Agent 调用 preview_page：活动流展示截图与控制台错误",
       "ok": true,
-      "note": "🧑‍💻 独相04:53:46⚠ 凌烟阁index.html · 1280×800 · 422ms控制台错误 1 · 已拦截外部请求 1✖ Uncaught ReferenceError: broken is not defined 打开"
+      "note": "🧑‍💻 独相05:18:56⚠ 凌烟阁index.html · 1280×800 · 409ms控制台错误 1 · 已拦截外部请求 1✖ Uncaught ReferenceError: broken is not defined 打开"
     },
     {
       "step": "Agent 调用 preview_page 带 actions：工具结果逐步列出，断言失败判为未通过",
       "ok": true,
-      "note": "URL: preview://ws/click.html\n加载：成功（1218ms，视口 1280×800）\n标题：点名册\n交互检查：未通过（2/3 步成功；第 3 步「断言文本 “已点名：李靖”」失败）\n  ✓ 1. 填写 #name ← “魏征” — 已填写 input#name “姓名” ← “魏征”\n  ✓ 2. 点击 #go — 已点击 button#go “点名”\n  ✗ 3. 断言文本 “已点名：李靖” — 未找到文本 “已点名：李靖”；当前文本：点名册 吏部 兵部 已核点名 已点名：魏征（吏部）（已等待 205ms）\n控制台错误 0 条\n已拦截的外部网络请求（预览默认仅允许本地"
+      "note": "URL: preview://ws/click.html\n加载：成功（1243ms，视口 1280×800）\n标题：点名册\n交互检查：未通过（2/3 步成功；第 3 步「断言文本 “已点名：李靖”」失败）\n  ✓ 1. 填写 #name ← “魏征” — 已填写 input#name “姓名” ← “魏征”\n  ✓ 2. 点击 #go — 已点击 button#go “点名”\n  ✗ 3. 断言文本 “已点名：李靖” — 未找到文本 “已点名：李靖”；当前文本：点名册 吏部 兵部 已核点名 已点名：魏征（吏部）（已等待 213ms）\n控制台错误 0 条\n已拦截的外部网络请求（预览默认仅允许本地"
     },
     {
       "step": "技能中心：新建技能并保存",
@@ -112,7 +112,7 @@
       "note": "允许 Edict 在本机运行以下 1 个 MCP 服务命令？"
     },
     {
-      "step": "MCP：Cursor 格式 mcp.json 保存后连接 stdio 服务并列出工具",
+      "step": "MCP：标准格式 mcp.json 保存后连接 stdio 服务并列出工具",
       "ok": true,
       "note": "demo本地已连接工具权限停止5 个工具直接用 2 · 先问我 3/opt/node22/bin/node /home/claude/Edict_Court/tests/fixtures/mcp-echo-server.mjs启用此服务授予全体官员指定官员…工具风险官员调用时回声 echo服务声明只读Echo text"
     },
@@ -212,7 +212,7 @@
     {
       "step": "收藏后排到内置之后的最前面，并显示 ★",
       "ok": true,
-      "note": "edict-court,d-678c86db,d-bf403f19,d-65cb56fe,d-436e500a"
+      "note": "edict-court,d-bdc04660,d-737e0a2b,d-d2281735,d-7ba168c0"
     },
     {
       "step": "列表上的 ✎ 直接进入修改",
@@ -329,7 +329,7 @@
     {
       "step": "Git 仓库里每道旨意在自己的工作树分支上办",
       "ok": true,
-      "note": "edict/JJC-20261013-007 /tmp/edict-e2e2-data-CUB0H1/EdictData/worktrees/b1a4bf7e6774/JJC-20261013-007"
+      "note": "edict/JJC-20261013-007 /tmp/edict-e2e2-data-hAtqeq/EdictData/worktrees/ea50fa19b5ea/JJC-20261013-007"
     },
     {
       "step": "办理期间主工作区一个文件都没动",
