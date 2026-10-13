@@ -343,7 +343,7 @@ async function askAction(ctx: ToolContext, tool: string, args: Record<string, un
     reason: release ? `${verdict.reason}（发版/部署每次确认；可在「权限」里为本工作区开启永久允许）` : verdict.reason,
     choices, ruleLabel: rule?.label,
   });
-  if (d.approve && rule && (d.choice === 'task' || d.choice === 'workspace')) rt.addAllowRules(d.choice, task, rule.keys, rule.label);
+  if (d.approve && rule && (d.choice === 'task' || d.choice === 'workspace')) rt.addAllowRules(d.choice, task, rule.keys, rule.label, agentId);
   return d;
 }
 

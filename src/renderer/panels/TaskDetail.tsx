@@ -1,6 +1,6 @@
 // 旨意详情 — nodes (with local retry), plan versions, reviews, changes, flow chain, annotations.
 import { useState } from 'react';
-import { useStore, useTask, setUI, toast } from '../store';
+import { useStore, useTask, setUI, toast, openSettings } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
@@ -122,12 +122,36 @@ function PlanHistory({ task }: { task: Task }) {
             <b>{r.stage === 'plan' ? '方案' : '成果'}第 {r.round} 轮 · {r.reviewer === 'emperor' ? '👑 皇上' : '🔍 门下省'} · {r.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'}</b>
             <div>{r.comment}</div>
             {r.issues.length > 0 && <ul>{r.issues.map((x, k) => <li key={k}>{x}</li>)}</ul>}
-            <div className="muted small">{fmtTime(r.at)}</div>
+            <div className="row-gap">
+              <span className="muted small">{fmtTime(r.at)}</span>
+              {r.verdict === 'reject' && <CollectCanon task={task} index={i} />}
+            </div>
           </div>
         ))}
         {!task.reviews.length && <div className="muted small">暂无</div>}
       </div>
     </div>
+  );
+}
+
+/** 「收入典章」: keep a rejection as a 教训 for later edicts on this workspace. */
+function CollectCanon({ task, index }: { task: Task; index: number }) {
+  const r = task.reviews[index];
+  const label = `${r.stage === 'plan' ? '方案' : '成果'}第 ${r.round} 轮${r.reviewer === 'emperor' ? '皇上' : '门下'}封驳`;
+  const done = useStore((s) => (s.settings.canon ?? []).some((c) => c.source?.taskId === task.id && c.source.label.endsWith(label)));
+  const collect = async () => {
+    try {
+      await call('canonFromReview', task.id, index);
+      toast('已收入典章（教训）', 'success', { label: '查看典章', run: () => openSettings('canon') });
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+  if (done) return <button className="link small" style={{ marginLeft: 'auto' }} onClick={() => openSettings('canon')}>已收入典章</button>;
+  return (
+    <button className="btn sm" style={{ marginLeft: 'auto' }} onClick={() => void collect()} title="把这条封驳意见收入典章（教训），之后本工作区的旨意会带上它" data-testid={`collect-canon-${index}`}>
+      <Icon name="rules" size={12} /> 收入典章
+    </button>
   );
 }
 

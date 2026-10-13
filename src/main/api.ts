@@ -19,6 +19,7 @@ import type { TerminalManager } from './services/terminal';
 import { PERMISSION_LABEL } from './runtime/permissions';
 import { LspUnavailableError } from './lsp/manager';
 import { addCanon, canonFromReview, projectRules, removeCanon, updateCanon } from './runtime/canon';
+import { backupNow, backupPath, storageInfo } from './runtime/storage';
 
 /** Editor-side LSP calls: a missing / disabled server is a normal answer (with install hints), not an error. */
 async function lspSoft<T>(fn: () => Promise<T>): Promise<{ ok: true; result: T } | { ok: false; reason: string; message: string; candidates: { id: string; name: string; hint: string; homepage: string; note?: string }[] }> {
@@ -57,6 +58,7 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     decideGate: (id: string, d: { approve: boolean; comment?: string; plan?: Plan; reworkTargets?: string[] }) => decideGate(rt, id, d),
     decideApproval: (id: string, approve: boolean, choice?: string, comment?: string) => rt.decideApproval(id, approve, 'emperor', choice, comment),
     removeAllowRule: (root: string, key: string) => rt.removeAllowRule(root, key),
+    removeTaskAllowRule: (taskId: string, key: string) => rt.removeTaskAllowRule(taskId, key),
     acpStatus: () => host.acpStatus?.() ?? { enabled: false, listening: false, socketPath: '', connections: 0, approvedClients: [], sessions: [] },
     acpEditorConfig: () => host.acpEditorConfig?.() ?? null,
     setReleaseAlways: (root: string, on: boolean) => rt.setReleaseAlways(root, on),
@@ -307,6 +309,10 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
       return b ? `data:image/png;base64,${b.toString('base64')}` : null;
     },
     openDataDir: () => shell.openPath(rt.opts.dataDir),
+    // ── 存储与备份
+    storageInfo: () => storageInfo(rt),
+    backupNow: () => backupNow(rt),
+    revealBackup: (name: string) => shell.showItemInFolder(backupPath(rt, name)),
   };
 }
 

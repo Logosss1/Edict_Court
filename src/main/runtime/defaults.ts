@@ -30,6 +30,7 @@ export function defaultSettings(): Settings {
     acpHighRiskInEdictOnly: true,
     askTimeoutMin: 10,
     canon: [],
+    notify: 'all',
   };
 }
 

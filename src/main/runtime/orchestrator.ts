@@ -169,7 +169,7 @@ export function block(rt: Runtime, t: Task, reason: string) {
   } catch {
     /* already terminal */
   }
-  rt.opts.notify?.('旨意阻塞', `${t.title}：${truncate(reason, 80)}`);
+  rt.notifyDesktop('attention', '旨意阻塞', `${t.title}：${truncate(reason, 80)}`);
 }
 
 export class NodeFailedError extends Error {}

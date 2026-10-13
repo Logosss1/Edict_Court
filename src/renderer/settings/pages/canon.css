@@ -1,0 +1,79 @@
+/* 典章 — scoped under .canonp (display: contents keeps the page's section gap) */
+.canonp { display: contents; }
+.canonp .sp-sec { padding: 12px 15px 13px; }
+.canonp .sp-sec-h { margin-bottom: 10px; }
+.canonp-n { font-weight: 500; color: var(--muted); font-size: 12px; margin-left: 2px; }
+
+/* kind colours: 禁止 red · 规矩 gold · 偏好 blue · 教训 jade */
+.canonp .k-forbid { --k: var(--danger); }
+.canonp .k-rule { --k: var(--gold); }
+.canonp .k-preference { --k: var(--blue); }
+.canonp .k-lesson { --k: var(--jade); }
+
+/* project rule files */
+.canonp-files { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; }
+.canonp-file { border: 1px dashed var(--line2); border-radius: 9px; padding: 9px 11px 10px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.canonp-file.on { border-style: solid; border-color: var(--line); background: var(--bg); }
+.canonp-file-h { display: flex; align-items: center; gap: 6px; font-size: 12.5px; min-width: 0; }
+.canonp-file-h svg { color: var(--muted); flex: none; }
+.canonp-file-h code { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canonp-file-h .badge2 { margin-left: auto; }
+.canonp-none { margin-left: auto; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.canonp-pv { font: 11px/1.5 var(--mono); color: var(--muted); white-space: pre-wrap; word-break: break-word; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; min-height: 33px; user-select: text; }
+.canonp-pv.empty { font-family: var(--font); font-size: 11.5px; }
+.canonp-file-a { display: flex; gap: 6px; margin-top: auto; min-height: 24px; }
+
+/* add / edit form */
+.canonp-form { display: flex; flex-direction: column; gap: 8px; }
+.canonp-form-top { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.canonp-hint { font-size: 11.5px; color: var(--muted); min-width: 0; flex: 1 1 220px; }
+.canonp-kinds { display: inline-flex; border: 1px solid var(--line2); border-radius: 7px; overflow: hidden; flex: none; }
+.canonp-kpill { border: none; background: transparent; padding: 3px 12px; font-size: 12px; cursor: pointer; color: var(--muted); border-right: 1px solid var(--line2); }
+.canonp-kpill:last-child { border-right: none; }
+.canonp-kpill:hover { color: var(--k); }
+.canonp-kpill.on { color: var(--k); background: color-mix(in srgb, var(--k) 12%, transparent); font-weight: 650; }
+.canonp-kpill:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+.canonp-ta { resize: vertical; min-height: 52px; line-height: 1.55; font-size: 12.5px; }
+.canonp-form-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.canonp-field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); min-width: 0; }
+.canonp-field > span { white-space: nowrap; flex: none; }
+.canonp-field.grow { flex: 1 1 260px; }
+.canonp-field .input { height: 28px; padding: 3px 8px; font-size: 12px; color: var(--text); }
+.canonp-field select.input { width: auto; max-width: 220px; }
+.canonp-field .input:disabled { opacity: .6; }
+.canonp-count { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-left: auto; }
+.canonp-count.near { color: var(--warn); }
+
+/* filters */
+.canonp-filters { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; margin: -2px 0 8px; }
+.canonp-fg { display: flex; gap: 5px; flex-wrap: wrap; }
+.canonp-fl { font-size: 11px; color: var(--muted); margin-right: 1px; align-self: center; }
+.canonp-fg + .canonp-fg { padding-left: 14px; border-left: 1px solid var(--line); }
+.canonp-fg .pill { font-size: 11.5px; padding: 1px 9px; }
+.canonp-fg .pill:disabled { opacity: .45; cursor: default; }
+.canonp-pc { color: var(--muted); font-size: 10.5px; margin-left: 1px; font-variant-numeric: tabular-nums; }
+.canonp-fg .pill.on .canonp-pc { color: inherit; opacity: .75; }
+
+/* list */
+.canonp-list { display: flex; flex-direction: column; }
+.canonp-row { display: flex; align-items: flex-start; gap: 10px; padding: 9px 2px; border-top: 1px solid var(--line); min-width: 0; }
+.canonp-row:first-child { border-top: none; }
+.canonp-row.off .canonp-kind, .canonp-row.off .canonp-body { opacity: .5; }
+.canonp-row.editing { padding: 10px 11px; margin: 2px 0; border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--line)); border-radius: 9px; background: color-mix(in srgb, var(--gold) 5%, transparent); }
+.canonp-row.editing + .canonp-row { border-top: none; }
+.canonp-row.editing .canonp-form { flex: 1; min-width: 0; }
+.canonp-kind { flex: none; font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: 5px; margin-top: 1px; color: var(--k); background: color-mix(in srgb, var(--k) 12%, transparent); border: 1px solid color-mix(in srgb, var(--k) 28%, transparent); letter-spacing: .5px; }
+.canonp-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.canonp-text { font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; user-select: text; }
+.canonp-meta { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+.canonp-kw { padding: 0 6px; border-radius: 999px; background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); font-size: 10.5px; line-height: 17px; }
+.canonp-kw.every { background: transparent; border: 1px dashed var(--line2); color: var(--muted); }
+.canonp-sep { width: 3px; height: 3px; border-radius: 50%; background: var(--line2); margin: 0 2px; }
+.canonp-scope, .canonp-src { display: inline-flex; align-items: center; gap: 3px; }
+.canonp-srclink { display: inline-flex; align-items: center; gap: 3px; border: none; background: none; padding: 0; color: var(--blue); font-size: 11px; cursor: pointer; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.canonp-srclink:hover { text-decoration: underline; }
+.canonp-at { font-variant-numeric: tabular-nums; }
+.canonp-ctl { flex: none; display: flex; align-items: center; gap: 2px; }
+.canonp-ctl .tog { margin-right: 6px; }
+.canonp-ctl .icon-btn { width: 24px; height: 24px; }
+.canonp-ctl .icon-btn.danger:hover { color: var(--danger); }
