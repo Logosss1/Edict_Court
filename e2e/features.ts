@@ -249,7 +249,9 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await shot('35-skills-center');
     // MCP server (real stdio JSON-RPC child process)
     const server = path.resolve('tests/fixtures/mcp-echo-server.mjs');
-    await win.click('[data-testid=tab-mcp]');
+    await win.evaluate(() => (window as any).__openSettings('mcp'));
+    await win.waitForSelector('[data-testid=settings-mcp]');
+    await win.click('[data-testid=mcp-edit-json]');
     await win.waitForSelector('[data-testid=mcp-json]');
     const json = JSON.stringify({ mcpServers: { demo: { command: process.execPath.includes('electron') ? 'node' : process.execPath, args: [server], env: { ECHO_PREFIX: '${env:HOME}' } } } }, null, 2);
     await win.fill('[data-testid=mcp-json]', json);
@@ -267,7 +269,7 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     asked = await app.evaluate(() => (globalThis as any).__asked as string);
     ok('保存本地 MCP 命令前弹出原生确认框（测试替身代点「信任并运行」）', asked.includes('允许 Edict 在本机运行') && asked.includes('mcp-echo-server.mjs'), asked.split('\n')[0]);
     await win.waitForSelector('[data-testid=mcp-server-demo] .mcp-status.ok', { timeout: 15000 }).catch(() => null);
-    await win.click('[data-testid=mcp-server-demo] button.link:has-text("工具")').catch(() => {});
+    await win.click('[data-testid=mcp-server-demo] button:has-text("工具权限")').catch(() => {});
     await win.waitForTimeout(200);
     const row = (await win.textContent('[data-testid=mcp-server-demo]').catch(() => '')) ?? '';
     ok('MCP：Cursor 格式 mcp.json 保存后连接 stdio 服务并列出工具', row.includes('echo') && row.includes('已连接'), row.slice(0, 160));

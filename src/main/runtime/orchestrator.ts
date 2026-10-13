@@ -16,6 +16,7 @@ import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt
 export { parseConclusion, type ExecConclusion } from './execPolicy';
 import { flowDecideGate, flowStep } from './flow';
 import { canonBlock } from './canon';
+import { expandMcpRefs } from '../mcp/refs';
 import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
 
 const drivingByRt = new WeakMap<Runtime, Set<string>>();
@@ -49,24 +50,26 @@ export type SubmitResult = { kind: 'chat'; sessionId: string; reply: string } | 
 
 // ───────────────────────── submission (下旨) ─────────────────────────
 export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitResult> {
-  const text = input.text.trim();
-  if (!text) throw new Error('旨意内容为空');
+  const typed = input.text.trim();
+  if (!typed) throw new Error('旨意内容为空');
   // a custom 协同设计 is pinned now (version + hash + snapshot); later switches never affect this edict
   const pinned = input.designId && input.designId !== BUILTIN_DESIGN_ID ? rt.designs.pin(input.designId) : undefined;
   const tier: Tier = pinned?.spec ? pinned.spec.policies.tier : input.multiAgent ? input.tier : 'solo';
-  rt.audit.record('emperor', 'edict_submitted', { design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: text.length, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
+  // @mcp:<server>/<uri> references: the resource text is appended (【附带资源】) to what every official sees
+  const { text, refs } = await expandMcpRefs(rt, typed);
+  rt.audit.record('emperor', 'edict_submitted', { design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: typed.length, mcpRefs: refs.length || undefined, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
 
   if (tier === 'solo') {
     let session = input.sessionId ? rt.sessions.get(input.sessionId) : undefined;
     if (!session) {
-      session = { id: uid('ss'), title: text.slice(0, 30), source: 'solo', agentId: 'solo', messages: [], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
+      session = { id: uid('ss'), title: typed.slice(0, 30), source: 'solo', agentId: 'solo', messages: [], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
       rt.sessions.set(session.id, session);
       const a = rt.agents.get('solo');
       if (a) a.sessions++;
     }
     session.messages.push({ role: 'user', content: text, at: now() });
     session.updatedAt = now();
-    const task = createTask(rt, { text, tier, title: text.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort });
+    const task = createTask(rt, { text, tier, title: typed.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort });
     session.taskId = task.id;
     rt.emit({ type: 'session', session });
     void drive(rt, task.id);
@@ -74,9 +77,9 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
   }
 
   // 太子分拣
-  let title = text.replace(/\s+/g, ' ').slice(0, 20);
+  let title = typed.replace(/\s+/g, ' ').slice(0, 20);
   let triageOutput = '{"type":"edict","reason":"皇上直接下旨"}';
-  const session: Session = { id: uid('ss'), title: text.slice(0, 30), source: 'taizi-chat', agentId: 'taizi', messages: [{ role: 'user', content: text, at: now() }], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
+  const session: Session = { id: uid('ss'), title: typed.slice(0, 30), source: 'taizi-chat', agentId: 'taizi', messages: [{ role: 'user', content: text, at: now() }], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
   if (!input.forceEdict) {
     rt.sessions.set(session.id, session);
     rt.emit({ type: 'session', session });

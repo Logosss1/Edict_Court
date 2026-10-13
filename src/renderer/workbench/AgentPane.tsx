@@ -12,6 +12,7 @@ import { ActivityStream } from './ActivityStream';
 import { EffortSlider } from '../common/EffortSlider';
 import { tip } from '../common/Tip';
 import { GateCard, ModelErrorCard, Pipeline, TaskControls, UsageLine, failedModelNode, useSelectedTask } from '../panels/TaskWidgets';
+import { useMcpPicker } from './McpPicker';
 
 export function AgentPane() {
   const task = useSelectedTask();
@@ -174,6 +175,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   const [busy, setBusy] = useState(false);
   const [est, setEst] = useState<{ tokens: number; costUsd: number; breakdown: string } | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
+  const mcpPick = useMcpPicker(text, setText, ta); // `/` MCP prompts, `@` MCP resources
   const effTier: Tier = custom ? 'lite' : multi ? tier : 'solo';
   const canContinue = !!selected && selected.tier === 'solo' && !!selected.sessionId && effTier === 'solo';
 
@@ -234,13 +236,19 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
 
   return (
     <div className={`composer ${variant}`} data-testid="composer">
+      <div className="mcp-pick-anchor">
+      {mcpPick.popup}
       <textarea
         id={variant === 'pane' ? 'composer-input' : 'composer-input-court'}
         ref={ta}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => { setText(e.target.value); mcpPick.track(e.target); }}
+        onSelect={(e) => mcpPick.track(e.currentTarget)}
+        onFocus={(e) => mcpPick.track(e.currentTarget, true)}
+        onBlur={(e) => mcpPick.track(e.currentTarget, false)}
  placeholder={custom ? `按协同设计「${design!.name}」下旨…（⌘↵ 下旨）` : multi ? '皇上请下旨…（⌘↵ 下旨；闲聊由太子直接回复）' : 'Solo：直接吩咐独相…（⌘↵ 发送）'}
         onKeyDown={(e) => {
+          if (mcpPick.onKeyDown(e)) return;
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             void send();
@@ -248,6 +256,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
         }}
         rows={3}
       />
+      </div>
       <div className="composer-row">
         <select className="mini-select" value={model} onChange={(e) => setModel(e.target.value)} {...tip('主模型', 'Solo、中书省、门下省等要动脑的角色用它；太子、六部等粗活用「模型配置」里的经济模型', undefined, 'above')}>
           {!models.length && <option value="">未配置模型</option>}
