@@ -23,6 +23,7 @@ export const SCREENS: ScreenDef[] = [
   { id: 'kanban', icon: 'kanban', label: '旨意看板', desc: '所有旨意的进度，需要你处理的排在最上面' },
   { id: 'memorials', icon: 'scroll', label: '奏折阁', desc: '结案旨意的回奏存档' },
   { id: 'monitor', icon: 'monitor', label: '省部调度', desc: '每位官员此刻在做什么、用量与健康' },
+  { id: 'schedules', icon: 'clock', label: '定时旨意', desc: '到点自动下旨，比如每天早上跑一遍测试' },
   { id: 'designs', icon: 'layers', label: '协同设计', desc: '自己设计多个 AI 怎么分工协作' },
   { id: 'debate', icon: 'gavel', label: '朝堂议政', desc: '让几位官员就一件事辩论' },
   { id: 'templates', icon: 'book', label: '旨库', desc: '常用旨意模板，一键下旨' },
@@ -33,7 +34,7 @@ export const SCREENS: ScreenDef[] = [
   { id: 'audit', icon: 'shield', label: '审计日志', desc: '关键操作的防篡改记录' },
   { id: 'help', icon: 'help', label: '使用说明', desc: '功能介绍与快捷键' },
 ];
-const DEFAULT_PINNED: PanelId[] = ['kanban', 'memorials', 'monitor', 'designs', 'debate'];
+const DEFAULT_PINNED: PanelId[] = ['kanban', 'schedules', 'memorials', 'monitor', 'designs', 'debate'];
 const KEY = 'edict.activitybar.v2';
 const ITEM_H = 37;
 
@@ -54,6 +55,11 @@ function savePinned(v: PanelId[] | null) {
     /* ignore */
   }
 }
+
+/** Keep a popup's bottom inside the window (it grows with the number of screens). */
+const fitMenu = (y: number) => (el: HTMLDivElement | null) => {
+  if (el) el.style.top = `${Math.max(8, Math.min(y, window.innerHeight - el.offsetHeight - 8))}px`;
+};
 
 const MODE_DOT: Record<string, { color: string; label: string }> = {
   readonly: { color: 'var(--blue)', label: '只读' },
@@ -122,7 +128,7 @@ export function ActivityBar() {
   };
 
   return (
-    <nav className="activitybar v2" onContextMenu={(e) => { e.preventDefault(); setMore(null); setMenu({ x: e.clientX, y: Math.min(e.clientY, window.innerHeight - 420) }); }} data-testid="activitybar">
+    <nav className="activitybar v2" onContextMenu={(e) => { e.preventDefault(); setMore(null); setMenu({ x: e.clientX, y: e.clientY }); }} data-testid="activitybar">
       {SIDE.map(side)}
       <div className="ab-sep" />
       <div className="ab-mid" ref={midRef}>
@@ -191,7 +197,7 @@ export function ActivityBar() {
         </div>
       )}
       {menu && (
-        <div className="ab-pop ctx" style={{ top: menu.y, left: 52 }} onMouseDown={(e) => e.stopPropagation()} data-testid="ab-customize">
+        <div className="ab-pop ctx" ref={fitMenu(menu.y)} style={{ top: menu.y, left: 52 }} onMouseDown={(e) => e.stopPropagation()} data-testid="ab-customize">
           <div className="ab-pop-h">活动栏：固定到左侧</div>
           {SCREENS.map((s) => {
             const on = pinned.includes(s.id);

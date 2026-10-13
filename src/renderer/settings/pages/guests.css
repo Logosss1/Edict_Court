@@ -1,0 +1,36 @@
+/* 外部智能体（客卿）page: one row per guest — name, status + path or install hint, actions, enable toggle */
+.guest-row { border-top: 1px solid var(--line); padding: 8px 0; display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; container-type: inline-size; }
+.sp-sec-h + .guest-row { border-top: none; padding-top: 2px; }
+.guest-row.off .nm, .guest-row.off .st { opacity: .6; }
+.guest-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.guest-main .nm { width: 150px; flex: none; display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+.guest-main .nm b { font-weight: 650; }
+.guest-main .nm .muted { font-size: 11px; }
+.guest-main .st { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; font-size: 11.5px; }
+.guest-main .st .badge2 { flex: none; }
+.guest-main .st .path { font-size: 11px; color: var(--muted); min-width: 0; user-select: text; }
+.guest-main .st .hint-cmd { min-width: 0; color: var(--text); font-family: var(--mono); font-size: 11px; }
+.guest-main .st .err { min-width: 0; color: var(--danger); }
+.guest-main .acts { display: flex; align-items: center; gap: 6px; flex: none; }
+.guest-main .acts .btn.on { border-color: var(--gold); background: color-mix(in srgb, var(--gold) 12%, var(--bg3)); }
+.guest-main .acts .tog { margin-left: 4px; }
+.guest-result, .guest-note, .guest-panel { margin-left: 162px; }
+.guest-result { font-size: 11.5px; display: flex; gap: 5px; align-items: baseline; flex-wrap: wrap; line-height: 1.5; word-break: break-word; }
+.guest-result svg { flex: none; align-self: center; }
+.guest-result.ok { color: var(--ok, #3fb950); }
+.guest-result.bad { color: var(--danger); }
+.guest-note { font-size: 11px; }
+.guest-panel { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.guest-panel .input { flex: 1 1 320px; width: auto; }
+.guest-panel > .muted { flex-basis: 100%; }
+.guest-add { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.guest-add .name { flex: 0 1 180px; width: auto; }
+.guest-add .cmd { flex: 1 1 260px; width: auto; }
+.guest-sel { min-width: 200px; }
+.guest-foot { font-size: 11px; padding-top: 6px; border-top: 1px solid var(--line); }
+
+@container (max-width: 720px) {
+  .guest-main { flex-wrap: wrap; row-gap: 5px; }
+  .guest-main .nm { width: 100%; flex-direction: row; gap: 8px; align-items: baseline; }
+  .guest-result, .guest-note, .guest-panel { margin-left: 0; }
+}

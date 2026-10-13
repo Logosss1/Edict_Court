@@ -2,6 +2,22 @@
 
 Release descriptions are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 2.1.0
+
+**What's new**
+- **Web reading and search.** Officials can read web pages by default. Only public http(s) addresses are fetched: loopback, private and link-local addresses are refused, and every redirect is checked again. Search goes through a search service you set up in Settings › Web & search, or the model's own web search. If an edict needs search and none is set up, the official asks you; the setup opens on the card, can be tested there, and is saved to Settings. Keys are kept in the keychain.
+- **Command sandbox.** Officials' shell commands run in a macOS sandbox. They can write only to the workspace (or the edict's worktree and its git folder), temporary folders and package caches, and cannot read the folders that hold keys, tokens and browser data, or Edict's own data folder. Network access is on by default and can be turned off. When the sandbox blocks a command, a card offers to run it once without the sandbox, allow that folder for the workspace, or stop. See Settings › Permissions & approvals.
+- **Requirement spec and final check.** Plans start with a requirement spec (goal, numbered acceptance criteria, out of scope, constraints), and each subtask names the criteria it delivers. After the ministries finish, the Chancellery checks each criterion and gives a verdict with evidence; a "met" without real evidence counts as unknown. Unmet criteria go back to the ministry for another round (1 by default, 0 to 3), and if they are still unmet the edict waits for your decision. The spec can be edited on the plan, and the memorial lists the check. On by default in Court Lite and Full Court; set it in Settings › Run policy.
+- **Scheduled edicts.** A new Schedules page: daily, on chosen weekdays, every few hours, at morning court (6:00) or once; stop after a number of runs or on a date. Each schedule runs in its own folder with its own mode, design and model, and goes straight to work without triage. Permissions are set when you schedule it: read only, ask before every change, or work inside its own git worktree with the merge left to you. A run missed while Edict was closed or the Mac was asleep runs once on return (or is skipped, your choice). Officials can propose a schedule; it waits for your approval.
+- **Outside coding agents as officials.** Coding agents installed on your Mac that speak ACP can do a ministry's subtask. Settings › Outside agents finds them, shows how to install the missing ones, tests the connection, and lets you add any other ACP agent by its command. Choose an agent per ministry, or per subtask on the plan. Agents work only in the edict's worktree; their file and command requests go through Edict's permissions and sandbox, and files they change with their own tools are recorded and can be reverted. If an agent can't start or isn't logged in, the ministry's own official takes over. Edict never installs or logs in to an agent for you.
+- **Several attempts at one subtask.** When you review a plan, a write subtask can get two or three lanes, each done by an official (with any model) or an outside agent, with a cost estimate. The lanes work side by side in their own worktrees, the Chancellery scores them, and on the new comparison page you see each lane's changes, score, time and cost and pick one. Its changes are merged into the edict's worktree; the others can be kept as branches. In full-auto mode and in schedules that work in a worktree, the Chancellery picks. Available in Full Court, and in Court Lite when turned on in Settings.
+- **Worktree setup.** Per workspace, in Settings › Worktrees: copy untracked files such as `.env` into each new edict worktree, link dependency folders, and run a setup script before the officials start. Each worktree gets its own block of 10 ports, passed to commands as `EDICT_PORT` and `EDICT_PORT_RANGE`.
+
+**Fixes**
+- Cancelling an edict now stops the commands and model requests that are still running, instead of waiting for them to finish.
+
+**Install**: download `Edict-2.1.0-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data is kept when you install over 2.0.x.
+
 ## 2.0.3
 
 **What's new**

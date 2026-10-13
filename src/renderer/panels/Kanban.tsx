@@ -178,6 +178,7 @@ function Board({ tasks, agents, attn, today, memorials }: { tasks: Task[]; agent
             <div key={t.id} className={`done-row ${selected === t.id ? 'sel' : ''}`} onClick={() => selectTask(t.id)} onDoubleClick={() => openTaskTab(t.id)} title={t.title} data-testid="kcard">
               <Icon name={t.state === 'Done' ? 'check' : 'x'} size={12} className={t.state === 'Done' ? 'ok' : 'muted'} />
               <span className={`t ${t.state === 'Cancelled' ? 'muted' : ''}`}>{t.title}</span>
+              {t.schedule && <span className="mini sch" title={`定时旨意「${t.schedule.title}」`} data-testid="kc-schedule"><Icon name="clock" size={10} /></span>}
               <span className="muted">{fmtTime(t.updatedAt).slice(0, 5)}</span>
             </div>
           ))}
@@ -217,6 +218,7 @@ function KCard({ t, agents, attn, sel }: { t: Task; agents: AgentRuntime[]; attn
       <div className="kc-top">
         <span className="hb" style={{ color: hb.color }}><i style={{ background: hb.color }} /> {hb.label}</span>
         <span className="tier-tag">{t.design && !t.design.native ? t.design.name : TIER_SHORT[t.tier]}</span>
+        {t.schedule && <span className="mini sch" title={`定时旨意「${t.schedule.title}」按时下达${t.schedule.catchUp ? '（补跑错过的一次）' : ''}`} data-testid="kc-schedule"><Icon name="clock" size={10} /> 定时</span>}
         <span className="r">{fmtAgo(t.createdAt)}</span>
       </div>
       <div className="kc-title">{t.title}</div>
@@ -259,7 +261,7 @@ function ListView({ tasks }: { tasks: Task[] }) {
             return (
               <tr key={t.id} className={selected === t.id ? 'sel' : ''} onClick={() => selectTask(t.id)} onDoubleClick={() => openTaskTab(t.id)} data-testid="kcard">
                 <td><StateChip state={t.state} small /></td>
-                <td className="tt"><span className="ellipsis">{t.title}</span>{wtBranch(t) && <span className="mini wt"><Icon name="branch" size={10} /> {wtBranch(t)}</span>}</td>
+                <td className="tt"><span className="ellipsis">{t.title}</span>{t.schedule && <span className="mini sch"><Icon name="clock" size={10} /> 定时</span>}{wtBranch(t) && <span className="mini wt"><Icon name="branch" size={10} /> {wtBranch(t)}</span>}</td>
                 <td className="muted">{TIER_SHORT[t.tier]}</td>
                 <td className="muted">{PHASE_LABEL[phaseOf(t)]}</td>
                 <td className="muted">{subs.length ? `${done}/${subs.length}` : '—'}</td>

@@ -7,6 +7,7 @@ import { PERMISSION_LABEL } from './permissions';
 import { READ_TOOLS, type ToolName } from './tools';
 import type { Workspace } from '../services/workspace';
 import { extractJson, now, sha256, truncate } from './util';
+import { laneOf } from './attempts';
 
 export const effectOf = (sub?: { effect?: unknown }): SubtaskEffect => (sub?.effect === 'write' || sub?.effect === 'verify' ? sub.effect : 'read');
 
@@ -50,8 +51,18 @@ function writeTaskChoices(mode: PermissionMode): ApprovalChoice[] {
  * the node already has a grant, or there is no workspace to write to). Rejection fails the node.
  */
 export async function confirmWriteTask(rt: Runtime, t: Task, node: RunNode, sub: Subtask, who: string, hasWorkspace: boolean): Promise<void> {
-  const mode = rt.settings.permissionMode;
-  if (node.effect !== 'write' || node.grant || !hasWorkspace || mode === 'auto' || rt.settings.confirmWriteTasks === false) return;
+  const mode = rt.modeFor(t);
+  if (node.effect !== 'write' || node.grant || !hasWorkspace) return;
+  // a read-only scheduled edict: write subtasks run read-only, nobody is asked (the cap was set when it was scheduled)
+  if (t.schedule?.permission === 'readonly') {
+    node.grant = 'readonly';
+    node.grantNote = '定时旨意按「只读」排定';
+    rt.audit.record('system', 'node_grant', { node: node.id, grant: 'readonly', via: 'schedule' }, t.id);
+    rt.activity('log', `定时旨意按「只读」排定：${node.label} 改为只读执行，把修改建议写进结论`, { taskId: t.id, nodeId: node.id });
+    rt.touch(t);
+    return;
+  }
+  if (mode === 'auto' || rt.settings.confirmWriteTasks === false) return;
   node.status = 'waiting';
   rt.touch(t);
   const d = await rt.requestDecision({
@@ -141,7 +152,7 @@ export function checkEvidence(t: Task, node: RunNode, c: ExecConclusion, toolCou
     }
   }
   // file-tool writes and run_command side effects (R7) both count as evidence of work
-  const touched = t.changes.filter((ch) => ch.nodeId === node.id && !ch.reverted).map((ch) => `${ch.op}:${ch.path}${ch.via === 'command' ? '（命令）' : ''}`);
+  const touched = (laneOf(t, node)?.changes ?? t.changes).filter((ch) => ch.nodeId === node.id && !ch.reverted).map((ch) => `${ch.op}:${ch.path}${ch.via === 'command' ? '（命令）' : ''}`);
   checks.push(`系统记录的改动：${touched.length ? touched.join(', ') : '无'}`);
   const cmds = toolCounts.run_command ?? 0;
   const previews = toolCounts.preview_page ?? 0;

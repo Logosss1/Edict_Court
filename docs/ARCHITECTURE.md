@@ -144,3 +144,13 @@ Phaser 3.90：`pixelArt: true`、`roundPixels`、640×360 世界、**整数倍�
 - **待办与看板**：`common/attention.ts` 汇总所有等皇上处理的事（写任务开工、请旨、审批、高风险、方案、御批、裁决、阻塞、合并），供「待办」侧栏、看板的「需要你处理」栏和角标共用。看板有统计卡、五个阶段列、筛选（全部 / 我需处理 / 进行中 / 阻塞 / 工作树）与列表视图。
 - **Agent 栏**：当前旨意的审批是栏底的决策卡（`ChoiceCard.tsx`：数字键选项、⏎ 确认、Esc 驳回、可选或必填的批示），方案卡（`PlanCard.tsx`）列出每个子任务的 只读 / 写入 / 验证 与实时状态，每个六部节点结束后有一行成果核验；撤回本旨改动、节点的撤回改动 / 撤回并重做在这里调用上面的撤回接口。
 - **桌面通知**：`rt.notifyDesktop` 按设置 `notify`（全部 / 只提醒要我处理的 / 关闭）过滤，窗口在前台时不弹。
+
+## 2.1 新增
+
+- **联网**：`services/web.ts`（公网判定、逐跳重定向检查、网页转文本）与 `services/search.ts`（各搜索服务、模型自带搜索）；`runtime/webTools.ts` 是官员的 `web_fetch` / `web_search`，没配搜索服务时发 `search_setup` 决策卡。
+- **命令沙箱**：`services/sandbox.ts` 生成 `sandbox-exec` 规则（默认允许之上只加拒绝项），默认的拒绝读取目录在 `shared/sandboxDefaults.ts`；`runtime/sandboxRun.ts` 识别被拦下的命令并发 `sandbox` 决策卡。
+- **需求对照**：`runtime/requirements.ts` 解析需求说明与对照结果、生成补办子任务；对照检查是门下省的一个节点，协同设计里是「对照检查」步骤。
+- **定时旨意**：`runtime/scheduler.ts` 每 30 秒检查到点的定时旨意，按排定时的文件夹、模式与权限直接下旨（`Task.schedule`），错过的补跑一次；官员的 `propose_schedule` 发 `schedule` 决策卡。定时旨意存在 `edict.db`。
+- **工作树准备**：`runtime/worktreeSetup.ts`（复制文件、准备脚本、端口块分配，`EDICT_PORT` 等环境变量与给官员的提示）。
+- **客卿**（`src/main/guests`）：`registry.ts` 是名册与检测、`client.ts` 是 ACP 客户端（stdio JSON-RPC，作为 client 一侧：fs 读写、terminal、权限请求）、`run.ts` 把一个子任务交给客卿（请求走 Edict 的工具与 `permit()`，办完用影子快照找出它自带工具改的文件，记为 `via: 'guest'`），起不来时抛 `GuestStartError` 由本部官员接手。
+- **排班**：`runtime/attempts.ts`（各路工作树的建立与清理）与 `runtime/attemptRun.ts`（快照提交、各路节点 `kind: 'lane'` 并行、门下省评比节点 `kind: 'judge'`、`attempt` 决策卡、三方合并选中的一路）。各路的改动记在 `SubtaskAttempts.lanes[].changes`，选中后才进旨意的改动列表；界面是 `panels/Lanes.tsx`（方案卡上的排班、旨意详情的「比试」页）。

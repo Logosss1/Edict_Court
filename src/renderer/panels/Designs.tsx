@@ -18,7 +18,7 @@ import { useRoleModelText } from '../common/ModelPick';
 const TIER_LABEL = { lite: '精简版', full: '完整版' } as const;
 
 const ORIGIN: Record<string, string> = { builtin: '内置', user: '自建', copy: '复制来的', github: 'GitHub 导入' };
-const STEP_TYPE: Record<string, string> = { agent: '单人执行', plan: '规划拆解', review: '审议（可封驳）', fanout: '分派执行', summary: '汇总', gate: '皇上关卡' };
+const STEP_TYPE: Record<string, string> = { agent: '单人执行', plan: '规划拆解', review: '审议（可封驳）', fanout: '分派执行', summary: '汇总', gate: '皇上关卡', check: '对照检查' };
 const PHASES: DesignPhase[] = ['plan', 'review', 'dispatch', 'execute', 'report', 'confirm'];
 
 export function Designs() {

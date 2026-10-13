@@ -13,6 +13,7 @@ import { parseMcpConfig } from './mcp/manager';
 import type { McpServerPolicy, McpToolPolicy, CollabDesign } from '../shared/types';
 import { validateDesign } from '../shared/design';
 import { builtinDeclarative } from './runtime/designs';
+import type { ScheduleDraft } from './runtime/scheduler';
 import fs from 'node:fs';
 import path from 'node:path';
 import { gitStatus, gitShowHead, gitStage, gitUnstage, gitCommit, gitLog, gitInit } from './services/git';
@@ -23,6 +24,13 @@ import { addCanon, canonFromReview, projectRules, removeCanon, updateCanon } fro
 import { worktreeCreate, worktreeDiffStat, worktreeFinish, worktreeList, worktreeOnDelete, worktreeOpen, worktreeRemove } from './runtime/worktrees';
 import type { WorktreeAction } from '../shared/types';
 import { backupNow, backupPath, storageInfo } from './runtime/storage';
+import { saveWebSettings, testSearch, webStatus } from './runtime/webTools';
+import type { SandboxSettings, SearchConfig, SearchProviderKind, WebSettings, WorktreeSetup } from '../shared/types';
+import { addSandboxWritable, removeSandboxWritable, sandboxStatus, saveSandboxSettings } from './runtime/sandboxRun';
+import { saveWorktreeSetup } from './runtime/worktreeSetup';
+import { guestStatuses, removeGuest, saveGuest, setGuestDefaults, testGuest, guestSettingsOf } from './guests';
+import type { GuestConfig, LaneSpec, MinistryId } from '../shared/types';
+import { attemptDiff, chooseAttempt, estimateLanes } from './runtime/attemptRun';
 
 /** Editor-side LSP calls: a missing / disabled server is a normal answer (with install hints), not an error. */
 async function lspSoft<T>(fn: () => Promise<T>): Promise<{ ok: true; result: T } | { ok: false; reason: string; message: string; candidates: { id: string; name: string; hint: string; homepage: string; note?: string }[] }> {
@@ -50,7 +58,8 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     info: () => ({ dataDir: rt.opts.dataDir, encrypted: rt.opts.secrets.encrypted, version: rt.opts.version, platform: rt.opts.platform, permissionLabels: PERMISSION_LABEL }),
 
     // ── edicts & control
-    submit: (input: SubmitInput) => submit(rt, input),
+    // what the schedule fields carry is set by the scheduler only, never by the window
+    submit: ({ workspace: _w, permissionMode: _p, schedule: _s, ...input }: SubmitInput) => submit(rt, input),
     estimate: (text: string, tier: Tier, model?: ModelRef | null) => rt.estimate(text, tier, model),
     pause: (id: string) => rt.pause(id),
     resume: (id: string) => rt.resume(id),
@@ -110,6 +119,27 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
 
     // ── settings / models
     updateSettings: (patch: Partial<Settings>) => rt.updateSettings(patch),
+    // ── 联网与搜索 (2.1)
+    webStatus: () => webStatus(rt),
+    saveWebSettings: (patch: Partial<WebSettings>, key?: { provider: SearchProviderKind; value: string } | null) => saveWebSettings(rt, patch, key),
+    testSearch: (cfg: SearchConfig | null, key?: string) => testSearch(rt, cfg, key),
+    // ── 命令沙箱 (2.1)
+    sandboxStatus: () => sandboxStatus(rt),
+    saveSandboxSettings: (patch: Partial<SandboxSettings>) => saveSandboxSettings(rt, patch),
+    addSandboxWritable: (root: string, dir: string) => addSandboxWritable(rt, root, dir),
+    removeSandboxWritable: (root: string, dir: string) => removeSandboxWritable(rt, root, dir),
+    // ── 工作树准备 (2.1)
+    saveWorktreeSetup: (root: string, patch: Partial<WorktreeSetup>) => saveWorktreeSetup(rt, root, patch),
+    // ── 客卿：外部智能体 (2.1)
+    guestStatuses: () => ({ guests: guestStatuses(rt), settings: guestSettingsOf(rt) }),
+    saveGuest: (cfg: Partial<GuestConfig> & { id?: string; commandLine?: string }) => saveGuest(rt, cfg),
+    removeGuest: (id: string) => removeGuest(rt, id),
+    setGuestDefaults: (patch: { deptDefault?: Partial<Record<MinistryId, string | null>>; attemptsInLite?: boolean }) => setGuestDefaults(rt, patch),
+    testGuest: (id: string) => testGuest(rt, id),
+    // ── 排班 / 比试 (2.1)
+    estimateLanes: (dept: string, lanes: LaneSpec[]) => estimateLanes(rt, dept, lanes),
+    chooseAttempt: (taskId: string, laneId: string | null, o?: { keepOthers?: boolean; attemptsId?: string; comment?: string }) => chooseAttempt(rt, taskId, laneId, o),
+    attemptDiff: (taskId: string, laneId: string) => attemptDiff(rt, taskId, laneId),
     setAgentModel: (agentId: AgentId, ref: ModelRef | null) => rt.setAgentModel(agentId, ref),
     upsertProvider: (cfg: ProviderConfig, apiKey?: string | null) => rt.upsertProvider(cfg, apiKey),
     deleteProvider: (id: string) => rt.deleteProvider(id),
@@ -155,6 +185,13 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     designRestore: (token: string) => rt.designs.restore(token),
     /** the built-in 三省六部 as an editable starting point (not saved until the editor saves it) */
     designTemplate: (tier: 'lite' | 'full') => ({ ...builtinDeclarative(tier, rt.settings), id: '', native: undefined }),
+
+    // ── 定时旨意
+    scheduleList: () => rt.schedules.all(),
+    scheduleSave: (d: ScheduleDraft) => rt.schedules.upsert(d),
+    scheduleSetEnabled: (id: string, on: boolean) => rt.schedules.setEnabled(id, on),
+    scheduleDelete: (id: string) => rt.schedules.remove(id),
+    scheduleRunNow: (id: string) => rt.schedules.runNow(id),
 
     // ── MCP
     mcpList: () => rt.mcp.list(),
@@ -213,6 +250,13 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
 
     // ── workspace & editor
     openFolder: () => host.openFolderDialog(),
+    /** choose a folder without opening it as the workspace (e.g. a writable folder for the command sandbox) */
+    pickFolder: async (title?: string) => {
+      const w = host.getWindow();
+      const o = { title: title ?? '选择文件夹', properties: ['openDirectory', 'createDirectory'] as ('openDirectory' | 'createDirectory')[] };
+      const r = w ? await dialog.showOpenDialog(w, o) : await dialog.showOpenDialog(o);
+      return r.canceled ? null : (r.filePaths[0] ?? null);
+    },
     setWorkspace: (p: string) => rt.setWorkspace(p),
     tree: (p?: string) => ws().tree(p ?? '.'),
     readFile: (p: string) => ws().read(p),

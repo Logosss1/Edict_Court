@@ -9,8 +9,8 @@ import {
 export type Draft = Omit<CollabDesign, 'version' | 'createdAt'> & { version?: number; createdAt?: number };
 
 export const PHASES: DesignPhase[] = ['plan', 'review', 'dispatch', 'execute', 'report', 'confirm'];
-export const STEP_TYPES: StepType[] = ['agent', 'plan', 'review', 'fanout', 'summary', 'gate'];
-export const STEP_TYPE_LABEL: Record<StepType, string> = { agent: '单人执行', plan: '规划拆解', review: '审议（可封驳）', fanout: '分派执行', summary: '汇总', gate: '皇上关卡' };
+export const STEP_TYPES: StepType[] = ['agent', 'plan', 'review', 'fanout', 'check', 'summary', 'gate'];
+export const STEP_TYPE_LABEL: Record<StepType, string> = { agent: '单人执行', plan: '规划拆解', review: '审议（可封驳）', fanout: '分派执行', summary: '汇总', gate: '皇上关卡', check: '对照检查' };
 export const STEP_TYPE_HINT: Record<StepType, string> = {
   agent: '一个角色独立完成一件事',
   plan: '把旨意拆成子任务，分给执行角色',
@@ -18,9 +18,10 @@ export const STEP_TYPE_HINT: Record<StepType, string> = {
   fanout: '按规划把子任务分给各执行角色并行去做',
   summary: '把前面的成果汇总成回奏',
   gate: '停下来等皇上（你）亲自批',
+  check: '逐条对照规划里的《需求说明》检查成果，没做到的追加补办子任务交回执行',
 };
-const TYPE_PHASE: Record<StepType, DesignPhase> = { agent: 'execute', plan: 'plan', review: 'review', fanout: 'execute', summary: 'report', gate: 'confirm' };
-export const OUTPUTS: Record<StepType, StepSpec['output'][]> = { agent: ['text', 'conclusion'], plan: ['plan'], review: ['verdict'], fanout: ['conclusion'], summary: ['text'], gate: ['verdict'] };
+const TYPE_PHASE: Record<StepType, DesignPhase> = { agent: 'execute', plan: 'plan', review: 'review', fanout: 'execute', summary: 'report', gate: 'confirm', check: 'report' };
+export const OUTPUTS: Record<StepType, StepSpec['output'][]> = { agent: ['text', 'conclusion'], plan: ['plan'], review: ['verdict'], fanout: ['conclusion'], summary: ['text'], gate: ['verdict'], check: ['text'] };
 export const OUTPUT_LABEL: Record<StepSpec['output'], string> = { text: '文字', plan: '方案 JSON', verdict: '审议结论', conclusion: '执行结论' };
 
 export const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
@@ -61,6 +62,12 @@ export function newStep(d: Draft, type: StepType, at = d.steps.length): StepSpec
       return { ...base, role, instruction: '汇总前面所有成果，写一份回奏（Markdown）。' };
     case 'gate':
       return { ...base, gate: 'final', instruction: '请皇上御批。' };
+    case 'check': {
+      const plan = [...before].reverse().find((s) => s.type === 'plan');
+      const fan = [...before].reverse().find((s) => s.type === 'fanout' && s.planStep === plan?.id);
+      const reviewer = d.roles.find((r) => r.avatar === 'menxia')?.id ?? role;
+      return { ...base, role: reviewer, planStep: plan?.id, ...(fan ? { onReject: { goto: fan.id, max: 1 } } : {}), instruction: '逐条对照需求说明的验收标准，判定满足、未满足或无法判断；满足的要写出证据。' };
+    }
   }
 }
 

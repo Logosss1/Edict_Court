@@ -51,7 +51,7 @@ export async function askEmperor(ctx: ToolContext, args: Record<string, unknown>
     { id: 'free', label: options.length ? '另行口谕' : '回复', hint: '写下你的答复', approve: true, tone: options.length ? undefined : 'primary', comment: 'required' },
     { id: 'self', label: '你自己判断', hint: fallback ? `按它说的默认做法：${truncate(fallback, 80)}` : '按最合理的理解继续，并在结论里写明假设', approve: true, comment: 'optional' },
   ];
-  const timeoutMin = askTimeout(rt);
+  const timeoutMin = askTimeout(rt, task);
   let apId = '';
   const decision = rt.requestDecision({
     kind: 'question', taskId: task?.id, agentId, nodeId: node?.id, tool: 'ask_emperor',
@@ -96,7 +96,7 @@ export async function askEmperor(ctx: ToolContext, args: Record<string, unknown>
 }
 
 /** 全自动 mode only: minutes after which an unanswered 请旨 continues on the asker's default (0 = wait). */
-const askTimeout = (rt: Runtime) => (rt.settings.permissionMode === 'auto' ? rt.settings.askTimeoutMin ?? 0 : 0);
+const askTimeout = (rt: Runtime, task?: Task) => (rt.modeFor(task) === 'auto' ? rt.settings.askTimeoutMin ?? 0 : 0);
 
 /** After `min` minutes the system answers a still-pending question card (the asker's default then applies). */
 function autoAnswer(rt: Runtime, min: number, apId: () => string) {
@@ -179,7 +179,7 @@ function putPrinceQuestion(rt: Runtime, t: Task, q: EdictQuestion) {
     { id: 'free', label: '回复', hint: '写下你的答复', approve: true, tone: q.options.length ? undefined : 'primary', comment: 'required' },
     { id: 'self', label: '不必问，照办', hint: assume ? `照太子所拟：${truncate(assume, 80)}` : '按太子的理解去办', approve: true, comment: 'optional' },
   ];
-  const timeoutMin = askTimeout(rt);
+  const timeoutMin = askTimeout(rt, t);
   const summary = `太子请旨：${courtAddress('taizi', truncate(q.question, 120))}`;
   let apId = '';
   const decision = rt.requestDecision({

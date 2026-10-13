@@ -29,7 +29,7 @@ export const SETTINGS_GROUPS: { title: string; items: SectionInfo[] }[] = [
   {
     title: '运行',
     items: [
-      { id: 'runtime', label: '运行策略', icon: 'zap', keywords: '预算 token 费用上限 封驳上限 审批门 方案御览 御批 议政 并行度 压缩 请旨 超时' },
+      { id: 'runtime', label: '运行策略', icon: 'zap', keywords: '预算 token 费用上限 封驳上限 审批门 方案御览 御批 议政 并行度 压缩 请旨 超时 需求说明 对照检查 验收标准 补办' },
       { id: 'permissions', label: '权限与审批', icon: 'shield', keywords: '权限模式 只读 询问 自动编辑 全自动 写任务 允许规则 本工作区永久 发版 部署 续跑 超时 请旨 太子追问', isNew: true },
       { id: 'canon', label: '典章', icon: 'rules', keywords: '项目规约 AGENTS.md CLAUDE.md rules.md 禁止 规矩 偏好 教训 封驳', isNew: true },
     ],
@@ -37,9 +37,11 @@ export const SETTINGS_GROUPS: { title: string; items: SectionInfo[] }[] = [
   {
     title: '扩展',
     items: [
+      { id: 'web', label: '联网与搜索', icon: 'globe', keywords: '联网 网络 抓取 网页 搜索 web_fetch web_search Brave Tavily SearXNG 域名 上网', isNew: true },
       { id: 'mcp', label: '连接服务', icon: 'plug', keywords: 'MCP 外部工具 服务 登录 OAuth 资源 提示词 mcp.json 信任 远程 本地' },
       { id: 'skills', label: '技能', icon: 'puzzle', keywords: '技能 SKILL.md 职责 另配 装备 官员 更新 导入' },
       { id: 'lsp', label: '语言服务', icon: 'code', keywords: 'LSP 语言服务器 诊断 跳转定义 typescript pyright gopls rust-analyzer 安装', isNew: true },
+      { id: 'guests', label: '外部智能体', icon: 'users', keywords: '客卿 外部智能体 ACP 代办 六部 子任务 Claude Code Codex Gemini OpenCode 智能体 测试连接 登录', isNew: true },
       { id: 'acp', label: '编辑器接入', icon: 'link', keywords: 'ACP 编辑器 socket 接入 外部编辑器', isNew: true },
       { id: 'worktrees', label: '工作树', icon: 'branch', keywords: 'git worktree 工作树 分支 结案 合并 丢弃 保留', isNew: true },
     ],

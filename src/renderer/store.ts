@@ -4,9 +4,9 @@ import { useSyncExternalStore, useRef } from 'react';
 import type { Activity, AgentId, RuntimeEvent, Snapshot, Task, Debate, Session, Memorial, ApprovalRequest, Annotation } from '../shared/types';
 import { call } from './api';
 
-export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help' | 'settings';
+export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'schedules' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help' | 'settings';
 /** 设置中心 pages (one editor tab, left nav) */
-export type SettingsSection = 'appearance' | 'storage' | 'providers' | 'routing' | 'runtime' | 'permissions' | 'canon' | 'mcp' | 'skills' | 'lsp' | 'acp' | 'worktrees' | 'audit' | 'help';
+export type SettingsSection = 'appearance' | 'storage' | 'providers' | 'routing' | 'runtime' | 'permissions' | 'canon' | 'web' | 'mcp' | 'skills' | 'lsp' | 'guests' | 'acp' | 'worktrees' | 'audit' | 'help';
 export type CourtScene = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian' | 'donggong' | 'yuhuayuan' | 'gongdao' | 'jiaolou' | 'yutu';
 
 export interface Tab {
@@ -56,6 +56,10 @@ export interface UIState {
   previewBlocked: { url: string; at: number } | null;
   /** 结案 dialog for an edict's git worktree (choice = preselected 合并 / 保留分支 / 丢弃) */
   worktreeDialog: { taskId: string; choice?: string } | null;
+  /** 定时旨意 page: the schedule to show (from a 定时提议 card) */
+  scheduleFocus: string | null;
+  /** task tab: the page to open next for that edict (e.g. 'attempts' from a 比试 card); cleared once shown */
+  taskDetailTab: { taskId: string; tab: string } | null;
 }
 
 export interface AppState extends Snapshot {
@@ -67,12 +71,12 @@ export interface AppState extends Snapshot {
 const initialUI: UIState = {
   mode: 'workbench', selectedTaskId: null, tabs: [{ id: 'panel:kanban', kind: 'panel', title: '旨意看板', panel: 'kanban' }], activeTab: 'panel:kanban',
   sideView: 'explorer', settingsSection: 'appearance', kanbanView: 'board', bottomOpen: false, bottomTab: 'terminal', composerHidden: false, courtScene: 'taihe', courtDept: 'bingbu', review: null,
-  agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [], previewBlocked: null, worktreeDialog: null,
+  agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [], previewBlocked: null, worktreeDialog: null, scheduleFocus: null, taskDetailTab: null,
 };
 
 let state: AppState = {
   ready: false, tasks: [], agents: [], debates: [], sessions: [], memorials: [], approvals: [], annotations: [], news: [], settings: {} as AppState['settings'],
-  providers: [], skills: [], mcp: [], designs: [], templates: [], workspace: null, dataDir: '', version: '', platform: '', totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 },
+  providers: [], skills: [], mcp: [], designs: [], schedules: [], templates: [], workspace: null, dataDir: '', version: '', platform: '', totals: { inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 },
   activities: {}, ui: initialUI,
 };
 
@@ -195,6 +199,9 @@ export function applyEvent(e: RuntimeEvent) {
     case 'designs':
       set({ designs: e.designs });
       break;
+    case 'schedules':
+      set({ schedules: e.schedules });
+      break;
     case 'mcp':
       set({ mcp: e.servers });
       break;
@@ -312,8 +319,8 @@ export function openTab(tab: Tab) {
 }
 
 export const SETTINGS_TITLE: Record<SettingsSection, string> = {
-  appearance: '外观与通知', storage: '存储与备份', providers: '模型服务', routing: '官员模型与路由', runtime: '运行策略', permissions: '权限与审批', canon: '典章',
-  mcp: '连接服务', skills: '技能', lsp: '语言服务', acp: '编辑器接入', worktrees: '工作树', audit: '审计日志', help: '使用说明',
+  appearance: '外观与通知', storage: '存储与备份', providers: '模型服务', routing: '官员模型与路由', runtime: '运行策略', permissions: '权限与审批', canon: '典章', web: '联网与搜索',
+  mcp: '连接服务', skills: '技能', lsp: '语言服务', guests: '外部智能体', acp: '编辑器接入', worktrees: '工作树', audit: '审计日志', help: '使用说明',
 };
 
 /** Open the settings center tab on a page. */
@@ -327,7 +334,7 @@ export function openPanel(panel: PanelId) {
   if (panel === 'models') return openSettings('providers');
   if (panel === 'skills') return openSettings('skills');
   if (panel === 'settings') return openSettings();
-  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', designs: '协同设计', skills: '技能', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明', settings: '设置' };
+  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', designs: '协同设计', schedules: '定时旨意', skills: '技能', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明', settings: '设置' };
   openTab({ id: `panel:${panel}`, kind: 'panel', title: titles[panel], panel });
 }
 

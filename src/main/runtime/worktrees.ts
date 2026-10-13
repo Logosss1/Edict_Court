@@ -10,6 +10,7 @@ import { STATE_LABEL, TERMINAL } from '../../shared/court';
 import type { Runtime } from './runtime';
 import { now, sha256, truncate } from './util';
 import * as git from '../services/worktree';
+import { assignPorts, runWorktreeSetup, worktreeSetupOf } from './worktreeSetup';
 
 const ACTIONS: WorktreeAction[] = ['merge', 'keep', 'discard'];
 const ACTION_LABEL: Record<WorktreeAction, string> = { merge: '合并', keep: '保留分支', discard: '丢弃' };
@@ -45,7 +46,8 @@ const st = (rt: Runtime) => {
   return s;
 };
 
-function serial<T>(rt: Runtime, key: string, fn: () => Promise<T>): Promise<T> {
+/** Run git work on one repository one at a time (key `repo:<root>`); also used for 排班 lane worktrees. */
+export function serial<T>(rt: Runtime, key: string, fn: () => Promise<T>): Promise<T> {
   const locks = st(rt).locks;
   const run = (locks.get(key) ?? Promise.resolve()).then(fn, fn);
   const tail = run.catch(() => undefined);
@@ -58,7 +60,10 @@ const missingReason = (w: EdictWorktree) => `独立工作树已丢失：${w.path
 
 // ───────────────────────── creation (when the edict leaves triage) ─────────────────────────
 function wantsWorktree(rt: Runtime, t: Task): boolean {
-  if (rt.settings.worktreePerEdict === false || !t.workspace || t.tier === 'solo' || t.worktree) return false;
+  if (!t.workspace || t.tier === 'solo' || t.worktree) return false;
+  // a scheduled edict: 「在旨意工作树里改」 always gets one; a read-only one never needs one
+  const cap = t.schedule?.permission;
+  if (cap === 'readonly' || (cap !== 'worktree' && rt.settings.worktreePerEdict === false)) return false;
   // only before anything read or wrote files for this edict (an edict toggled on mid-flight stays where it is)
   if (t.state !== 'Pending' && t.state !== 'Taizi') return false;
   if (t.designSpec && t.design && !t.design.native && t.designSpec.roles.every((r) => r.toolAccess === 'none')) return false;
@@ -78,6 +83,7 @@ export async function prepareWorkspace(rt: Runtime, t: Task): Promise<string | n
 
 async function ensureWorktree(rt: Runtime, t: Task): Promise<void> {
   const dir = t.workspace!;
+  const setup = worktreeSetupOf(rt, rt.permRoot(t));
   const repo = await git.repoOf(dir);
   if (!repo) return; // not a git repository: works in the open folder, queued like before
   if (!repo.head) {
@@ -103,17 +109,24 @@ async function ensureWorktree(rt: Runtime, t: Task): Promise<void> {
       return;
     }
     const dirty = await git.dirtyFiles(repo.root);
-    const links = git.linkDeps(repo.root, target);
-    if (sub) links.push(...git.linkDeps(dir, path.join(target, sub)).map((n) => `${sub}/${n}`));
+    const links = setup.linkDeps ? git.linkDeps(repo.root, target) : [];
+    if (sub && setup.linkDeps) links.push(...git.linkDeps(dir, path.join(target, sub)).map((n) => `${sub}/${n}`));
     t.worktree = { path: target, branch, base: head, baseBranch: repo.branch ?? undefined, repoRoot: repo.root, sub: sub || undefined, status: 'active', createdAt: now(), links: links.length ? links : undefined, dirtyBase: dirty.length || undefined };
     t.repoRoot = t.workspace;
-    rt.audit.record('system', 'worktree_created', { path: target, branch, base: head, baseBranch: repo.branch, repoRoot: repo.root, sub: sub || null, links, dirtyBase: dirty.length }, t.id);
-    rt.activity('log', `本旨意在独立工作树中执行：分支 ${branch}（基于 ${repo.branch ?? 'HEAD'} @ ${head.slice(0, 7)}），目录 ${target}。与同一仓库的其他旨意互不干扰，结案时再定合并、保留或丢弃${links.length ? `；已链接依赖目录 ${links.join('、')}` : ''}`, { taskId: t.id, data: { worktree: target, branch } });
+    await assignPorts(rt, t.worktree);
+    const ports = t.worktree.ports;
+    rt.audit.record('system', 'worktree_created', { path: target, branch, base: head, baseBranch: repo.branch, repoRoot: repo.root, sub: sub || null, links, dirtyBase: dirty.length, ports: ports ? `${ports.from}-${ports.to}` : null }, t.id);
+    rt.activity('log', `本旨意在独立工作树中执行：分支 ${branch}（基于 ${repo.branch ?? 'HEAD'} @ ${head.slice(0, 7)}），目录 ${target}。与同一仓库的其他旨意互不干扰，结案时再定合并、保留或丢弃${links.length ? `；已链接依赖目录 ${links.join('、')}` : ''}${ports ? `；独占端口 ${ports.from}–${ports.to}` : ''}`, { taskId: t.id, data: { worktree: target, branch } });
     if (dirty.length) rt.activity('log', `⚠ 主工作区有 ${dirty.length} 处未提交的改动（${dirty.slice(0, 5).join('、')}${dirty.length > 5 ? ' 等' : ''}）：本旨意基于最后一次提交 ${head.slice(0, 7)} 工作，这些未提交的改动不包含在内`, { taskId: t.id });
     rt.touch(t);
     // cancelled while git was busy: onTerminal saw no worktree, so ask here
     if (TERMINAL.includes(t.state)) raiseWorktreeCard(rt, t);
   });
+  // 工作树准备: copy untracked files and run the workspace's script before any official starts (outside the repo lock)
+  const w = t.worktree;
+  if (w?.status === 'active' && !w.setup && (setup.script || setup.copy.length) && !TERMINAL.includes(t.state)) {
+    await runWorktreeSetup(rt, t, w, { mainDir: dir, signal: rt.signalFor(t.id) });
+  }
 }
 
 // ───────────────────────── 结案: merge / keep / discard ─────────────────────────

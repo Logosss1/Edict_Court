@@ -1,6 +1,6 @@
 // 旨意详情 — nodes (with local retry), plan versions, reviews, changes, flow chain, annotations.
-import { useState } from 'react';
-import { useStore, useTask, setUI, toast, openSettings } from '../store';
+import { useEffect, useState } from 'react';
+import { useStore, useTask, setUI, toast, openSettings, openPanel } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
@@ -9,16 +9,24 @@ import { AGENTS, AGENT_MAP, TIER_LABEL } from '../../shared/court';
 import type { AgentId, RevertResult, RunNode, Task } from '../../shared/types';
 import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode, revertTaskChanges, runRevert } from './TaskWidgets';
 import { levelLabel } from '../../shared/reasoning';
+import { PERMISSION_TEXT } from '../../shared/schedule';
 import { ActivityStream } from '../workbench/ActivityStream';
 import { openWorktreeDialog, worktreeLabel } from '../workbench/WorktreeDialog';
+import { AttemptsPanel } from './Lanes';
 
-type TabKey = 'nodes' | 'plan' | 'changes' | 'flow' | 'notes' | 'report' | 'live';
+type TabKey = 'nodes' | 'plan' | 'attempts' | 'changes' | 'flow' | 'notes' | 'report' | 'live';
 
 export function TaskDetail({ taskId }: { taskId: string }) {
   const task = useTask(taskId);
   const [tab, setTab] = useState<TabKey>('nodes');
+  const want = useStore((s) => (s.ui.taskDetailTab?.taskId === taskId ? s.ui.taskDetailTab.tab : null));
+  useEffect(() => {
+    if (!want) return;
+    setTab(want as TabKey);
+    setUI({ taskDetailTab: null });
+  }, [want]);
   if (!task) return <div className="panel muted">旨意不存在（可能已从看板移除，奏折阁中仍有归档）</div>;
-  const tabs: [TabKey, string][] = [['nodes', `执行节点 ${task.nodes.length}`], ['plan', `方案与审议 ${task.planHistory.length}/${task.reviews.length}`], ['changes', `改动与产物 ${task.changes.length}`], ['flow', `流转链 ${task.flow.length}`], ['notes', '朱批'], ['report', '回奏'], ['live', '实时活动']];
+  const tabs: [TabKey, string][] = [['nodes', `执行节点 ${task.nodes.length}`], ['plan', `方案与审议 ${task.planHistory.length}/${task.reviews.length}`], ...(task.attempts?.length ? [['attempts', `比试 ${task.attempts.length}`] as [TabKey, string]] : []), ['changes', `改动与产物 ${task.changes.length}`], ['flow', `流转链 ${task.flow.length}`], ['notes', '朱批'], ['report', '回奏'], ['live', '实时活动']];
   return (
     <div className="panel task-detail" data-testid="task-detail">
       <div className="td-head">
@@ -27,6 +35,12 @@ export function TaskDetail({ taskId }: { taskId: string }) {
           <h2 className="ellipsis">{task.title}</h2>
           <code className="muted">{task.id}</code>
         </div>
+        {task.schedule && (
+          <div className="small td-sch" data-testid="td-schedule">
+            <Icon name="clock" size={12} /> 定时旨意「{task.schedule.title}」{task.schedule.catchUp ? '补跑错过的一次' : '按时下达'} · 权限：{PERMISSION_TEXT[task.schedule.permission].label}
+            <button className="link small" onClick={() => { setUI({ scheduleFocus: task.schedule!.id }); openPanel('schedules'); }}>查看定时设置</button>
+          </div>
+        )}
         <div className="muted small">{task.design && !task.design.native ? `协同设计「${task.design.name}」v${task.design.version}（${task.design.hash.slice(0, 8)}）` : TIER_LABEL[task.tier]} · 下旨 {fmtTime(task.createdAt)} · 工作区 {task.workspace ?? '（无）'}</div>
         <Pipeline task={task} />
         <UsageLine task={task} />
@@ -42,10 +56,11 @@ export function TaskDetail({ taskId }: { taskId: string }) {
       <div className="edict-text"><span className="muted small">原旨</span><div>{task.edict}</div></div>
       {task.gate && <GateCard task={task} />}
       <div className="subtabs">
-        {tabs.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)}>{l}</button>)}
+        {tabs.map(([k, l]) => <button key={k} className={tab === k ? 'on' : ''} onClick={() => setTab(k)} data-testid={`td-tab-${k}`}>{l}</button>)}
       </div>
       {tab === 'nodes' && <Nodes task={task} />}
       {tab === 'plan' && <PlanHistory task={task} />}
+      {tab === 'attempts' && <AttemptsPanel task={task} />}
       {tab === 'changes' && <ChangesList task={task} />}
       {tab === 'flow' && (
         <div className="flow-chain">
@@ -67,7 +82,7 @@ function Nodes({ task }: { task: Task }) {
         {task.nodes.map((n) => (
           <tr key={n.id} className={`node-${n.status}`}>
             <td>{n.label}<div className="muted small"><code>{n.id}</code></div></td>
-            <td><AgentChip id={n.agentId} small /></td>
+            <td><AgentChip id={n.agentId} small />{n.guest && <div className="muted small" data-testid="td-node-guest">客卿 {n.guest.name} 代办</div>}</td>
             <td><span className={`node-status st-${n.status}`}>{({ pending: '待执行', running: '执行中', done: '完成', failed: '失败', skipped: '跳过', waiting: '等待', cancelled: '中断' } as Record<string, string>)[n.status]}</span>{n.exitStatus && <div className="muted small">exit={n.exitStatus}</div>}</td>
             <td>{n.attempts}</td>
             <td className="small">{n.model ?? '—'}{n.effort && <span className="chip chip-sm" title="思考程度">{levelLabel(n.effort)}</span>}<div className="muted"><code>{n.runId ?? ''}</code></div></td>
@@ -98,6 +113,12 @@ function WorktreeBadge({ task }: { task: Task }) {
       <code>{w.branch}</code>
       <span className={`chip chip-sm ${l.tone === 'gold' ? 'warn' : ''}`}>{l.status}</span>
       <span className="muted small ellipsis" title={w.path}>{w.status === 'active' ? w.path : w.status === 'merged' ? `合并提交 ${w.mergeCommit?.slice(0, 7) ?? '—'}` : w.status === 'kept' ? `最新提交 ${w.commit?.slice(0, 7) ?? '—'}` : ''}{w.conflicts?.length ? ` · 冲突：${w.conflicts.slice(0, 3).join('、')}` : w.error ? ` · ${w.error}` : ''}</span>
+      {w.status === 'active' && w.ports && <span className="chip chip-sm" title="本旨意的命令用这些端口（$EDICT_PORT）" data-testid="td-wt-ports">端口 {w.ports.from}–{w.ports.to}</span>}
+      {w.setup && !w.setup.noScript && (
+        <span className={`chip chip-sm ${w.setup.ok ? 'ok' : 'warn'}`} title={w.setup.output ? w.setup.output.slice(-1500) : undefined} data-testid="td-wt-setup">
+          {w.setup.ok ? `准备脚本完成 ${Math.round((w.setup.durationMs ?? 0) / 1000)} 秒` : w.setup.timedOut ? '准备脚本超时' : `准备脚本失败（${w.setup.exitCode ?? '—'}）`}
+        </span>
+      )}
       {((w.status === 'active' && terminal) || w.status === 'kept') && (
         <>
           {(w.status === 'kept' || task.state === 'Done') && <button className="btn sm primary" onClick={() => openWorktreeDialog(task.id, 'merge')} data-testid="td-wt-merge">合并…</button>}

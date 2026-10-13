@@ -17,7 +17,7 @@ const CARD_H = 64;
 const GAP = 8;
 const PAD = 10;
 const EMPTY_LANE = 30;
-const TYPE_ICON: Record<StepType, string> = { agent: 'play', plan: 'scroll', review: 'gavel', fanout: 'users', summary: 'book', gate: 'flag' };
+const TYPE_ICON: Record<StepType, string> = { agent: 'play', plan: 'scroll', review: 'gavel', fanout: 'users', summary: 'book', gate: 'flag', check: 'check' };
 
 type Drag =
   | { kind: 'move'; idx: number }
@@ -215,7 +215,7 @@ export function FlowCanvas({ draft, onChange, selected, onSelect, errors }: Prop
     edges.push(
       <g key={`r${i}`}>
         <path d={`M${x1},${y1} C${x1},${dip} ${x2},${dip} ${x2},${y2 + 6}`} className="fc-reject" markerEnd="url(#fc-arrow-r)" />
-        <text x={(x1 + x2) / 2} y={dip - 4} className="fc-reject-t" textAnchor="middle">封驳 ≤{s.onReject.max}</text>
+        <text x={(x1 + x2) / 2} y={dip - 4} className="fc-reject-t" textAnchor="middle">{s.type === 'check' ? '补办' : '封驳'} ≤{s.onReject.max}</text>
       </g>,
     );
   });

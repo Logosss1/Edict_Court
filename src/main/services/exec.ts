@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import os from 'node:os';
+import { sandboxBackend } from './sandbox';
 
 export interface ExecResult {
   exitCode: number | null;
@@ -34,12 +35,15 @@ export function safeEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
-export function runCommand(cmd: string, cwd: string, opts: { timeoutMs?: number; maxOutput?: number; signal?: AbortSignal } = {}): Promise<ExecResult> {
+/** `sandboxProfile`: run under the command sandbox (macOS sandbox-exec) with this profile. */
+/** `env`: extra variables for the command (e.g. the edict's EDICT_PORT). */
+export function runCommand(cmd: string, cwd: string, opts: { timeoutMs?: number; maxOutput?: number; signal?: AbortSignal; sandboxProfile?: string; env?: Record<string, string> } = {}): Promise<ExecResult> {
   const timeoutMs = opts.timeoutMs ?? 120_000;
   const maxOut = opts.maxOutput ?? 64 * 1024;
   const started = Date.now();
   return new Promise((resolve) => {
-    const child = spawn(userShell(), ['-lc', cmd], { cwd, env: safeEnv(), detached: process.platform !== 'win32' });
+    const argv = opts.sandboxProfile ? sandboxBackend().wrap(opts.sandboxProfile, userShell(), cmd) : { file: userShell(), args: ['-lc', cmd] };
+    const child = spawn(argv.file, argv.args, { cwd, env: safeEnv({ ...opts.env, ...(opts.sandboxProfile ? { EDICT_SANDBOX: '1' } : {}) }), detached: process.platform !== 'win32' });
     let stdout = '';
     let stderr = '';
     let timedOut = false;

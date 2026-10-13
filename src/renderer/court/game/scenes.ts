@@ -121,6 +121,13 @@ export function replaySteps(t: Task): ReplayStep[] {
         steps.push({ actor: 'menxia', anim: r?.verdict === 'reject' ? 'reject' : 'read', title: '门下省复核', text: r?.verdict === 'reject' ? `驳回：${r.comment || '尚需修改'}` : '复核无误' });
         break;
       }
+      case 'check': {
+        const c = t.requirementChecks?.find((x) => x.nodeId === n.id);
+        const met = c ? c.items.filter((i) => i.verdict === 'met').length : 0;
+        const unmet = c ? c.items.filter((i) => i.verdict === 'unmet').length : 0;
+        steps.push({ actor: 'menxia', anim: unmet ? 'reject' : 'read', title: '门下对照检查', text: c ? `逐条勾验：满足 ${met}/${c.items.length}${unmet ? (c.supplements.length ? `，${unmet} 条发回补办` : `，${unmet} 条未满足`) : ''}` : '逐条勾验需求' });
+        break;
+      }
       case 'solo': steps.push({ actor: 'solo', anim: 'write', title: '独相办理', text: n.label || '亲自办理' }); break;
       case 'debate': steps.push({ actor: 'zhongshu', anim: 'talk', title: '朝堂议政', text: '百官廷议' }); break;
       case 'step': {

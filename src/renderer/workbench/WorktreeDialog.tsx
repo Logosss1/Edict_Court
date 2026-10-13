@@ -135,7 +135,7 @@ function WorktreeDialog({ taskId, initial }: { taskId: string; initial?: string 
               return (
                 <div key={f.path} className="wt-f">
                   <code className="ellipsis" title={f.path}>{f.path}</code>
-                  {ch?.via === 'command' ? <span className="chg-tag cmd" title={ch.command}>命令 {ch.command && ch.command.length > 18 ? `${ch.command.slice(0, 17)}…` : ch.command}</span> : ch ? <span className="chg-tag">{AGENT_MAP[ch.agentId]?.name}</span> : null}
+                  {ch?.via === 'command' ? <span className="chg-tag cmd" title={ch.command}>命令 {ch.command && ch.command.length > 18 ? `${ch.command.slice(0, 17)}…` : ch.command}</span> : ch?.via === 'guest' ? <span className="chg-tag guest" title="客卿用它自带的工具改的">客卿 {ch.command}</span> : ch ? <span className="chg-tag">{AGENT_MAP[ch.agentId]?.name}</span> : null}
                   <span className="wt-num">{f.binary ? <span className="muted">二进制</span> : <><span className="add">+{f.added}</span>{f.removed ? <span className="del"> −{f.removed}</span> : null}</>}</span>
                 </div>
               );

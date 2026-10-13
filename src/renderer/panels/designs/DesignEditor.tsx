@@ -335,7 +335,7 @@ function StepForm({ draft, step, onChange, onRenamed, onRemoved, errors }: { dra
   const patch = (p: Partial<StepSpec>) => onChange({ ...clone(draft), steps: draft.steps.map((s) => (s.id === step.id ? clean({ ...s, ...p }) : s)) });
   const setType = (type: StepType) => {
     const fresh = newStep({ ...draft, steps: before }, type);
-    patch({ type, output: OUTPUTS[type][0], role: type === 'fanout' || type === 'gate' ? undefined : step.role ?? fresh.role, executors: fresh.executors, planStep: fresh.planStep, onReject: fresh.onReject, gate: fresh.gate, parallel: ['review', 'gate', 'plan', 'fanout'].includes(type) ? undefined : step.parallel });
+    patch({ type, output: OUTPUTS[type][0], role: type === 'fanout' || type === 'gate' ? undefined : step.role ?? fresh.role, executors: fresh.executors, planStep: fresh.planStep, onReject: fresh.onReject, gate: fresh.gate, parallel: ['review', 'gate', 'plan', 'fanout', 'check'].includes(type) ? undefined : step.parallel });
   };
   const toggleExec = (id: string) => {
     const ex = new Set(step.executors ?? []);
@@ -386,6 +386,28 @@ function StepForm({ draft, step, onChange, onRenamed, onRemoved, errors }: { dra
           </div>
         </div>
       )}
+      {step.type === 'check' && (
+        <>
+          <div className="field"><label>对照哪个规划的需求说明</label>
+            <select className="input" value={step.planStep ?? ''} onChange={(e) => patch({ planStep: e.target.value || undefined })} data-testid="sf-check-plan">
+              <option value="">（请选择）</option>
+              {before.filter((s) => s.type === 'plan').map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
+          <div className="field"><label>没做到的交给谁补办</label>
+            <select className="input" value={step.onReject?.goto ?? ''} onChange={(e) => patch({ onReject: e.target.value ? { goto: e.target.value, max: step.onReject?.max ?? 1 } : undefined })} data-testid="sf-check-fanout">
+              <option value="">不补办，只记录</option>
+              {before.filter((s) => s.type === 'fanout' && s.planStep === step.planStep).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
+            </select>
+          </div>
+          {step.onReject && (
+            <div className="field"><label>最多补办几轮</label>
+              <input className="input" type="number" min={0} max={10} value={step.onReject.max} onChange={(e) => patch({ onReject: { ...step.onReject!, max: Math.max(0, Math.min(10, Number(e.target.value) || 0)) } })} />
+            </div>
+          )}
+          <div className="field wide muted small">规划步骤会先写《需求说明》（目标、不做的事、逐条验收标准），每个子任务标明负责哪几条；这一步逐条检查，满足的要有证据。补办后仍没做到的，会在御批时标为成果存疑。</div>
+        </>
+      )}
       {step.type === 'fanout' && (
         <div className="field"><label>按哪个规划分派</label>
           <select className="input" value={step.planStep ?? ''} onChange={(e) => patch({ planStep: e.target.value || undefined })}>
@@ -429,7 +451,7 @@ function StepForm({ draft, step, onChange, onRenamed, onRemoved, errors }: { dra
         </div>
       </div>
       <div className="field wide row-gap wrap">
-        {!['review', 'gate', 'plan', 'fanout'].includes(step.type) && idx > 0 && (
+        {!['review', 'gate', 'plan', 'fanout', 'check'].includes(step.type) && idx > 0 && (
           <label className="row-gap small"><input type="checkbox" checked={!!step.parallel} onChange={(e) => patch({ parallel: e.target.checked || undefined })} data-testid="sf-parallel" /> 与上一步同时进行</label>
         )}
         <label className="row-gap small"><input type="checkbox" checked={!!step.optional} onChange={(e) => patch({ optional: e.target.checked || undefined })} /> 可选（卡住时允许跳过）</label>

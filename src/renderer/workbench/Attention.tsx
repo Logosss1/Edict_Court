@@ -1,18 +1,26 @@
 // 「需要你处理」 cards with inline actions — used by the 待办 side view and the Kanban lane.
 import { useState } from 'react';
-import { selectTask, setUI, toast } from '../store';
+import { openPanel, selectTask, setUI, toast } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { fmtAgo } from '../common/format';
 import { useAttention, type AttentionItem } from '../common/attention';
 import { openWorktreeDialog } from './WorktreeDialog';
+import { openAttempts } from '../panels/Lanes';
+import { SearchSetupDialog } from '../settings/pages/Web';
 
 const KIND_ICON: Record<AttentionItem['kind'], string> = {
-  write_task: 'edit', question: 'help', approval: 'shield', risk: 'alert', plan: 'scroll', final: 'scroll', decide: 'gate', blocked: 'alert', merge: 'merge',
+  write_task: 'edit', question: 'help', approval: 'shield', risk: 'alert', plan: 'scroll', final: 'scroll', decide: 'gate', blocked: 'alert', merge: 'merge', schedule: 'clock', attempt: 'layers',
 };
 
 /** Open the edict in the agent pane (where the full card lives). */
 export function focusItem(it: AttentionItem) {
+  // an official's 定时 proposal is looked at on the 定时旨意 page
+  if (it.kind === 'schedule') {
+    setUI({ mode: 'workbench', scheduleFocus: it.approval?.tool.replace(/^schedule:/, '') ?? null });
+    openPanel('schedules');
+    return;
+  }
   if (it.taskId) selectTask(it.taskId);
   setUI({ mode: 'workbench' });
   setTimeout(() => document.querySelector<HTMLElement>(`[data-ap-id="${it.approval?.id ?? ''}"], [data-testid=gate-card]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 80);
@@ -30,6 +38,7 @@ async function run(p: Promise<unknown>, ok?: string) {
 /** Inline buttons for one item: the common answers, plus 更多… to open the full card. */
 export function AttnActions({ it }: { it: AttentionItem }) {
   const [busy, setBusy] = useState(false);
+  const [setup, setSetup] = useState(false);
   const go = (p: () => Promise<unknown>, ok?: string) => async () => {
     setBusy(true);
     await run(p(), ok);
@@ -57,6 +66,38 @@ export function AttnActions({ it }: { it: AttentionItem }) {
           {has('merge') && <button className="btn sm primary" onClick={() => openWorktreeDialog(a.taskId!, 'merge')} data-testid="attn-wt-merge">合并</button>}
           {has('keep') && <button className={`btn sm ${has('merge') ? '' : 'primary'}`} disabled={busy} onClick={go(() => call('decideApproval', a.id, true, 'keep'))} data-testid="attn-wt-keep">保留分支</button>}
           {has('discard') && <button className="btn sm" onClick={() => openWorktreeDialog(a.taskId!, 'discard')} data-testid="attn-wt-discard">丢弃</button>}
+        </div>
+      );
+    }
+    // 定时提议: approve, approve but keep it off to edit first, or drop it
+    if (it.kind === 'schedule') {
+      return (
+        <div className="a-act">
+          <button className="btn sm primary" disabled={busy} onClick={go(() => call('decideApproval', a.id, true, 'approve'), '已准奏，按时下旨')} data-testid="attn-sch-approve">准奏</button>
+          <button className="btn sm" disabled={busy} onClick={go(() => call('decideApproval', a.id, true, 'paused'), '已排上，先停用')} data-testid="attn-sch-paused">先停用</button>
+          <button className="btn sm" disabled={busy} onClick={go(() => call('decideApproval', a.id, false, 'deny'), '提议作废')} data-testid="attn-sch-deny">不必</button>
+          {more('查看')}
+        </div>
+      );
+    }
+    // 排班办完: look at the lanes side by side, or take 门下省's pick at once
+    if (it.kind === 'attempt' && a.taskId) {
+      const rec = choices.find((c) => c.approve && c.tone === 'primary');
+      return (
+        <div className="a-act">
+          <button className="btn sm primary" onClick={() => openAttempts(a.taskId!)} data-testid="attn-attempts-open">打开比试</button>
+          {rec && <button className="btn sm" disabled={busy} onClick={go(() => call('decideApproval', a.id, true, rec.id), rec.label.replace(/（.*）$/, ''))} data-testid="attn-attempt-rec">{rec.label.replace(/（.*）$/, '')}</button>}
+        </div>
+      );
+    }
+        // 上疏 for search: 配置 opens the setup; the petition is answered once the service is saved
+    if (a.kind === 'search_setup') {
+      return (
+        <div className="a-act">
+          <button className="btn sm primary" onClick={() => setSetup(true)} data-testid="attn-choice-configure">配置搜索服务</button>
+          {choices.some((c) => c.id === 'fetch_only') && <button className="btn sm" disabled={busy} onClick={go(() => call('decideApproval', a.id, true, 'fetch_only'), '这道旨意只用抓取')} data-testid="attn-choice-fetch_only">只用抓取</button>}
+          {more()}
+          {setup && <SearchSetupDialog onClose={() => setSetup(false)} onSaved={() => { setSetup(false); void run(call('decideApproval', a.id, true, 'configure'), '搜索服务已设好，接着搜索'); }} />}
         </div>
       );
     }
@@ -122,9 +163,10 @@ export function InboxView() {
   const groups: { title: string; kinds: AttentionItem['kind'][] }[] = [
     { title: '请你批准', kinds: ['write_task', 'approval', 'risk'] },
     { title: '官员请旨', kinds: ['question'] },
-    { title: '御览与御批', kinds: ['plan', 'final', 'decide'] },
+    { title: '御览与御批', kinds: ['plan', 'final', 'decide', 'attempt'] },
     { title: '阻塞', kinds: ['blocked'] },
     { title: '结案合并', kinds: ['merge'] },
+    { title: '定时提议', kinds: ['schedule'] },
   ];
   return (
     <div className="side-view inbox-view" data-testid="inbox">

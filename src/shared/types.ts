@@ -82,6 +82,22 @@ export interface Subtask {
   dependsOn: string[];
   /** missing = read */
   effect?: SubtaskEffect;
+  /** 需求说明: ids of the acceptance criteria this subtask delivers */
+  covers?: string[];
+  /** added by the requirement check to make up an unmet requirement */
+  supplement?: boolean;
+  /** 客卿 (2.1): who does it: 'self' = the ministry's own official, a guest id = that outside agent; absent = the ministry's default */
+  executor?: string;
+  /** 排班 (2.1): 2–3 lanes do it side by side, each in its own worktree; the emperor picks one. Absent = one lane */
+  lanes?: LaneSpec[];
+  /** 中书省 thinks it is worth trying more than once (only a suggestion; the emperor decides) */
+  suggestAttempts?: string;
+}
+
+/** One lane of a multi-attempt subtask: who does it, optionally with which model (Edict officials only). */
+export interface LaneSpec {
+  executor: string;
+  model?: ModelRef | null;
 }
 
 /** What the emperor granted one exec node: write (normal permission mode), write_free (no asks except high risk), readonly. */
@@ -91,6 +107,33 @@ export interface Plan {
   summary: string;
   subtasks: Subtask[];
   risks: string[];
+  /** 需求说明 (2.1): written by 中书省 before the subtasks; absent on older plans */
+  requirements?: Requirements;
+}
+
+/** One numbered acceptance criterion of the 需求说明 (ids R1, R2 … shown as 需1, 需2 …). */
+export interface Requirement {
+  id: string;
+  text: string;
+}
+export interface Requirements {
+  goal: string;
+  outOfScope: string[];
+  criteria: Requirement[];
+  constraints: string[];
+  /** the planner gave none: criteria were taken from the subtasks' acceptance lines */
+  derived?: boolean;
+}
+
+export type RequirementVerdict = 'met' | 'unmet' | 'unknown';
+/** 对照检查: every criterion judged against the recorded evidence after the ministries finish. */
+export interface RequirementCheck {
+  round: number;
+  at: number;
+  nodeId: string;
+  items: { id: string; text: string; verdict: RequirementVerdict; evidence: string; note?: string }[];
+  /** make-up subtasks this check added */
+  supplements: string[];
 }
 
 export interface PlanVersion {
@@ -121,8 +164,11 @@ export type NodeKind =
   | 'exec'
   | 'summary'
   | 'result_review'
+  | 'check'
   | 'solo'
-  | 'step';
+  | 'step'
+  | 'lane' // 2.1 排班: one lane's run of a multi-attempt subtask
+  | 'judge'; // 2.1 排班: 门下省 scores the lanes
 
 export type NodeStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'waiting' | 'cancelled';
 
@@ -154,6 +200,8 @@ export interface RunNode {
   grant?: NodeGrant; // exec nodes: what the emperor allowed (write-task dialog / escalation)
   grantNote?: string; // the emperor's note given with the grant
   sideEffects?: boolean; // a write, command or non-read MCP call ran in this node (not auto-resumed after restart)
+  guest?: { id: string; name: string }; // 2.1: done by this outside agent (客卿) instead of the ministry's own official
+  laneId?: string; // 2.1: one lane of a multi-attempt subtask (works in that lane's worktree)
 }
 
 export type GateKind = 'plan' | 'final' | 'budget' | 'reject_limit' | 'risk';
@@ -185,9 +233,9 @@ export interface FileChange {
   nodeId?: string;
   at: number;
   reverted?: boolean;
-  /** how the file changed: a file tool (also every record without this field) or a side effect of run_command */
-  via?: 'tool' | 'command';
-  /** the run_command text, when via === 'command' */
+  /** how the file changed: a file tool (also every record without this field), a side effect of run_command, or a 客卿's own built-in tool (2.1) */
+  via?: 'tool' | 'command' | 'guest';
+  /** the run_command text, when via === 'command'; the guest's name when via === 'guest' */
   command?: string;
   /** over the snapshot size cap: listed without content (hashes null), no diff, cannot be reverted */
   oversize?: boolean;
@@ -262,8 +310,75 @@ export interface Task {
   skillsUsed?: SkillUse[]; // load_skill calls during this edict
   canonUsed?: string[]; // 典章 entries injected into this edict's prompts
   questions?: EdictQuestion[]; // 请旨 (ask_emperor) asked during this edict
+  /** 联网: the emperor chose 「只用抓取」 or declined setting up search for this edict (asked once per edict) */
+  webSearchDeclined?: boolean;
+  /** 需求对照检查 results, newest last */
+  requirementChecks?: RequirementCheck[];
+  /** 定时旨意: the schedule that issued this edict (absent = issued by hand) */
+  schedule?: TaskScheduleRef;
+  /** permission mode for this edict only (a schedule's cap); absent = the global setting */
+  permissionMode?: PermissionMode;
+  /** 排班 (2.1): subtasks done by several lanes side by side */
+  attempts?: SubtaskAttempts[];
   execRound?: number; // 1 = first execution; >1 = rework rounds
   rework?: { round: number; targets: string[]; feedback: string; by: 'menxia' | 'emperor' };
+}
+
+// ───────────── 定时旨意 (2.1) ─────────────
+/** When a schedule fires (local time). `court` = each morning court (06:00). */
+export type ScheduleRule =
+  | { kind: 'daily'; time: string }
+  | { kind: 'weekly'; days: number[]; time: string }
+  | { kind: 'interval'; hours: number }
+  | { kind: 'court' }
+  | { kind: 'once'; at: number };
+/** What a scheduled edict may do: read only / ask for every change / change freely inside its own worktree. */
+export type SchedulePermission = 'readonly' | 'ask' | 'worktree';
+export type ScheduleStop = { kind: 'never' } | { kind: 'count'; n: number } | { kind: 'until'; at: number };
+export interface ScheduleRun {
+  at: number;
+  outcome: 'started' | 'skipped' | 'failed';
+  taskId?: string;
+  /** fired late, for a time Edict was closed or the Mac asleep */
+  catchUp?: boolean;
+  note?: string;
+}
+export interface EdictSchedule {
+  id: string;
+  title: string;
+  /** the edict text issued each time */
+  text: string;
+  workspace: string | null;
+  tier: Tier;
+  designId?: string;
+  model?: ModelRef | null;
+  effort?: string;
+  rule: ScheduleRule;
+  permission: SchedulePermission;
+  stop: ScheduleStop;
+  /** a time missed while Edict was closed or the Mac asleep: run once when back, or skip it */
+  missed: 'once' | 'skip';
+  enabled: boolean;
+  createdAt: number;
+  updatedAt: number;
+  /** who set it up; an official's proposal only takes effect once the emperor approves it */
+  origin: { by: 'emperor' } | { by: 'official'; agentId: AgentId; taskId?: string; reason?: string };
+  /** an official's proposal still waiting for the emperor (not scheduled until approved) */
+  proposal?: 'pending';
+  runs: number;
+  nextAt: number | null;
+  lastRunAt?: number;
+  lastTaskId?: string;
+  /** set when the stop rule ended it */
+  ended?: string;
+  history: ScheduleRun[];
+}
+export interface TaskScheduleRef {
+  id: string;
+  title: string;
+  permission: SchedulePermission;
+  firedAt: number;
+  catchUp?: boolean;
 }
 
 export type WorktreeStatus = 'active' | 'merged' | 'kept' | 'discarded';
@@ -286,6 +401,8 @@ export interface EdictWorktree {
   mergeCommit?: string;
   conflicts?: string[]; // files that blocked the last merge attempt
   error?: string; // last finish failure
+  ports?: PortBlock; // 2.1: ports this edict's commands should use (EDICT_PORT)
+  setup?: WorktreeSetupRun; // 2.1: the 工作树准备 run
 }
 
 /** Outcome of worktreeFinish (also what the 结案 card's choice did). */
@@ -362,7 +479,7 @@ export interface Activity {
   streaming?: boolean;
 }
 
-export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree';
+export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree' | 'search_setup' | 'sandbox' | 'web_domain' | 'schedule' | 'attempt' | 'guest';
 
 export interface EdictQuestion {
   id: string;
@@ -423,6 +540,140 @@ export interface WorkspacePerms {
   rules: AllowRule[];
   /** release / deploy commands (git push, npm publish, deploy CLIs) run without asking in this workspace */
   releaseAlways?: boolean;
+  /** 命令沙箱: extra folders commands in this workspace may write */
+  sandboxWritable?: string[];
+  /** 工作树准备 (2.1): what runs in each new edict worktree of this workspace */
+  worktreeSetup?: WorktreeSetup;
+}
+
+/** 工作树准备 (2.1): files copied from the main folder and a script run in every new edict worktree. */
+export interface WorktreeSetup {
+  /** shell script run in the new worktree (empty = none), as the emperor, outside the command sandbox */
+  script: string;
+  /** untracked files copied over (relative paths; * and ? in the last part), e.g. .env */
+  copy: string[];
+  /** symlink node_modules / .venv / venv from the main folder (default on) */
+  linkDeps: boolean;
+  /** minutes before the script is stopped */
+  timeoutMin: number;
+}
+
+/** 排班 (2.1): one lane's run of a multi-attempt subtask. */
+export interface AttemptLane {
+  id: string;
+  /** 甲 / 乙 / 丙 */
+  label: string;
+  executor: string;
+  model?: ModelRef | null;
+  nodeId: string;
+  /** its own worktree, branched from the edict worktree as it was when the lanes started */
+  worktree?: EdictWorktree;
+  /** 门下省's score 0–100 and reasons */
+  score?: number;
+  comment?: string;
+  diff?: { files: number; added: number; removed: number };
+  /** blob: the lane's whole diff against the base (kept after its worktree is gone, for 比试 and the 奏折) */
+  diffHash?: string;
+  /** git tree of the lane's worktree when it finished (what goes in when it is picked) */
+  tree?: string;
+  /** file changes the lane made in its own worktree (not the edict's: they go in only when it is picked) */
+  changes?: FileChange[];
+}
+
+/** 排班 (2.1): a subtask done by several lanes; the emperor (or 门下省 in 全自动) picks the one that goes in. */
+export interface SubtaskAttempts {
+  id: string;
+  subtaskId: string;
+  /** the subtask's exec node the lanes stand in for */
+  nodeId: string;
+  /** exec round (返工 rounds run the lanes again) */
+  round: number;
+  /** commit holding the edict worktree's state when the lanes started */
+  base: string;
+  lanes: AttemptLane[];
+  status: 'running' | 'judging' | 'choosing' | 'applied' | 'failed';
+  judgeNodeId?: string;
+  /** 门下省's pick and why */
+  recommended?: string;
+  judgeNote?: string;
+  /** the lane whose changes went into the edict worktree */
+  pick?: string;
+  pickedBy?: 'emperor' | 'menxia';
+  /** the other lanes' branches were kept (edict/<id>-<lane>) */
+  keptOthers?: boolean;
+  /** asked for on the 比试 page before picking */
+  keepOthersRequested?: boolean;
+  /** files a 3-way merge could not combine (the edict's own version was kept) */
+  conflicts?: string[];
+  error?: string;
+  at: number;
+}
+
+/** 客卿 (2.1): outside coding agents Edict drives over ACP to do ministries' subtasks. */
+export type GuestKind = 'claude' | 'codex' | 'gemini' | 'opencode' | 'custom';
+export interface GuestConfig {
+  id: string;
+  name: string;
+  kind: GuestKind;
+  enabled: boolean;
+  /** custom: the program; built-in: an override path (empty = look for it) */
+  command?: string;
+  args?: string[];
+}
+export interface GuestSettings {
+  /** built-ins the emperor changed, and custom ones */
+  agents: GuestConfig[];
+  /** ministry → guest id that does its subtasks unless the plan says otherwise */
+  deptDefault: Partial<Record<MinistryId, string>>;
+  /** 排班 buttons on the Court Lite plan card too (Full Court always has them) */
+  attemptsInLite: boolean;
+}
+/** What the settings page shows about one guest. */
+export interface GuestStatus {
+  id: string;
+  name: string;
+  kind: GuestKind;
+  builtIn: boolean;
+  /** a built-in the emperor gave his own command line */
+  overridden?: boolean;
+  enabled: boolean;
+  found: boolean;
+  path?: string;
+  args?: string[];
+  installHint?: string;
+  loginHint?: string;
+  note?: string;
+  homepage?: string;
+}
+export interface GuestTestResult {
+  ok: boolean;
+  message: string;
+  agentName?: string;
+  agentVersion?: string;
+  needsLogin?: boolean;
+  ms: number;
+}
+
+/** A block of ports one worktree has to itself (EDICT_PORT = from). */
+export interface PortBlock {
+  from: number;
+  to: number;
+}
+
+/** What the 工作树准备 did in one worktree. */
+export interface WorktreeSetupRun {
+  at: number;
+  copied: string[];
+  /** copy entries that matched nothing */
+  missing?: string[];
+  /** no script configured */
+  noScript?: boolean;
+  ok: boolean;
+  exitCode?: number | null;
+  timedOut?: boolean;
+  durationMs?: number;
+  /** last part of the script's output */
+  output?: string;
 }
 
 export interface DebateMessage {
@@ -471,7 +722,7 @@ export interface Session {
 }
 
 export interface MemorialStage {
-  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'questions' | 'skills' | 'report';
+  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'questions' | 'skills' | 'requirements' | 'attempts' | 'report';
   label: string;
   at?: number;
   items: string[];
@@ -660,11 +911,57 @@ export interface Settings {
   commandSnapshots: boolean;
   /** each court edict on a git repository works in its own worktree (branch edict/<id>), merged on 结案 */
   worktreePerEdict: boolean;
+  /** first port handed to edict worktrees; each gets a block of 10 (2.1) */
+  worktreePortBase: number;
+  /** 客卿 and 排班 (2.1) */
+  guests: GuestSettings;
   /** desktop notifications (window not focused): all · only what needs the emperor · none */
   notify: NotifyPref;
+  /** 联网: web_fetch policy and the search service officials use */
+  web: WebSettings;
+  /** 命令沙箱: officials' commands run under macOS sandbox-exec */
+  sandbox: SandboxSettings;
+  /** 需求说明与对照检查, per tier; maxSupplement = rounds of make-up subtasks for unmet requirements */
+  requirementCheck: { lite: boolean; full: boolean; maxSupplement: number };
 }
 
 export type NotifyPref = 'all' | 'attention' | 'off';
+
+/** 联网 (2.1): web_fetch is on by default; web_search works once a search service is set. */
+export type WebFetchPolicy = 'allow' | 'ask' | 'off';
+export type SearchProviderKind = 'brave' | 'tavily' | 'searxng' | 'model';
+export interface SearchConfig {
+  provider: SearchProviderKind;
+  /** SearXNG base URL */
+  url?: string;
+  /** 模型自带搜索: which configured model searches */
+  model?: ModelRef;
+}
+export interface WebSettings {
+  fetch: WebFetchPolicy;
+  search: SearchConfig | null;
+  /** fetch = 'ask': domains the emperor allowed permanently */
+  domains: string[];
+}
+/** What the renderer may know about the search setup (never the keys themselves). */
+export interface WebStatus {
+  web: WebSettings;
+  hasKey: Record<SearchProviderKind, boolean>;
+  /** a search service is chosen and has what it needs */
+  searchReady: boolean;
+}
+
+/** 命令沙箱 (2.1): what officials' commands may write and read; network on by default. */
+export interface SandboxSettings {
+  enabled: boolean;
+  network: boolean;
+  /** extra writable folders for every workspace (besides the workspace, temp and package caches) */
+  writable: string[];
+  /** package-manager caches that stay writable (editable) */
+  caches: string[];
+  /** folders commands may not read */
+  denyRead: string[];
+}
 
 /** 存储与备份: where the data lives and the copies made of it. */
 export interface StorageBackup {
@@ -718,6 +1015,7 @@ export interface Snapshot {
   mcp: McpServerState[];
   designs: DesignInfo[];
   templates: Template[];
+  schedules: EdictSchedule[];
   workspace: string | null;
   dataDir: string;
   version: string;
@@ -750,6 +1048,7 @@ export type RuntimeEvent =
   | { type: 'preview_blocked'; url: string }
   | { type: 'mcp'; servers: McpServerState[] }
   | { type: 'designs'; designs: DesignInfo[] }
+  | { type: 'schedules'; schedules: EdictSchedule[] }
   | { type: 'lsp_diagnostics'; path: string; server: string; diagnostics: LspDiagnostic[] }
   | { type: 'lsp_status' };
 

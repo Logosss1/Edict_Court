@@ -57,7 +57,8 @@ for (const protocol of ['openai-chat', 'anthropic-messages', 'openai-responses']
     decideGate(rt, id, { approve: true, comment: '准' });
     assert.equal(stateOf(rt, id), 'Done');
     const m = rt.memorials.get(id)!;
-    assert.equal(m.stages.length, 5);
+    assert.deepEqual(m.stages.map((x) => x.key), ['edict', 'zhongshu', 'menxia', 'ministries', 'requirements', 'report']);
+    assert.ok(m.stages.find((x) => x.key === 'requirements')!.items.some((i) => i.startsWith('✅ 需1')), '需求对照 checklist in the memorial');
     assert.ok(m.artifacts.some((a) => a.path === 'greet.js' && a.sha256.length === 64));
     assert.ok(rt.audit.verify().ok);
     rt.dispose();

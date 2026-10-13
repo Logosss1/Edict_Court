@@ -15,6 +15,7 @@ import {
   type GateDecision,
 } from './orchestrator';
 import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt, scheduleExec, toolsForNode } from './execPolicy';
+import { CHECK_TOOLS, REQUIREMENTS_PROMPT, ownedRequirementsText, runRequirementCheck, supplementPlan, unmetRequirements, unmetText, withRequirements } from './requirements';
 
 type Outcome = { kind: 'next' } | { kind: 'wait' } | { kind: 'goto'; to: string; rework?: string[]; feedback?: string };
 
@@ -156,10 +157,12 @@ function jump(rt: Runtime, t: Task, from: StepSpec, to: string, rework?: string[
 
 async function finish(rt: Runtime, t: Task): Promise<boolean> {
   const d = spec(t);
-  if (d.policies.finalGate) {
+  // requirements a 对照检查 still finds unmet (after its make-up rounds) are 成果存疑: never closed unseen
+  const unmet = d.steps.some((x) => x.type === 'check') ? unmetRequirements(t) : [];
+  if (d.policies.finalGate || unmet.length) {
     if (!moveTo(rt, t, 'Review', '流程完成，汇总待审')) return false;
-    rt.transition(t, 'PendingConfirm', 'system', '回奏待皇上御批');
-    rt.setGate(t, { kind: 'final', message: '请御览回奏与改动：准奏则结案，封驳则发回返工' });
+    rt.transition(t, 'PendingConfirm', 'system', unmet.length ? '需求未全部满足，回奏待皇上御批' : '回奏待皇上御批');
+    rt.setGate(t, { kind: 'final', message: unmet.length ? `成果存疑：需求未满足：${unmetText(unmet)}。请御览回奏与改动：准奏则结案，封驳则发回返工` : '请御览回奏与改动：准奏则结案，封驳则发回返工' });
     return false;
   }
   if (t.state !== 'Doing' && t.state !== 'Review') moveTo(rt, t, 'Review', '流程完成');
@@ -181,6 +184,8 @@ async function execStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
       return fanoutStep(rt, t, s);
     case 'gate':
       return gateStep(rt, t, s);
+    case 'check':
+      return checkStep(rt, t, s);
   }
 }
 
@@ -230,7 +235,9 @@ async function planStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
       parts.push(`【${lastRej.reviewer === 'emperor' ? '皇上' : '审议'}封驳意见（第 ${lastRej.round} 轮）】\n${lastRej.comment}\n${lastRej.issues.map((i, k) => `${k + 1}. ${i}`).join('\n')}\n必须逐条修正。`);
     }
     parts.push(`【可分派的执行角色】\n${(s.executors ?? []).map((id) => `- ${id}：${allowed[id]}（${roleOf(spec(t), id)?.duty ?? ''}）`).join('\n')}`);
-    parts.push('只输出一个方案 JSON（dept 填执行角色 id；effect 标明子任务性质：read 只读调研/评审，可并行；write 修改文件；verify 运行测试或构建验证）：{"summary":"方案概述","subtasks":[{"id":"S1","title":"","dept":"角色id","effect":"read|write|verify","detail":"","acceptance":"可验证的验收标准","dependsOn":[]}],"risks":[]}');
+    const withReq = spec(t).steps.some((x) => x.type === 'check' && x.planStep === s.id);
+    if (withReq) parts.push(REQUIREMENTS_PROMPT);
+    parts.push(`只输出一个方案 JSON（dept 填执行角色 id；effect 标明子任务性质：read 只读调研/评审，可并行；write 修改文件；verify 运行测试或构建验证）：{"summary":"方案概述",${withReq ? '"requirements":{…},' : ''}"subtasks":[{"id":"S1","title":"","dept":"角色id","effect":"read|write|verify","detail":"","acceptance":"可验证的验收标准","dependsOn":[]${withReq ? ',"covers":["R1"]' : ''}}],"risks":[]}`);
     const r = await runAgent({ rt, agentId: role.avatar, role: roleRun(t, role), task: t, node, prompt: parts.filter(Boolean).join('\n\n'), tools, maxSteps: tools ? 6 : 1, maxTokens: 4000, temperature: 0.3, label: node.label });
     let v = validatePlan(extractJson(r.text), allowed);
     if (!v.plan) {
@@ -239,6 +246,7 @@ async function planStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
       v = validatePlan(extractJson(r2.text), allowed);
     }
     if (!v.plan) throw new Error(`${role.name}方案格式无效：${v.error}`);
+    if (withReq) v.plan = withRequirements(v.plan);
     const version = t.planHistory.length + 1;
     t.planHistory.push({ version, plan: v.plan, author: 'zhongshu', at: now() });
     t.plan = v.plan;
@@ -327,7 +335,8 @@ async function fanoutStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
     if (!r) throw new Error(`子任务 ${id} 的执行角色不存在：${sub.dept}`);
     // a role without write tools can only ever read
     const effect = r.toolAccess === 'write' ? effectOf(sub) : 'read';
-    const n = ensureNode(t, `s-${s.id}-${it}-${id}`, { kind: 'exec', agentId: r.avatar, label: `${r.name}·${sub.title}${it > 1 ? `（返工 ${it - 1}）` : ''}`, subtaskId: id, stepId: s.id, iter: it, roleId: r.id, roleName: r.name, effect });
+    const firstMakeUp = !!sub.supplement && !latestNode(t, s.id, (m) => m.subtaskId === id);
+    const n = ensureNode(t, `s-${s.id}-${it}-${id}`, { kind: 'exec', agentId: r.avatar, label: `${r.name}·${sub.title}${it > 1 && !firstMakeUp ? `（返工 ${it - 1}）` : ''}`, subtaskId: id, stepId: s.id, iter: it, roleId: r.id, roleName: r.name, effect });
     n.effect ??= effect;
     return n;
   });
@@ -364,10 +373,11 @@ async function execSubtask(rt: Runtime, t: Task, s: StepSpec, plan: Plan, node: 
       `【旨意】${t.title}\n${truncate(t.edict, 3000)}`,
       `【方案概述】${plan.summary}`,
       `【你的子任务 ${sub.id}】${sub.title}\n做法：${sub.detail}\n验收标准：${sub.acceptance}`,
+      ownedRequirementsText(plan, sub),
       // context: explicit inputs, or by default the dispatch-phase steps (e.g. 尚书执行令) before this fan-out
       context(t, { ...s, inputs: (s.inputs ?? d.steps.slice(0, d.steps.findIndex((x) => x.id === s.id)).filter((x) => x.phase === 'dispatch').map((x) => x.id)).filter((x) => x !== s.planStep) }),
       deps.length ? `【上游子任务结论】\n${deps.join('\n')}` : '',
-      (node.iter ?? 1) > 1 ? `【返工要求】\n${t.rework?.feedback ?? ''}\n【你上一轮的结论】${truncate(prev?.output ?? '无', 1500)}` : '',
+      (node.iter ?? 1) > 1 && !(sub.supplement && !prev) ? `【返工要求】\n${t.rework?.feedback ?? ''}\n【你上一轮的结论】${truncate(prev?.output ?? '无', 1500)}` : '',
       tools ? grantPrompt(node) : '',
       tools ? repoContext(rt, t) : '（无文件工具：请直接在结论中给出成果文本）',
       guidance(rt, t),
@@ -387,6 +397,38 @@ async function execSubtask(rt: Runtime, t: Task, s: StepSpec, plan: Plan, node: 
     const { structured: _s, ...plain } = conclusion as typeof conclusion & { structured?: boolean };
     return JSON.stringify({ ...plain, systemCheck });
   });
+}
+
+/** 对照检查: judge the plan's 需求说明 item by item; unmet items go back to the fan-out as make-up subtasks. */
+async function checkStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
+  const d = spec(t);
+  const role = roleOf(d, s.role)!;
+  const plan = planFor(t, s.planStep!);
+  if (!plan?.requirements?.criteria.length) return { kind: 'next' }; // nothing to check against
+  const node = nodeFor(t, s, 'check');
+  if (node.status !== 'done') {
+    await runNode(rt, t, node, async () => {
+      const fan = s.onReject ? d.steps.find((x) => x.id === s.onReject!.goto) : [...d.steps].reverse().find((x) => x.type === 'fanout' && x.planStep === s.planStep);
+      const conclusions = fan ? stepOutput(t, fan) : context(t, s);
+      const hasWs = !!rt.workspaceFor(t);
+      const tools = role.toolAccess === 'none' ? (['view_changes'] as ToolName[]) : CHECK_TOOLS(hasWs);
+      const chk = await runRequirementCheck(rt, t, node, iterOf(t, s.id), { plan, conclusions, changes: summarizeChanges(t), guidance: [s.instruction ? `【本步骤：${s.label}】\n${s.instruction}` : '', guidance(rt, t)].filter(Boolean).join('\n\n'), role: roleRun(t, role), agentId: role.avatar, tools });
+      return JSON.stringify({ items: chk.items.map(({ id, verdict, evidence, note }) => ({ id, verdict, evidence, note })) });
+    });
+  }
+  const chk = t.requirementChecks?.find((c) => c.nodeId === node.id);
+  if (!chk || !s.onReject || chk.supplements.length || !chk.items.some((i) => i.verdict === 'unmet')) return { kind: 'next' };
+  const used = (t.requirementChecks ?? []).filter((c) => c.supplements.length).length;
+  if (used >= s.onReject.max) return { kind: 'next' };
+  const sup = supplementPlan(plan, chk);
+  chk.supplements = sup.ids;
+  // the plan step's output carries the make-up subtasks, so the fan-out runs them next
+  const pn = latestNode(t, s.planStep!);
+  if (pn) pn.output = JSON.stringify(sup.plan);
+  t.plan = sup.plan;
+  rt.audit.record(role.avatar, 'requirement_supplement', { step: s.id, subtasks: sup.plan.subtasks.filter((x) => sup.ids.includes(x.id)).map((x) => ({ id: x.id, dept: x.dept, covers: x.covers })) }, t.id);
+  rt.touch(t);
+  return { kind: 'goto', to: s.onReject.goto, rework: sup.ids, feedback: sup.feedback };
 }
 
 async function gateStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {

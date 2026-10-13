@@ -2,7 +2,7 @@
 // RunNode, so an interrupted/failed node can be retried locally without replaying the
 // whole agent tree. 门下省 review is structural — there is no code path from Zhongshu to
 // Assigned that does not pass a Menxia verdict (or the emperor's explicit decision).
-import type { CollabDesign, DesignPin, MinistryId, ModelRef, Plan, RevertResult, Review, RunNode, Session, Subtask, Task, Tier } from '../../shared/types';
+import type { CollabDesign, DesignPin, LaneSpec, MinistryId, ModelRef, PermissionMode, Plan, RevertResult, Review, RunNode, Session, Subtask, Task, TaskScheduleRef, Tier } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL, agentName } from '../../shared/court';
 import { runAgent } from './agentLoop';
@@ -18,8 +18,18 @@ import { flowDecideGate, flowStep } from './flow';
 import { canonBlock } from './canon';
 import { askPrince, parsePrinceAsk, princeWaiting, type PrinceAsk } from './askEmperor';
 import { hasOwnTree, prepareWorkspace } from './worktrees';
+import { scheduleNote } from './scheduler';
+import { worktreeNote } from './worktreeSetup';
+import { execWithGuest, guestPrompt, pickGuest } from '../guests';
+import { laneOf } from './attempts';
+import { lanesWanted, laneWho, runAttempts } from './attemptRun';
 import { expandMcpRefs } from '../mcp/refs';
 import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
+import {
+  CHECK_TOOLS, REQUIREMENTS_PROMPT, canSupplement, ownedRequirementsText, parseRequirements, requirementCheckOn, requirementsText, runRequirementCheck,
+  supplementPlan, uncovered, unmetRequirements, unmetText, withRequirements,
+} from './requirements';
+import { reqLabel } from '../../shared/requirements';
 
 const drivingByRt = new WeakMap<Runtime, Set<string>>();
 const drivingSet = (rt: Runtime) => {
@@ -33,6 +43,7 @@ const drivingSet = (rt: Runtime) => {
 
 export function installOrchestrator(rt: Runtime) {
   rt.driveHook = (id) => void drive(rt, id);
+  rt.submitHook = (input) => submit(rt, input);
 }
 
 export interface SubmitInput {
@@ -46,6 +57,10 @@ export interface SubmitInput {
   sessionId?: string;
   effort?: string; // 思考程度 slider: a level name, 'default' or 'top'
   designId?: string; // 协同设计（缺省 = 内置三省六部）
+  /** 定时旨意: the folder it was scheduled for (null = none), its permission mode, and which schedule issued it */
+  workspace?: string | null;
+  permissionMode?: PermissionMode;
+  schedule?: TaskScheduleRef;
 }
 
 export type SubmitResult = { kind: 'chat'; sessionId: string; reply: string } | { kind: 'task'; taskId: string };
@@ -59,7 +74,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
   const tier: Tier = pinned?.spec ? pinned.spec.policies.tier : input.multiAgent ? input.tier : 'solo';
   // @mcp:<server>/<uri> references: the resource text is appended (【附带资源】) to what every official sees
   const { text, refs } = await expandMcpRefs(rt, typed);
-  rt.audit.record('emperor', 'edict_submitted', { design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: typed.length, mcpRefs: refs.length || undefined, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
+  rt.audit.record(input.schedule ? 'system' : 'emperor', 'edict_submitted', { schedule: input.schedule?.id, design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: typed.length, mcpRefs: refs.length || undefined, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
 
   if (tier === 'solo') {
     let session = input.sessionId ? rt.sessions.get(input.sessionId) : undefined;
@@ -71,7 +86,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     }
     session.messages.push({ role: 'user', content: text, at: now() });
     session.updatedAt = now();
-    const task = createTask(rt, { text, tier, title: typed.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort });
+    const task = createTask(rt, { text, tier, title: input.schedule?.title || typed.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort, ...scheduled(input) });
     session.taskId = task.id;
     rt.emit({ type: 'session', session });
     void drive(rt, task.id);
@@ -110,33 +125,37 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     session.status = 'done';
     rt.emit({ type: 'session', session });
   }
-  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: pinned ? false : (input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan)), templateId: input.templateId, effort: input.effort, design: pinned });
+  if (input.schedule) title = input.schedule.title || title;
+  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: pinned ? false : (input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan)), templateId: input.templateId, effort: input.effort, design: pinned, ...scheduled(input) });
   task.nodes.push({ id: 'triage', kind: 'triage', agentId: 'taizi', label: '太子分拣', status: 'done', attempts: 1, startedAt: now(), endedAt: now(), exitStatus: 'ok', output: triageOutput, usage: session.usage });
-  rt.transition(task, 'Taizi', 'taizi', '太子接旨分拣');
+  rt.transition(task, 'Taizi', 'taizi', input.schedule ? '定时旨意，直接接旨' : '太子接旨分拣');
   // the edict waits in 太子分拣 until the emperor answers; the answer drives it on
   if (ask) askPrince(rt, task, ask);
   else void drive(rt, task.id);
   return { kind: 'task', taskId: task.id };
 }
 
-export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string; design?: { pin: DesignPin; spec?: CollabDesign } }): Task {
+const scheduled = (i: SubmitInput) => (i.schedule ? { workspace: i.workspace ?? null, permissionMode: i.permissionMode, schedule: i.schedule } : {});
+
+export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string; design?: { pin: DesignPin; spec?: CollabDesign }; workspace?: string | null; permissionMode?: PermissionMode; schedule?: TaskScheduleRef }): Task {
   const s = rt.settings;
   const design = o.design ?? rt.designs.pin(BUILTIN_DESIGN_ID);
   const pol = design.spec?.policies;
   const est = rt.estimate(o.text, o.tier, o.model);
   const t: Task = {
     id: rt.newTaskId(), title: o.title, edict: o.text, tier: o.tier, state: 'Pending', createdAt: now(), updatedAt: now(),
-    workspace: rt.workspace?.root ?? null,
-    flow: [{ at: now(), from: '皇上', to: o.tier === 'solo' ? '独相' : '太子', remark: '下旨', state: 'Pending' }],
+    workspace: o.schedule ? (o.workspace ?? null) : (rt.workspace?.root ?? null),
+    flow: [{ at: now(), from: o.schedule ? '定时旨意' : '皇上', to: o.tier === 'solo' ? '独相' : '太子', remark: o.schedule ? `按时下旨：${o.schedule.title}` : '下旨', state: 'Pending' }],
     planHistory: [], reviews: [], nodes: [], paused: false, changes: [], usage: emptyUsage(),
     budget: { maxTokens: pol?.tokenBudget || s.budgets[o.tier], maxRejections: pol ? pol.maxRejections : o.tier === 'full' ? s.maxRejections.full : s.maxRejections.lite, maxCostUsd: s.maxCostUsd },
     design: design.pin, designSpec: design.spec, flowRun: design.spec ? { cursor: 0, iter: {}, rejections: {} } : undefined,
     estimate: { tokens: est.tokens, costUsd: est.costUsd },
     strongModel: o.model ?? undefined, withDebate: o.withDebate, sessionId: o.sessionId, templateId: o.templateId, effort: o.effort && o.effort !== 'default' ? o.effort : undefined, lastActivityAt: now(), execRound: 1,
+    ...(o.schedule ? { schedule: o.schedule, permissionMode: o.permissionMode } : {}),
   };
   rt.tasks.set(t.id, t);
-  rt.audit.record('emperor', 'edict_issued', { id: t.id, title: t.title, tier: t.tier, estimate: t.estimate, budget: t.budget, workspace: t.workspace, design: { id: design.pin.id, version: design.pin.version, hash: design.pin.hash } }, t.id);
-  rt.activity('human', `皇上下旨（${design.spec ? `协同设计「${design.pin.name}」v${design.pin.version}` : t.tier}）：${t.title}`, { taskId: t.id });
+  rt.audit.record(t.schedule ? 'system' : 'emperor', 'edict_issued', { id: t.id, title: t.title, tier: t.tier, estimate: t.estimate, budget: t.budget, workspace: t.workspace, ...(t.schedule ? { schedule: t.schedule.id, permission: t.schedule.permission } : {}), design: { id: design.pin.id, version: design.pin.version, hash: design.pin.hash } }, t.id);
+  rt.activity('human', `${t.schedule ? `定时旨意按时下达${t.schedule.catchUp ? '（补跑错过的一次）' : ''}` : '皇上下旨'}（${design.spec ? `协同设计「${design.pin.name}」v${design.pin.version}` : t.tier}）：${t.title}`, { taskId: t.id });
   rt.touch(t);
   return t;
 }
@@ -255,7 +274,8 @@ export async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Pro
   }
 }
 
-const waitingOnEmperor = (rt: Runtime, t: Task, node: RunNode) => t.paused || !!t.gate || [...rt.approvals.values()].some((a) => a.status === 'pending' && a.taskId === t.id && (!a.nodeId || a.nodeId === node.id));
+// (a 排班 node also waits while one of its lanes waits: their node ids extend its own)
+const waitingOnEmperor = (rt: Runtime, t: Task, node: RunNode) => t.paused || !!t.gate || [...rt.approvals.values()].some((a) => a.status === 'pending' && a.taskId === t.id && (!a.nodeId || a.nodeId === node.id || a.nodeId.startsWith(`${node.id}-`)));
 
 export function ensureNode(t: Task, id: string, init: Omit<RunNode, 'id' | 'status' | 'attempts'>): RunNode {
   let n = t.nodes.find((x) => x.id === id);
@@ -308,13 +328,14 @@ export function otherDoing(rt: Runtime, t: Task) {
 }
 
 // ───────────────────────── 中书省 ─────────────────────────
-export function repoContext(rt: Runtime, t: Task): string {
-  const ws = rt.workspaceFor(t);
+export function repoContext(rt: Runtime, t: Task, node?: RunNode): string {
+  const ws = rt.workspaceFor(t, node);
   if (!ws) return '（未打开工作区：本旨意不涉及本地文件，或仅产出文本。）';
   try {
     const map = ws.repoMap(120);
     const outline = ws.outlineMap(30, 10);
-    return `【仓库地图】\n${truncate(map, 6000)}\n\n【符号大纲（节选）】\n${truncate(outline || '（无）', 5000)}`;
+    const note = worktreeNote(laneOf(t, node)?.worktree ?? t.worktree);
+    return `【仓库地图】\n${truncate(map, 6000)}\n\n【符号大纲（节选）】\n${truncate(outline || '（无）', 5000)}${note ? `\n\n${note}` : ''}`;
   } catch (e) {
     return `（仓库地图生成失败：${(e as Error).message}）`;
   }
@@ -322,7 +343,35 @@ export function repoContext(rt: Runtime, t: Task): string {
 
 /** E2: the workspace's rule files plus the emperor's 典章, for every prompt that plans, reviews or does the work. */
 export function guidance(rt: Runtime, t: Task): string {
-  return canonBlock(rt, t, rt.workspaceFor(t));
+  return [scheduleNote(t), canonBlock(rt, t, rt.workspaceFor(t))].filter(Boolean).join('\n\n');
+}
+
+/** 排班 lanes as the plan card sent them: 2–3 entries, each an executor ('self' or a guest id) and maybe a model. */
+export function cleanLanes(v: unknown): LaneSpec[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  const lanes = v
+    .filter((x): x is { executor?: unknown; model?: unknown } => !!x && typeof x === 'object')
+    .map((x): LaneSpec => {
+      const m = x.model as { providerId?: unknown; model?: unknown } | null | undefined;
+      return { executor: typeof x.executor === 'string' && x.executor.trim() ? x.executor.trim().slice(0, 60) : 'self', ...(m && typeof m.providerId === 'string' && typeof m.model === 'string' ? { model: { providerId: m.providerId, model: m.model } } : {}) };
+    })
+    .slice(0, 3);
+  return lanes.length >= 2 ? lanes : undefined;
+}
+
+/**
+ * Who does each subtask (客卿) and its 排班 are the emperor's to set on the plan card: never taken from 中书省's
+ * JSON, and kept for the same subtask (same id and ministry) when 中书省 revises the plan.
+ */
+export function keepEmperorChoices(plan: Plan, prev?: Plan): Plan {
+  for (const s of plan.subtasks) {
+    delete s.executor;
+    delete s.lanes;
+    const p = prev?.subtasks.find((x) => x.id === s.id && x.dept === s.dept);
+    if (p?.executor) s.executor = p.executor;
+    if (p?.lanes) s.lanes = p.lanes;
+  }
+  return plan;
 }
 
 /** `allowed` = executor roles of a 协同设计 (id → name); default = the six ministries. */
@@ -360,7 +409,16 @@ export function validatePlan(p: unknown, allowed?: Record<string, string>): { pl
     return true;
   };
   for (const s of subs) if (!dfs(s.id)) return { error: '子任务依赖存在环' };
-  return { plan: { summary: String(j.summary ?? '').trim(), subtasks: subs, risks: Array.isArray(j.risks) ? j.risks.map(String) : [] } };
+  const requirements = parseRequirements(j.requirements, j.subtasks as { covers?: unknown }[], subs);
+  (j.subtasks as Partial<Subtask>[]).forEach((s, i) => {
+    if (s.supplement) subs[i].supplement = true;
+    // 客卿 / 排班 (2.1): who does it, and the lanes when several do it side by side
+    if (typeof s.executor === 'string' && s.executor.trim()) subs[i].executor = s.executor.trim().slice(0, 60);
+    const lanes = cleanLanes(s.lanes);
+    if (lanes) subs[i].lanes = lanes;
+    if (typeof s.suggestAttempts === 'string' && s.suggestAttempts.trim()) subs[i].suggestAttempts = s.suggestAttempts.trim().slice(0, 200);
+  });
+  return { plan: { summary: String(j.summary ?? '').trim(), subtasks: subs, risks: Array.isArray(j.risks) ? j.risks.map(String) : [], ...(requirements ? { requirements: { ...requirements, ...((j.requirements as { derived?: boolean }).derived ? { derived: true } : {}) } } : {}) } };
 }
 
 async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
@@ -400,6 +458,8 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
       parts.push(`【${lastRej.reviewer === 'emperor' ? '皇上' : '门下省'}封驳意见（第 ${lastRej.round} 轮）】\n${lastRej.comment}\n${lastRej.issues.map((i, k) => `${k + 1}. ${i}`).join('\n')}\n必须逐条修正。`);
     }
     parts.push(t.tier === 'lite' ? '档位：Court Lite —— 子任务控制在 1~3 个，避免仪式性步骤。' : '档位：Full Court —— 子任务 2~6 个，充分利用六部并行，写清依赖。');
+    const reqOn = requirementCheckOn(rt, t.tier);
+    if (reqOn) parts.push(REQUIREMENTS_PROMPT);
     parts.push('请输出方案 JSON。');
     const tools = rt.workspaceFor(t) ? READ_TOOLS : undefined;
     const r = await runAgent({ rt, agentId: 'zhongshu', task: t, node, prompt: parts.join('\n\n'), tools, maxSteps: 6, maxTokens: 4000, temperature: 0.3, label: node.label });
@@ -410,6 +470,8 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
       v = validatePlan(extractJson(r2.text));
     }
     if (!v.plan) throw new Error(`中书省方案格式无效：${v.error}`);
+    v.plan = keepEmperorChoices(v.plan, t.plan);
+    if (reqOn) v.plan = withRequirements(v.plan);
     t.planHistory.push({ version, plan: v.plan, author: 'zhongshu', at: now() });
     t.plan = v.plan;
     const est = rt.estimate(t.edict + JSON.stringify(v.plan), t.tier, t.strongModel);
@@ -456,6 +518,7 @@ async function stepMenxia(rt: Runtime, t: Task): Promise<boolean> {
     const prompt = [
       `【旨意】${t.title}\n${t.edict}`,
       `【中书省方案 v${latest.version}${latest.author === 'emperor' ? '（皇上涂改版）' : ''}】\n${JSON.stringify(latest.plan, null, 1)}`,
+      latest.plan.requirements ? `${requirementsText(latest.plan, true)}${uncovered(latest.plan).length ? `\n注意：${uncovered(latest.plan).join('、')} 没有子任务负责。` : ''}\n审议完整性时，请核对需求说明是否漏了旨意里的要求、验收标准能否核对、每条是否都有子任务负责。` : '',
       reviews.length ? `【此前审议】\n${reviews.map((r) => `第${r.round}轮 ${r.verdict === 'approve' ? '准奏' : '封驳'}：${r.comment}`).join('\n')}` : '',
       guidance(rt, t),
       `这是第 ${round} 轮审议（封驳上限 ${t.budget.maxRejections} 次，超限将升级皇上裁决）。请从可行性、完整性、风险、资源四个维度审议，输出 JSON。`,
@@ -539,7 +602,7 @@ async function stepDoing(rt: Runtime, t: Task): Promise<boolean> {
   }
   const nodes = targets.map((id) => {
     const sub = plan.subtasks.find((s) => s.id === id)!;
-    const n = ensureNode(t, `exec-${id}-r${round}`, { kind: 'exec', agentId: sub.dept, label: `${AGENT_MAP[sub.dept].name}·${sub.title}${round > 1 ? `（返工 ${round - 1}）` : ''}`, subtaskId: id, effect: effectOf(sub) });
+    const n = ensureNode(t, `exec-${id}-r${round}`, { kind: 'exec', agentId: sub.dept, label: `${AGENT_MAP[sub.dept].name}·${sub.title}${round > 1 && !(sub.supplement && !latestExecNode(t, id)) ? `（返工 ${round - 1}）` : ''}`, subtaskId: id, effect: effectOf(sub) });
     n.effect ??= effectOf(sub);
     return n;
   });
@@ -559,48 +622,78 @@ async function stepDoing(rt: Runtime, t: Task): Promise<boolean> {
     block(rt, t, execBlockReason(bad, stuck));
     return false;
   }
-  rt.transition(t, 'Review', 'shangshu', round > 1 ? `返工完成（第 ${round - 1} 次），汇总回奏` : '六部执行完毕，汇总回奏');
+  const madeUp = round > 1 && targets.every((id) => plan.subtasks.find((s) => s.id === id)?.supplement);
+  rt.transition(t, 'Review', 'shangshu', madeUp ? '补办完成，再行对照检查' : round > 1 ? `返工完成（第 ${round - 1} 次），汇总回奏` : '六部执行完毕，汇总回奏');
   return true;
 }
 
 async function runExec(rt: Runtime, t: Task, node: RunNode, order?: string): Promise<void> {
   const plan = t.plan!;
   const sub = plan.subtasks.find((s) => s.id === node.subtaskId)!;
-  const hasWs = !!rt.workspaceFor(t);
-  await confirmWriteTask(rt, t, node, sub, AGENT_MAP[sub.dept].name, hasWs);
-  await runNode(rt, t, node, async () => {
-    const deps = sub.dependsOn.map((d) => {
-      const n = latestExecNode(t, d);
-      return `- ${d}（${AGENT_MAP[plan.subtasks.find((s) => s.id === d)!.dept].name}）结论：${truncate(n?.output ?? '无', 1200)}`;
-    });
-    const prev = [...t.nodes].reverse().find((n) => n.kind === 'exec' && n.subtaskId === sub.id && n.id !== node.id && n.status === 'done');
-    const parts = [
-      `【旨意】${t.title}\n${truncate(t.edict, 3000)}`,
-      `【方案概述】${plan.summary}`,
-      `【你的子任务 ${sub.id}】${sub.title}\n做法：${sub.detail}\n验收标准：${sub.acceptance}`,
-      order ? `【尚书省执行令】${order}` : '',
-      deps.length ? `【上游子任务结论】\n${deps.join('\n')}` : '',
-      node.id.endsWith('-r1') ? '' : `【返工要求（${t.rework?.by === 'emperor' ? '皇上' : '门下省'}）】\n${t.rework?.feedback ?? ''}\n【你上一轮的结论】${truncate(prev?.output ?? '无', 1500)}`,
-      hasWs ? grantPrompt(node) : '',
-      hasWs ? repoContext(rt, t) : '（未打开工作区：无法读写文件，请直接在结论中给出成果文本）',
-      guidance(rt, t),
-      EXEC_OUTPUT_RULE,
-    ].filter(Boolean);
-    const tools = toolsForNode(node, hasWs ? ALL_TOOLS : undefined);
-    const r = await runAgent({ rt, agentId: sub.dept, task: t, node, prompt: parts.join('\n\n'), tools, maxSteps: 30, maxTokens: 8000, temperature: 0.2, label: node.label });
-    let c = parseConclusion(r.text);
-    if (!c.structured) {
-      // one format-repair turn: same conversation, no tools, conclusion only
-      const r2 = await runAgent({ rt, agentId: sub.dept, task: t, node, history: r.messages, prompt: `请只输出结构化结论，不要再调用工具。\n${EXEC_OUTPUT_RULE}`, maxTokens: 1500, temperature: 0, label: `${node.label}（结论格式修正）` });
-      const c2 = parseConclusion(r2.text);
-      if (c2.structured) c = c2;
-    }
-    const { conclusion, systemCheck } = checkEvidence(t, node, c, r.toolCounts, rt.workspaceFor(t) ?? undefined);
-    if (conclusion.status === 'failed') throw new Error(`${AGENT_MAP[sub.dept].name}自报失败：${conclusion.summary}`);
-    if (conclusion.status === 'partial') rt.activity('log', `⚠ ${node.label} 成果存疑：${conclusion.issues.join('；') || '自报部分完成'}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
-    const { structured: _s, ...plain } = conclusion as typeof conclusion & { structured?: boolean };
-    return JSON.stringify({ ...plain, systemCheck });
+  const hasWs = !!rt.workspaceFor(t, node);
+  // 排班 (2.1): 2–3 lanes side by side; 客卿 (2.1): an outside agent may do it in the ministry's place
+  const want = lanesWanted(t, node, sub);
+  if (want.why && node.status === 'pending') rt.activity('log', `「${sub.title}」排了班，但${want.why}，改为一路办`, { taskId: t.id, agentId: sub.dept, nodeId: node.id });
+  const pick = pickGuest(rt, t, node, sub);
+  if (!want.lanes && pick.fallback && node.status === 'pending') rt.activity('log', pick.fallback, { taskId: t.id, agentId: sub.dept, nodeId: node.id });
+  const who = want.lanes
+    ? `${AGENT_MAP[sub.dept].name}（排班 ${want.lanes.length} 路：${want.lanes.map((l) => laneWho(rt, sub.dept, l)).join('、')}）`
+    : pick.launch ? `${AGENT_MAP[sub.dept].name}（请客卿 ${pick.launch.name} 代办）` : AGENT_MAP[sub.dept].name;
+  await confirmWriteTask(rt, t, node, sub, who, hasWs);
+  // (the emperor may have answered the write card with 只读: then one lane, as usual)
+  const lanes = want.lanes && lanesWanted(t, node, sub).lanes;
+  await runNode(rt, t, node, () =>
+    lanes
+      ? runAttempts(rt, t, node, sub, lanes, { ensureNode, runNode, execBody: (ln) => execBody(rt, t, ln, sub, order) })
+      : execBody(rt, t, node, sub, order, pick),
+  );
+}
+
+/** The work of one exec node: an official's run (or a guest's), the conclusion and its evidence check. */
+async function execBody(rt: Runtime, t: Task, node: RunNode, sub: Subtask, order?: string, pick = pickGuest(rt, t, node, sub)): Promise<string> {
+  const plan = t.plan!;
+  const lane = laneOf(t, node);
+  if (lane && pick.fallback) rt.activity('log', pick.fallback, { taskId: t.id, agentId: sub.dept, nodeId: node.id });
+  const hasWs = !!rt.workspaceFor(t, node);
+  const deps = sub.dependsOn.map((d) => {
+    const n = latestExecNode(t, d);
+    return `- ${d}（${AGENT_MAP[plan.subtasks.find((s) => s.id === d)!.dept].name}）结论：${truncate(n?.output ?? '无', 1200)}`;
   });
+  const prev = [...t.nodes].reverse().find((n) => n.kind === 'exec' && n.subtaskId === sub.id && n.id !== node.id && n.status === 'done');
+  const firstRun = lane || node.id.endsWith('-r1') || (sub.supplement && !prev);
+  const lanes = lane ? t.attempts?.find((a) => a.lanes.includes(lane))?.lanes.length ?? 2 : 0;
+  const parts = [
+    `【旨意】${t.title}\n${truncate(t.edict, 3000)}`,
+    `【方案概述】${plan.summary}`,
+    `【你的子任务 ${sub.id}】${sub.title}\n做法：${sub.detail}\n验收标准：${sub.acceptance}`,
+    ownedRequirementsText(plan, sub),
+    order ? `【尚书省执行令】${order}` : '',
+    lane ? `【排班】这个子任务由 ${lanes} 路同时办，你是${lane.label}路，在自己的工作树里独立完成，不必顾及其他各路。办完后门下省会比较各路成果，择优采用。` : '',
+    deps.length ? `【上游子任务结论】\n${deps.join('\n')}` : '',
+    firstRun ? '' : `【返工要求（${t.rework?.by === 'emperor' ? '皇上' : '门下省'}）】\n${t.rework?.feedback ?? ''}\n【你上一轮的结论】${truncate(prev?.output ?? '无', 1500)}`,
+    hasWs ? grantPrompt(node) : '',
+    hasWs ? repoContext(rt, t, node) : '（未打开工作区：无法读写文件，请直接在结论中给出成果文本）',
+    guidance(rt, t),
+    EXEC_OUTPUT_RULE,
+  ].filter(Boolean);
+  const tree = lane?.worktree ?? t.worktree;
+  const g = pick.launch ? await execWithGuest(rt, t, node, sub, pick.launch, guestPrompt(sub.dept, pick.launch.name, parts.filter((x) => x !== EXEC_OUTPUT_RULE && !x.startsWith('【仓库地图】')).concat(worktreeNote(tree)))) : null;
+  const tools = toolsForNode(node, hasWs ? ALL_TOOLS : undefined);
+  const model = lane && lane.executor === 'self' && lane.model ? lane.model : undefined;
+  const r = g ? { ...g, messages: [] } : await runAgent({ rt, agentId: sub.dept, task: t, node, prompt: parts.join('\n\n'), tools, maxSteps: 30, maxTokens: 8000, temperature: 0.2, label: node.label, model });
+  let c = parseConclusion(r.text);
+  if (!c.structured && !g) {
+    // one format-repair turn: same conversation, no tools, conclusion only
+    const r2 = await runAgent({ rt, agentId: sub.dept, task: t, node, history: r.messages, prompt: `请只输出结构化结论，不要再调用工具。\n${EXEC_OUTPUT_RULE}`, maxTokens: 1500, temperature: 0, label: `${node.label}（结论格式修正）`, model });
+    const c2 = parseConclusion(r2.text);
+    if (c2.structured) c = c2;
+  }
+  const { conclusion, systemCheck } = checkEvidence(t, node, c, r.toolCounts, rt.workspaceFor(t, node) ?? undefined);
+  if (g) systemCheck.unshift(`由客卿 ${node.guest?.name ?? ''} 办理（费用由它自己的账号计）`);
+  if (conclusion.status === 'failed') throw new Error(`${g ? `客卿 ${node.guest?.name ?? ''}` : AGENT_MAP[sub.dept].name}自报失败：${conclusion.summary}`);
+  if (conclusion.status === 'partial') rt.activity('log', `⚠ ${node.label} 成果存疑：${conclusion.issues.join('；') || '自报部分完成'}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
+  const { structured: _s, ...plain } = conclusion as typeof conclusion & { structured?: boolean };
+  return JSON.stringify({ ...plain, systemCheck });
 }
 
 /** Latest exec nodes whose conclusion is partial (成果存疑). */
@@ -611,8 +704,46 @@ function doubtfulNodes(t: Task): RunNode[] {
 const doubtText = (nodes: RunNode[]) => nodes.map((n) => `${n.label}（${(nodeConclusion(n)?.issues ?? []).slice(0, 2).join('；') || '自报部分完成'}）`).join('；');
 
 // ───────────────────────── 回奏 & 成果审议 ─────────────────────────
+/**
+ * 对照检查 before 尚书汇总: 'rework' = unmet requirements went back to the ministries as make-up subtasks
+ * (now Doing); 'stop' = the check node failed and waits for a retry; 'go' = carry on to the summary.
+ */
+async function stepCheck(rt: Runtime, t: Task, round: number): Promise<'go' | 'rework' | 'stop'> {
+  const plan = t.plan!;
+  const node = ensureNode(t, `check-r${round}`, { kind: 'check', agentId: 'menxia', label: round > 1 ? `对照检查（第 ${round} 轮）` : '对照检查' });
+  if (node.status === 'failed' || node.status === 'cancelled') return 'stop';
+  if (node.status !== 'done') {
+    await runNode(rt, t, node, async () => {
+      const conclusions = plan.subtasks.map((s) => `- ${s.id}（${AGENT_MAP[s.dept].name}）${s.title}${s.covers?.length ? `〔负责 ${s.covers.join('、')}〕` : ''}：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1200)}`).join('\n');
+      const chk = await runRequirementCheck(rt, t, node, round, { plan, conclusions, changes: summarizeChanges(t), guidance: guidance(rt, t), tools: CHECK_TOOLS(!!rt.workspaceFor(t)) });
+      return JSON.stringify({ items: chk.items.map(({ id, verdict, evidence, note }) => ({ id, verdict, evidence, note })) });
+    });
+  }
+  const chk = t.requirementChecks?.find((c) => c.nodeId === node.id);
+  if (!chk || !canSupplement(rt, t, chk)) return 'go';
+  const sup = supplementPlan(plan, chk);
+  chk.supplements = sup.ids;
+  t.plan = sup.plan;
+  rt.audit.record('menxia', 'requirement_supplement', { round, subtasks: sup.plan.subtasks.filter((s) => sup.ids.includes(s.id)).map((s) => ({ id: s.id, dept: s.dept, covers: s.covers })) }, t.id);
+  startRework(rt, t, sup.ids, sup.feedback, 'menxia');
+  rt.transition(t, 'Doing', 'menxia', `对照检查：${chk.items.filter((i) => i.verdict === 'unmet').map((i) => reqLabel(i.id)).join('、')} 未满足，追加补办 ${sup.ids.join('、')}`);
+  return 'rework';
+}
+
+/** The latest check as prompt text for the summary and the result review. */
+function checkText(t: Task): string {
+  const chk = t.requirementChecks?.at(-1);
+  if (!chk) return '';
+  return `【对照检查（第 ${chk.round} 轮）】\n${chk.items.map((i) => `${i.id} ${i.text}：${i.verdict === 'met' ? '满足' : i.verdict === 'unmet' ? '未满足' : '无法判断'}${i.evidence ? `；证据：${truncate(i.evidence, 200)}` : ''}${i.note ? `；${truncate(i.note, 120)}` : ''}`).join('\n')}`;
+}
+
 async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
   const round = t.execRound ?? 1;
+  if (t.plan?.requirements && requirementCheckOn(rt, t.tier)) {
+    const c = await stepCheck(rt, t, round);
+    if (c === 'stop') return false;
+    if (c === 'rework') return true;
+  }
   const plan = t.plan!;
   const sNode = ensureNode(t, `summary-r${round}`, { kind: 'summary', agentId: 'shangshu', label: round > 1 ? `尚书汇总（第 ${round} 轮）` : '尚书汇总回奏' });
   if (sNode.status === 'failed' || sNode.status === 'cancelled') return false;
@@ -620,7 +751,8 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
     await runNode(rt, t, sNode, async () => {
       const concl = plan.subtasks.map((s) => `- ${s.id}（${AGENT_MAP[s.dept].name}）${s.title}：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1500)}`);
       const changes = summarizeChanges(t);
-      const r = await runAgent({ rt, agentId: 'shangshu', task: t, node: sNode, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【各部结构化结论】\n${concl.join('\n')}\n\n【系统核验的文件改动】\n${changes || '无'}\n\n请撰写回奏折（Markdown）。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2000, temperature: 0.3, label: sNode.label });
+      const chk = checkText(t);
+      const r = await runAgent({ rt, agentId: 'shangshu', task: t, node: sNode, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【各部结构化结论】\n${concl.join('\n')}\n\n【系统核验的文件改动】\n${changes || '无'}${chk ? `\n\n${chk}\n未满足或无法判断的需求，要在「遗留问题」里如实写明。` : ''}\n\n请撰写回奏折（Markdown）。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2000, temperature: 0.3, label: sNode.label });
       t.result = { summary: r.text.trim(), artifacts: t.result?.artifacts ?? [] };
       return truncate(r.text.trim(), 4000);
     });
@@ -635,7 +767,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       await runNode(rt, t, node, async () => {
         const concl = plan.subtasks.map((s) => `- ${s.id} ${s.title}（验收：${s.acceptance}）：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1200)}`);
         const tools = rt.workspaceFor(t) ? (['view_changes', 'read_file', 'list_dir', 'search', 'load_skill'] as const) : (['view_changes', 'load_skill'] as const);
-        const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}${(() => { const g = guidance(rt, t); return g ? `\n\n${g}` : ''; })()}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
+        const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}${(() => { const g = guidance(rt, t); return g ? `\n\n${g}` : ''; })()}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}${(() => { const c = checkText(t); return c ? `\n\n${c}` : ''; })()}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
         verdict = parseVerdict(r.text);
         if (!verdict) {
           const r2 = await runAgent({ rt, agentId: 'menxia', task: t, node, history: r.messages, prompt: '请只输出审议结论 JSON：{"verdict":"approve"|"reject","issues":[],"comment":"","rework":[]}', maxTokens: 800, temperature: 0, label: '门下省修正格式' });
@@ -665,15 +797,19 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       return false; // waiting for emperor (gate) — handled by decideGate
     }
   }
-  // Court Lite has no 门下 result review: doubtful conclusions must not close the edict unseen
+  // Court Lite has no 门下 result review: doubtful conclusions must not close the edict unseen; requirements the
+  // check still finds unmet (after the make-up round) never close it unseen in either tier
   const doubtful = t.tier === 'lite' ? doubtfulNodes(t) : [];
+  const unmet = requirementCheckOn(rt, t.tier) ? unmetRequirements(t) : [];
+  const doubt = [doubtful.length ? doubtText(doubtful) : '', unmet.length ? `需求未满足：${unmetText(unmet)}` : ''].filter(Boolean).join('；');
   if (rt.settings.finalGate) {
     rt.transition(t, 'PendingConfirm', 'shangshu', '回奏待皇上御批');
-    rt.setGate(t, { kind: 'final', message: doubtful.length ? `成果存疑：${doubtText(doubtful)}。请御览回奏与改动：准奏则结案，封驳则发回返工` : '请御览回奏与改动：准奏则结案，封驳则发回返工' });
+    rt.setGate(t, { kind: 'final', message: doubt ? `成果存疑：${doubt}。请御览回奏与改动：准奏则结案，封驳则发回返工` : '请御览回奏与改动：准奏则结案，封驳则发回返工' });
     return false;
   }
-  if (doubtful.length && !t.reviews.some((r) => r.stage === 'result' && r.round === round && r.reviewer === 'emperor')) {
-    rt.setGate(t, { kind: 'reject_limit', message: `成果存疑：${doubtText(doubtful)}。请皇上裁决：准奏则结案，封驳则发回返工`, nodeId: doubtful[0].id });
+  if (doubt && !t.reviews.some((r) => r.stage === 'result' && r.round === round && r.reviewer === 'emperor')) {
+    const at = doubtful[0]?.id ?? t.requirementChecks?.at(-1)?.nodeId;
+    rt.setGate(t, { kind: 'reject_limit', message: `成果存疑：${doubt}。请皇上裁决：准奏则结案，封驳则发回返工`, ...(at ? { nodeId: at } : {}) });
     return false;
   }
   rt.transition(t, 'Done', 'shangshu', '回奏结案');
@@ -756,6 +892,11 @@ export function decideGate(rt: Runtime, taskId: string, d: GateDecision) {
     if (d.plan) {
       const v = validatePlan(d.plan);
       if (!v.plan) throw new Error(`涂改后的方案无效：${v.error}`);
+      // the 需求说明 stays with the plan; one taken from the acceptance lines follows the emperor's edits to them
+      if (t.plan?.requirements && requirementCheckOn(rt, t.tier)) {
+        if (!v.plan.requirements) v.plan = withRequirements({ ...v.plan, requirements: t.plan.requirements.derived ? undefined : t.plan.requirements });
+        else if (v.plan.requirements.derived) v.plan = withRequirements({ ...v.plan, requirements: undefined });
+      }
       const before = t.plan;
       if (JSON.stringify(before) !== JSON.stringify(v.plan)) {
         edited = true;
@@ -884,6 +1025,7 @@ function inferState(n: RunNode, t?: Task) {
       return 'Assigned' as const;
     case 'summary':
     case 'result_review':
+    case 'check':
       return 'Review' as const;
     default:
       return 'Doing' as const;

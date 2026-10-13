@@ -1,4 +1,5 @@
-import type { Settings, Template } from '../../shared/types';
+import type { SandboxSettings, Settings, Template, WebSettings } from '../../shared/types';
+import { DEFAULT_SANDBOX_CACHES, DEFAULT_SANDBOX_DENY_READ } from '../../shared/sandboxDefaults';
 
 export function defaultSettings(): Settings {
   return {
@@ -33,8 +34,21 @@ export function defaultSettings(): Settings {
     canon: [],
     commandSnapshots: true,
     worktreePerEdict: true,
+    worktreePortBase: 42000,
+    guests: { agents: [], deptDefault: {}, attemptsInLite: false },
     notify: 'all',
+    web: defaultWebSettings(),
+    sandbox: defaultSandboxSettings(),
+    requirementCheck: { lite: true, full: true, maxSupplement: 1 },
   };
+}
+
+export function defaultWebSettings(): WebSettings {
+  return { fetch: 'allow', search: null, domains: [] };
+}
+
+export function defaultSandboxSettings(): SandboxSettings {
+  return { enabled: true, network: true, writable: [], caches: [...DEFAULT_SANDBOX_CACHES], denyRead: [...DEFAULT_SANDBOX_DENY_READ] };
 }
 
 // 旨库 — adapted from Edict's 9 preset edict templates, tuned for a coding workstation.
