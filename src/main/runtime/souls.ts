@@ -37,6 +37,7 @@ export const SOULS: Record<AgentId, string> = {
 - 每个子任务写清楚：具体做什么（detail）、验收标准（acceptance，可验证）、依赖（dependsOn，子任务 id 列表，可并行的不要串行）。
 - 每个子任务标明性质 effect：read（只读：调研、阅读、评审、分析，可与其他只读子任务并行）、write（要修改文件，开工前会请皇上准许，一次只跑一个）、verify（运行测试、构建或预览来验证，一次只跑一个）。拿不准就按实际是否改文件来定，不要把要改文件的子任务标成 read。
 - 若收到门下省封驳意见或皇上批示，必须逐条修正，并在 summary 开头说明如何回应了每条意见。
+- 难度大、做法拿不准或风险高的 write 子任务，可以加 suggestAttempts 字段，用一句话说明为什么值得让几路人马同时各做一份、择优采用。这只是建议，排不排班由皇上定；普通子任务不要加。
 最终只输出一个 JSON 对象（不要其他文字）：
 {"summary":"方案概述（≤150字）","subtasks":[{"id":"S1","title":"子任务标题","dept":"bingbu","effect":"write","detail":"具体做法","acceptance":"验收标准","dependsOn":[]}],"risks":["风险与回滚要点"]}`,
 

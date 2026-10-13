@@ -1,9 +1,12 @@
 // Git worktree plumbing for per-edict worktrees and the Source Control view. No runtime state here:
 // every function runs git in the given directory and reports in Chinese. The main checkout is only ever
 // changed by mergeBranch (and only after a conflict-free dry run when git can do one).
+import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { runGit } from './git';
+import { safeEnv } from './exec';
 
 /** Untracked dependency folders symlinked from the main checkout so builds / tests work in a fresh worktree. */
 export const DEP_LINKS = ['node_modules', '.venv', 'venv'];
@@ -281,4 +284,98 @@ export async function diffStat(o: { repo: string; base: string; branch: string; 
     parse((await runGit(o.repo, ['diff', '--numstat', `${o.base}...${o.branch}`, '--'])).out);
   }
   return [...out.values()].sort((a, b) => a.path.localeCompare(b.path));
+}
+
+// ───────────────────────── 排班 (2.1): snapshots and lane diffs ─────────────────────────
+const excludes = (links: string[]) => links.map((l) => `:(exclude)${l}`);
+
+/**
+ * Tree of everything in a worktree as it is now (tracked and untracked, ignored files and our links left out),
+ * written through a throwaway index: the worktree's own index, branch and files are not touched.
+ */
+export async function snapshotTree(dir: string, links: string[] = []): Promise<string> {
+  const idx = path.join(os.tmpdir(), `edict-index-${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+  const env = { GIT_INDEX_FILE: idx };
+  const step = async (args: string[], what: string) => {
+    const r = await runGit(dir, args, undefined, env);
+    if (r.code !== 0) throw new GitError(`${what}失败：${errText(r)}`);
+    return r.out;
+  };
+  try {
+    const head = await runGit(dir, ['rev-parse', '--verify', '-q', 'HEAD^{commit}']);
+    if (head.code === 0) await step(['read-tree', 'HEAD'], '读取提交');
+    await step(['add', '-A', '--', '.', ...excludes(links)], '记录工作树快照');
+    return (await step(['write-tree'], '记录工作树快照')).trim();
+  } finally {
+    fs.rmSync(idx, { force: true });
+  }
+}
+
+/** A commit (on no branch) of the worktree as it is now, its parent the worktree's HEAD. */
+export async function snapshotCommit(dir: string, message: string, links: string[] = []): Promise<string> {
+  const tree = await snapshotTree(dir, links);
+  const head = (await must(dir, ['rev-parse', 'HEAD'], '读取提交')).trim();
+  return (await must(dir, [...(await identity(dir)), 'commit-tree', tree, '-p', head, '-m', message], '生成快照提交')).trim();
+}
+
+export interface TreeChange {
+  status: 'A' | 'M' | 'D';
+  path: string;
+}
+
+/** Files that differ between two trees or commits (renames reported as delete + add). */
+export async function treeChanges(dir: string, from: string, to: string): Promise<TreeChange[]> {
+  const parts = nulList(await must(dir, ['diff', '--no-renames', '--name-status', '-z', from, to, '--'], '比较改动'));
+  const out: TreeChange[] = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) {
+    const s = parts[i][0];
+    out.push({ status: s === 'A' ? 'A' : s === 'D' ? 'D' : 'M', path: parts[i + 1] });
+  }
+  return out;
+}
+
+/** Unified diff text between two trees (binary files named only), at most `max` characters. */
+export async function treeDiffText(dir: string, from: string, to: string, max = 400_000): Promise<{ text: string; files: number; added: number; removed: number }> {
+  const stat = await must(dir, ['diff', '--no-renames', '--numstat', from, to, '--'], '比较改动');
+  let files = 0;
+  let added = 0;
+  let removed = 0;
+  for (const line of stat.split('\n')) {
+    const m = line.match(/^(-|\d+)\t(-|\d+)\t/);
+    if (!m) continue;
+    files++;
+    if (m[1] !== '-') added += Number(m[1]);
+    if (m[2] !== '-') removed += Number(m[2]);
+  }
+  const r = await runGit(dir, ['diff', '--no-renames', '--no-color', from, to, '--'], 64 * 1024 * 1024);
+  const text = r.out.length > max ? `${r.out.slice(0, max)}\n…（差异过长，只保留前 ${Math.round(max / 1000)}K 字符）` : r.out;
+  return { text, files, added, removed };
+}
+
+/** Raw bytes of a file in a commit or tree, or null when it is not there. */
+export function blobAt(dir: string, rev: string, file: string): Promise<Buffer | null> {
+  return new Promise((resolve) => {
+    execFile('git', ['cat-file', 'blob', `${rev}:${file}`], { cwd: dir, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024, env: safeEnv({ GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }) }, (e, out) => resolve(e ? null : out));
+  });
+}
+
+/** git merge-file of three versions: the merged bytes, or ok = false when the changes overlap. */
+export async function mergeThree(ours: Buffer, base: Buffer, theirs: Buffer): Promise<{ ok: boolean; out: Buffer }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'edict-merge-'));
+  try {
+    const f = (n: string, b: Buffer) => {
+      const p = path.join(dir, n);
+      fs.writeFileSync(p, b);
+      return p;
+    };
+    const args = ['merge-file', '-p', f('ours', ours), f('base', base), f('theirs', theirs)];
+    return await new Promise((resolve) => {
+      execFile('git', args, { cwd: dir, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024, env: safeEnv({ GIT_TERMINAL_PROMPT: '0' }) }, (e, out) => {
+        const code = e ? (e as { code?: number | string }).code : 0;
+        resolve({ ok: code === 0, out });
+      });
+    });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }

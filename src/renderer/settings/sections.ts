@@ -41,6 +41,7 @@ export const SETTINGS_GROUPS: { title: string; items: SectionInfo[] }[] = [
       { id: 'mcp', label: '连接服务', icon: 'plug', keywords: 'MCP 外部工具 服务 登录 OAuth 资源 提示词 mcp.json 信任 远程 本地' },
       { id: 'skills', label: '技能', icon: 'puzzle', keywords: '技能 SKILL.md 职责 另配 装备 官员 更新 导入' },
       { id: 'lsp', label: '语言服务', icon: 'code', keywords: 'LSP 语言服务器 诊断 跳转定义 typescript pyright gopls rust-analyzer 安装', isNew: true },
+      { id: 'guests', label: '外部智能体', icon: 'users', keywords: '客卿 外部智能体 ACP 代办 六部 子任务 Claude Code Codex Gemini OpenCode 智能体 测试连接 登录', isNew: true },
       { id: 'acp', label: '编辑器接入', icon: 'link', keywords: 'ACP 编辑器 socket 接入 外部编辑器', isNew: true },
       { id: 'worktrees', label: '工作树', icon: 'branch', keywords: 'git worktree 工作树 分支 结案 合并 丢弃 保留', isNew: true },
     ],

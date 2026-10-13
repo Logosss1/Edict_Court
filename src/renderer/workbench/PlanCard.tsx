@@ -3,9 +3,10 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { Icon } from '../common/Icon';
 import { AGENT_MAP, TERMINAL } from '../../shared/court';
-import type { RunNode, SubtaskEffect, Task } from '../../shared/types';
+import type { RunNode, SubtaskAttempts, SubtaskEffect, Task } from '../../shared/types';
 import { verdictOf } from './ActivityStream';
 import { VERDICT_LABEL, VERDICT_MARK, checkTally, coverage, reqLabel } from '../../shared/requirements';
+import { openAttempts } from '../panels/Lanes';
 
 const EFFECT: Record<SubtaskEffect, { label: string; cls: string; tip: string }> = {
   read: { label: '只读', cls: '', tip: '只读文件与分析，和其他只读子任务并行' },
@@ -14,6 +15,18 @@ const EFFECT: Record<SubtaskEffect, { label: string; cls: string; tip: string }>
 };
 
 const latestExec = (t: Task, subId: string): RunNode | undefined => [...t.nodes].reverse().find((n) => n.kind === 'exec' && n.subtaskId === subId);
+
+const LANE_STATE: Record<SubtaskAttempts['status'], string> = { running: '同时办差中', judging: '门下评比中', choosing: '待你选一路', applied: '已合入', failed: '没有采用' };
+
+/** 排班 on this subtask: the plan's lanes before it runs, then the latest 比试 record. */
+function lanesText(t: Task, subId: string, planned?: number): { text: string; tip: string } | null {
+  const rec = [...(t.attempts ?? [])].reverse().find((a) => a.subtaskId === subId);
+  if (rec) {
+    const picked = rec.lanes.find((l) => l.id === rec.pick);
+    return { text: `排班 ${rec.lanes.length} 路 · ${rec.status === 'applied' && picked ? `采用${picked.label}路` : LANE_STATE[rec.status]}`, tip: '点开「比试」并排看各路的改动和门下省的评分' };
+  }
+  return planned ? { text: `排班 ${planned} 路`, tip: '开工时各路在自己的工作树里同时办，门下省评分后你选一路' } : null;
+}
 
 function statusOf(n: RunNode | undefined, waitingApproval: boolean): { text: string; cls: string } {
   if (waitingApproval) return { text: '待你定夺', cls: 'gold' };
@@ -59,14 +72,16 @@ export function PlanCard({ task }: { task: Task }) {
         <>
           {plan.summary && <div className="pc-sum muted">{plan.summary}</div>}
           {plan.requirements && <RequirementRows task={task} />}
-          {rows.map(({ s, st }) => {
+          {rows.map(({ s, n, st }) => {
             const eff = EFFECT[s.effect ?? 'read'];
+            const lanes = lanesText(task, s.id, s.lanes?.length);
             return (
               <div key={s.id} className="sub-row" data-testid={`plan-sub-${s.id}`}>
                 <code className="sid">{s.id}</code>
                 <span className="ellipsis st-title" title={`${s.title}\n${s.detail}${s.covers?.length ? `\n负责：${s.covers.map(reqLabel).join('、')}` : ''}`}>{s.title}</span>
                 <span className={`eff ${eff.cls}`} title={eff.tip}>{eff.label}</span>
-                <span className="muted dept">{AGENT_MAP[s.dept]?.name}</span>
+                <span className="muted dept" title={n?.guest ? `${AGENT_MAP[s.dept]?.name}请客卿 ${n.guest.name} 代办` : undefined}>{AGENT_MAP[s.dept]?.name}{n?.guest ? <span className="pc-guest" data-testid={`plan-guest-${s.id}`}> · {n.guest.name}</span> : null}</span>
+                {lanes && <span className="pc-lanes clickable" title={lanes.tip} onClick={() => openAttempts(task.id)} data-testid={`plan-lanes-${s.id}`}>{lanes.text}</span>}
                 <span className={`st ${st.cls}`}>{st.text}</span>
               </div>
             );

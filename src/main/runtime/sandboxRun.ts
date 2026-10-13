@@ -12,6 +12,8 @@ import { buildProfile, detectDenial, expandHome, gitCommonDir, realish, sandboxB
 import { classifyCommand } from './permissions';
 import { agentName } from '../../shared/court';
 import { truncate } from './util';
+import { commandEnv } from './worktreeSetup';
+import { laneOf } from './attempts';
 
 export function sandboxSettingsOf(rt: Runtime): SandboxSettings {
   const s = rt.settings.sandbox as Partial<SandboxSettings> | undefined;
@@ -47,13 +49,14 @@ export const SANDBOX_KIND_LABEL: Record<SandboxDenial['kind'], string> = { write
  */
 export async function runOfficialCommand(ctx: ToolContext, cmd: string, root: string, timeoutMs: number): Promise<ExecResult & { sandboxNote?: string }> {
   const { rt, task, agentId, node } = ctx;
+  const env = commandEnv(task, laneOf(task, node)?.worktree?.ports);
   const s = sandboxSettingsOf(rt);
   const exempt = classifyCommand(cmd).release;
   const usable = s.enabled && !exempt && sandboxBackend().available();
   if (s.enabled && !exempt && !usable) warnUnavailable(rt);
-  if (!usable) return runCommand(cmd, root, { timeoutMs, signal: ctx.signal });
+  if (!usable) return runCommand(cmd, root, { timeoutMs, signal: ctx.signal, env });
   let policy = sandboxPolicy(rt, root, task);
-  let r = await runCommand(cmd, root, { timeoutMs, signal: ctx.signal, sandboxProfile: buildProfile(policy) });
+  let r = await runCommand(cmd, root, { timeoutMs, signal: ctx.signal, env, sandboxProfile: buildProfile(policy) });
   if (r.exitCode === 0 || r.timedOut || ctx.signal?.aborted) return r;
   const den = detectDenial(`${r.stdout}\n${r.stderr}`, policy);
   if (!den) return r;
@@ -76,11 +79,11 @@ export async function runOfficialCommand(ctx: ToolContext, cmd: string, root: st
   if (d.choice === 'allow_dir' && dir) {
     addSandboxWritable(rt, rt.permRoot(task)!, dir, task, agentId);
     policy = sandboxPolicy(rt, root, task);
-    r = await runCommand(cmd, root, { timeoutMs, signal: ctx.signal, sandboxProfile: buildProfile(policy) });
+    r = await runCommand(cmd, root, { timeoutMs, signal: ctx.signal, env, sandboxProfile: buildProfile(policy) });
     return { ...r, sandboxNote: `（皇上准许本工作区写 ${dir}，已在沙箱里重跑）` };
   }
   rt.audit.record('emperor', 'sandbox_bypass', { command: truncate(cmd, 300) }, task?.id);
-  r = await runCommand(cmd, root, { timeoutMs, signal: ctx.signal });
+  r = await runCommand(cmd, root, { timeoutMs, signal: ctx.signal, env });
   return { ...r, sandboxNote: '（皇上准许这一次不受沙箱限制，已重跑）' };
 }
 

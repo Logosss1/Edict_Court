@@ -6,7 +6,7 @@ import { call } from './api';
 
 export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'schedules' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help' | 'settings';
 /** 设置中心 pages (one editor tab, left nav) */
-export type SettingsSection = 'appearance' | 'storage' | 'providers' | 'routing' | 'runtime' | 'permissions' | 'canon' | 'web' | 'mcp' | 'skills' | 'lsp' | 'acp' | 'worktrees' | 'audit' | 'help';
+export type SettingsSection = 'appearance' | 'storage' | 'providers' | 'routing' | 'runtime' | 'permissions' | 'canon' | 'web' | 'mcp' | 'skills' | 'lsp' | 'guests' | 'acp' | 'worktrees' | 'audit' | 'help';
 export type CourtScene = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian' | 'donggong' | 'yuhuayuan' | 'gongdao' | 'jiaolou' | 'yutu';
 
 export interface Tab {
@@ -58,6 +58,8 @@ export interface UIState {
   worktreeDialog: { taskId: string; choice?: string } | null;
   /** 定时旨意 page: the schedule to show (from a 定时提议 card) */
   scheduleFocus: string | null;
+  /** task tab: the page to open next for that edict (e.g. 'attempts' from a 比试 card); cleared once shown */
+  taskDetailTab: { taskId: string; tab: string } | null;
 }
 
 export interface AppState extends Snapshot {
@@ -69,7 +71,7 @@ export interface AppState extends Snapshot {
 const initialUI: UIState = {
   mode: 'workbench', selectedTaskId: null, tabs: [{ id: 'panel:kanban', kind: 'panel', title: '旨意看板', panel: 'kanban' }], activeTab: 'panel:kanban',
   sideView: 'explorer', settingsSection: 'appearance', kanbanView: 'board', bottomOpen: false, bottomTab: 'terminal', composerHidden: false, courtScene: 'taihe', courtDept: 'bingbu', review: null,
-  agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [], previewBlocked: null, worktreeDialog: null, scheduleFocus: null,
+  agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [], previewBlocked: null, worktreeDialog: null, scheduleFocus: null, taskDetailTab: null,
 };
 
 let state: AppState = {
@@ -318,7 +320,7 @@ export function openTab(tab: Tab) {
 
 export const SETTINGS_TITLE: Record<SettingsSection, string> = {
   appearance: '外观与通知', storage: '存储与备份', providers: '模型服务', routing: '官员模型与路由', runtime: '运行策略', permissions: '权限与审批', canon: '典章', web: '联网与搜索',
-  mcp: '连接服务', skills: '技能', lsp: '语言服务', acp: '编辑器接入', worktrees: '工作树', audit: '审计日志', help: '使用说明',
+  mcp: '连接服务', skills: '技能', lsp: '语言服务', guests: '外部智能体', acp: '编辑器接入', worktrees: '工作树', audit: '审计日志', help: '使用说明',
 };
 
 /** Open the settings center tab on a page. */

@@ -7,6 +7,7 @@ import { PERMISSION_LABEL } from './permissions';
 import { READ_TOOLS, type ToolName } from './tools';
 import type { Workspace } from '../services/workspace';
 import { extractJson, now, sha256, truncate } from './util';
+import { laneOf } from './attempts';
 
 export const effectOf = (sub?: { effect?: unknown }): SubtaskEffect => (sub?.effect === 'write' || sub?.effect === 'verify' ? sub.effect : 'read');
 
@@ -151,7 +152,7 @@ export function checkEvidence(t: Task, node: RunNode, c: ExecConclusion, toolCou
     }
   }
   // file-tool writes and run_command side effects (R7) both count as evidence of work
-  const touched = t.changes.filter((ch) => ch.nodeId === node.id && !ch.reverted).map((ch) => `${ch.op}:${ch.path}${ch.via === 'command' ? '（命令）' : ''}`);
+  const touched = (laneOf(t, node)?.changes ?? t.changes).filter((ch) => ch.nodeId === node.id && !ch.reverted).map((ch) => `${ch.op}:${ch.path}${ch.via === 'command' ? '（命令）' : ''}`);
   checks.push(`系统记录的改动：${touched.length ? touched.join(', ') : '无'}`);
   const cmds = toolCounts.run_command ?? 0;
   const previews = toolCounts.preview_page ?? 0;

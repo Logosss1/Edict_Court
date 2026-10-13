@@ -6,6 +6,7 @@ import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { agentName } from '../../shared/court';
 import { openWorktreeDialog } from './WorktreeDialog';
+import { openAttempts } from '../panels/Lanes';
 import { SearchSetupDialog } from '../settings/pages/Web';
 import type { ApprovalChoice, ApprovalRequest } from '../../shared/types';
 
@@ -18,6 +19,8 @@ const KIND_HEAD: Record<string, { icon: string; label: string }> = {
   search_setup: { icon: 'globe', label: '官员上疏 · 需要联网搜索' },
   web_domain: { icon: 'globe', label: '抓取网页 · 新网站' },
   sandbox: { icon: 'lock', label: '命令被沙箱拦下' },
+  guest: { icon: 'users', label: '客卿改了文件 · 请皇上定夺' },
+  attempt: { icon: 'layers', label: '排班办完 · 请选一路' },
 };
 /** 太子追问: the prince's one question at triage (he is not an official) */
 const PRINCE_HEAD = { icon: 'help', label: '太子请旨' };
@@ -149,6 +152,7 @@ export function ChoiceCard({ a, active }: { a: ApprovalRequest; active: boolean 
       {a.detail && <Detail text={a.detail} />}
       {setup && <SearchSetupDialog onClose={() => setSetup(false)} onSaved={() => { setSetup(false); void decide(choices.findIndex((x) => x.id === 'configure'), true); }} />}
       {a.kind === 'worktree' && a.taskId && <button className="link small cc-more" onClick={() => openWorktreeDialog(a.taskId!)} data-testid="cc-worktree-open">查看改动明细与提交说明…</button>}
+      {a.kind === 'attempt' && a.taskId && <button className="link small cc-more" onClick={() => openAttempts(a.taskId!)} data-testid="cc-attempts-open">打开「比试」，并排看各路的改动…</button>}
       {a.reason && a.kind !== 'question' && !a.summary.includes(a.reason) && <div className="cc-why muted">{a.reason}</div>}
       <div className="cc-opts" role="radiogroup" aria-label="选择">
         {choices.map((ch, i) => (

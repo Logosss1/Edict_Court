@@ -25,8 +25,12 @@ import { worktreeCreate, worktreeDiffStat, worktreeFinish, worktreeList, worktre
 import type { WorktreeAction } from '../shared/types';
 import { backupNow, backupPath, storageInfo } from './runtime/storage';
 import { saveWebSettings, testSearch, webStatus } from './runtime/webTools';
-import type { SandboxSettings, SearchConfig, SearchProviderKind, WebSettings } from '../shared/types';
+import type { SandboxSettings, SearchConfig, SearchProviderKind, WebSettings, WorktreeSetup } from '../shared/types';
 import { addSandboxWritable, removeSandboxWritable, sandboxStatus, saveSandboxSettings } from './runtime/sandboxRun';
+import { saveWorktreeSetup } from './runtime/worktreeSetup';
+import { guestStatuses, removeGuest, saveGuest, setGuestDefaults, testGuest, guestSettingsOf } from './guests';
+import type { GuestConfig, LaneSpec, MinistryId } from '../shared/types';
+import { attemptDiff, chooseAttempt, estimateLanes } from './runtime/attemptRun';
 
 /** Editor-side LSP calls: a missing / disabled server is a normal answer (with install hints), not an error. */
 async function lspSoft<T>(fn: () => Promise<T>): Promise<{ ok: true; result: T } | { ok: false; reason: string; message: string; candidates: { id: string; name: string; hint: string; homepage: string; note?: string }[] }> {
@@ -124,6 +128,18 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     saveSandboxSettings: (patch: Partial<SandboxSettings>) => saveSandboxSettings(rt, patch),
     addSandboxWritable: (root: string, dir: string) => addSandboxWritable(rt, root, dir),
     removeSandboxWritable: (root: string, dir: string) => removeSandboxWritable(rt, root, dir),
+    // ── 工作树准备 (2.1)
+    saveWorktreeSetup: (root: string, patch: Partial<WorktreeSetup>) => saveWorktreeSetup(rt, root, patch),
+    // ── 客卿：外部智能体 (2.1)
+    guestStatuses: () => ({ guests: guestStatuses(rt), settings: guestSettingsOf(rt) }),
+    saveGuest: (cfg: Partial<GuestConfig> & { id?: string; commandLine?: string }) => saveGuest(rt, cfg),
+    removeGuest: (id: string) => removeGuest(rt, id),
+    setGuestDefaults: (patch: { deptDefault?: Partial<Record<MinistryId, string | null>>; attemptsInLite?: boolean }) => setGuestDefaults(rt, patch),
+    testGuest: (id: string) => testGuest(rt, id),
+    // ── 排班 / 比试 (2.1)
+    estimateLanes: (dept: string, lanes: LaneSpec[]) => estimateLanes(rt, dept, lanes),
+    chooseAttempt: (taskId: string, laneId: string | null, o?: { keepOthers?: boolean; attemptsId?: string; comment?: string }) => chooseAttempt(rt, taskId, laneId, o),
+    attemptDiff: (taskId: string, laneId: string) => attemptDiff(rt, taskId, laneId),
     setAgentModel: (agentId: AgentId, ref: ModelRef | null) => rt.setAgentModel(agentId, ref),
     upsertProvider: (cfg: ProviderConfig, apiKey?: string | null) => rt.upsertProvider(cfg, apiKey),
     deleteProvider: (id: string) => rt.deleteProvider(id),

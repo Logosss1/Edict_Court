@@ -30,6 +30,8 @@ export interface MockOptions {
   unmetCheckTimes?: number;
   /** 中书省 writes a 需求说明 when asked (default true) */
   writeRequirements?: boolean;
+  /** 排班 (2.1): the lane 门下省 recommends in 比试 (default: the last lane) */
+  judgePick?: string;
   failExecTimes?: number; // HTTP 500 for ministry calls N times (tests retry/blocking)
   delayMs?: number;
   /** per-call SSE chunk delay (overrides delayMs when it returns a number) */
@@ -66,7 +68,7 @@ export function defaultBrain(opts: MockOptions): Brain {
           summary: u.includes('封驳意见') ? '已按封驳意见补充验收标准。实现 greet 并测试。' : '实现 greet 模块并测试',
           ...(req ? { requirements: { goal: '提供 greet 函数并有测试', outOfScope: ['国际化'], criteria: [{ id: 'R1', text: 'greet("A") 返回 "Hello, A"' }, { id: 'R2', text: 'greet.test.js 可以用 node 运行通过' }], constraints: [] } } : {}),
           subtasks: [
-            { id: 'S1', title: '实现 greet.js', dept: 'bingbu', effect: 'write', detail: '创建 greet.js 导出 greet(name)', acceptance: 'greet("A") 返回 "Hello, A"', dependsOn: [], ...(req ? { covers: ['R1'] } : {}) },
+            { id: 'S1', title: '实现 greet.js', dept: 'bingbu', effect: 'write', detail: '创建 greet.js 导出 greet(name)', acceptance: 'greet("A") 返回 "Hello, A"', dependsOn: [], ...(req ? { covers: ['R1'] } : {}), ...(u.includes('多试') ? { suggestAttempts: '写法有好几种，值得多做一份择优' } : {}) },
             { id: 'S2', title: '编写测试', dept: 'xingbu', effect: 'verify', detail: '创建 greet.test.js', acceptance: '测试可运行', dependsOn: ['S1'], ...(req ? { covers: ['R2'] } : {}) },
           ],
           risks: ['无'],
@@ -79,6 +81,11 @@ export function defaultBrain(opts: MockOptions): Brain {
       const fail = unmetChecks < (opts.unmetCheckTimes ?? 0);
       if (fail) unmetChecks++;
       return { text: JSON.stringify({ items: ids.map((id, i) => (fail && i === ids.length - 1 ? { id, verdict: 'unmet', evidence: '', note: '没有空字符串的用例' } : { id, verdict: 'met', evidence: `greet.js 第 1 行；node greet.test.js 输出 ok（${id}）` })) }) };
+    }
+    if (s.includes('你是门下省') && u.includes('【比试】')) {
+      const lanes = [...u.matchAll(/^### (.)路/gm)].map((m) => m[1]);
+      const pick = opts.judgePick && lanes.includes(opts.judgePick) ? opts.judgePick : lanes[lanes.length - 1];
+      return { text: JSON.stringify({ scores: lanes.map((l, i) => ({ lane: l, score: l === pick ? 90 : 70 - i, comment: l === pick ? '改动最少且测试通过' : '可用，但改动多' })), pick, note: `${pick}路改动最干净` }) };
     }
     if (s.includes('你是门下省')) {
       if (u.includes('审议成果') || u.includes('核对实际改动')) {

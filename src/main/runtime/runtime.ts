@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
-  Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, PermissionMode, Plan,
+  AttemptLane, Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, PermissionMode, Plan,
   ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo, RevertResult,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
@@ -26,6 +26,7 @@ import { DesignStore } from './designs';
 import { ScheduleStore } from './scheduler';
 import type { SubmitInput, SubmitResult } from './orchestrator';
 import { edictDir, raiseWorktreeCard, recoverWorktrees } from './worktrees';
+import { dropLaneTrees, laneOf } from './attempts';
 import { previewHostFor, taskIdFromPreviewHost } from '../services/preview';
 import type { FetchLike, ProviderRuntime } from '../llm/types';
 import { listRemoteModels, streamLlm } from '../llm/adapters';
@@ -689,8 +690,10 @@ export class Runtime {
   cancel(taskId: string, reason = '皇上取消') {
     const t = this.getTask(taskId);
     if (TERMINAL.includes(t.state)) return;
+    // taken before the transition: reaching a terminal state drops the edict's controller
+    const running = this.controllers.get(taskId);
     this.transition(t, 'Cancelled', 'emperor', reason);
-    this.controllers.get(taskId)?.abort();
+    running?.abort();
     for (const n of t.nodes) if (n.status === 'running' || n.status === 'pending' || n.status === 'waiting') {
       n.status = 'cancelled';
       n.exitStatus = 'cancelled';
@@ -821,7 +824,7 @@ export class Runtime {
 
   setReleaseAlways(root: string, on: boolean) {
     const perms = { ...(this.settings.workspacePerms ?? {}) };
-    perms[root] = { rules: perms[root]?.rules ?? [], releaseAlways: on };
+    perms[root] = { ...perms[root], rules: perms[root]?.rules ?? [], releaseAlways: on };
     this.settings = { ...this.settings, workspacePerms: perms };
     this.audit.record('emperor', 'release_policy', { root, releaseAlways: on });
     this.saveSettings();
@@ -904,7 +907,7 @@ export class Runtime {
    * Record one file change. `via: 'command'` marks a run_command side effect (R7). An oversize change passes
    * `op`: its content was not kept, so a null before / after there does not mean the file was absent.
    */
-  recordChange(task: Task | undefined, agentId: AgentId, nodeId: string | undefined, rel: string, before: Buffer | null, after: Buffer | null, meta: { via?: 'tool' | 'command'; command?: string; op?: FileChange['op']; oversize?: boolean } = {}) {
+  recordChange(task: Task | undefined, agentId: AgentId, nodeId: string | undefined, rel: string, before: Buffer | null, after: Buffer | null, meta: { via?: 'tool' | 'command' | 'guest'; command?: string; op?: FileChange['op']; oversize?: boolean } = {}) {
     const ch: FileChange = {
       id: uid('fc'), taskId: task?.id ?? '', path: rel,
       op: meta.op ?? (before === null ? 'create' : after === null ? 'delete' : 'modify'),
@@ -916,7 +919,10 @@ export class Runtime {
     if (meta.oversize) ch.oversize = true;
     if (looksBinary(before) || looksBinary(after)) ch.binary = true;
     if (task) {
-      task.changes.push(ch);
+      // 排班: a lane's changes stay with the lane (its own worktree) until it is picked
+      const lane = nodeId ? laneOf(task, task.nodes.find((n) => n.id === nodeId)) : undefined;
+      if (lane) (lane.changes ??= []).push(ch);
+      else task.changes.push(ch);
       this.touch(task);
     }
     this.audit.record(agentId, 'file_change', { path: rel, op: ch.op, beforeHash: ch.beforeHash, afterHash: ch.afterHash, via: ch.via, ...(ch.command ? { command: truncate(ch.command, 300) } : {}), ...(ch.oversize ? { oversize: true } : {}) }, task?.id);
@@ -934,6 +940,11 @@ export class Runtime {
     for (const m of this.lspByRoot.values()) m.setConfig(patch);
     saveLspConfig(path.join(this.opts.dataDir, 'lsp.json'), this.lsp.config);
     this.audit.record('emperor', 'lsp_config', { keys: Object.keys(patch) });
+  }
+
+  /** The change records a node's work is checked against: its lane's for a 排班 lane, else the edict's. */
+  changesFor(task: Task, node?: RunNode | null): FileChange[] {
+    return laneOf(task, node)?.changes ?? (node?.laneId ? [] : task.changes);
   }
 
   revertChange(taskId: string, changeId: string, force = false) {
@@ -1053,8 +1064,13 @@ export class Runtime {
    * edict was submitted on (or, for a scheduled edict, the folder it was scheduled for), else null. Without a task
    * (chat, the editor) it is the open workspace.
    */
-  workspaceFor(task?: Task | null): Workspace | null {
+  workspaceFor(task?: Task | null, node?: RunNode | null): Workspace | null {
     if (!task) return this.workspace;
+    // 排班 (2.1): a lane works in its own worktree
+    if (node?.laneId) {
+      const lw = laneOf(task, node)?.worktree;
+      return lw?.status === 'active' && fs.existsSync(edictDir(lw)) ? this.wsAt(edictDir(lw)) : null;
+    }
     const w = task.worktree;
     if (w?.status === 'active') {
       const dir = edictDir(w);
@@ -1148,6 +1164,8 @@ export class Runtime {
     }
     // 结案 dialog for an edict's own worktree (after the caller finished, e.g. cancel() closing its cards)
     if (task.worktree?.status === 'active') setImmediate(() => raiseWorktreeCard(this, task));
+    // 排班 lanes still on disk (cancelled or failed mid-way): their worktrees go, kept branches stay
+    if (task.attempts?.some((a) => a.lanes.some((l) => l.worktree?.status === 'active'))) void dropLaneTrees(this, task);
     this.persist();
   }
 
@@ -1443,6 +1461,20 @@ export function buildMemorial(task: Task): Memorial {
   if (task.skillsUsed?.length) stages.splice(stages.length - 1, 0, { key: 'skills', label: '所用技能', at: task.skillsUsed[0].at, items: task.skillsUsed.map((u) => `${agentName(u.agentId)} 加载 ${u.name}（sha256:${u.sha256.slice(0, 12)}）`) });
   // E1: what the officials asked the emperor, and the answers they worked from
   if (task.questions?.length) stages.splice(stages.length - 1, 0, { key: 'questions', label: '请旨记录', at: task.questions[0].at, items: task.questions.map((q) => `${agentName(q.agentId)} 问：${q.question} —— ${q.answer ? `答：${q.answer}` : '未答复'}`) });
+  // 2.1 排班: every lane of each 比试, its score, and which one went in (the others' branches when kept)
+  if (task.attempts?.length) {
+    const who = (l: AttemptLane) => {
+      const n = nodes.find((x) => x.id === l.nodeId);
+      return n?.guest ? `客卿 ${n.guest.name}` : l.executor && l.executor !== 'self' ? `客卿 ${l.executor}` : `本部官员${l.model ? `（${l.model.model}）` : ''}`;
+    };
+    const items = task.attempts.map((a) => {
+      const sub = task.plan?.subtasks.find((s) => s.id === a.subtaskId);
+      const lanes = a.lanes.map((l) => `${l.label}路 ${who(l)}${l.score !== undefined ? ` ${l.score} 分` : ''}${l.id === a.pick ? '（采用）' : l.worktree?.status === 'kept' ? `（落选，分支 ${l.worktree.branch}）` : ''}`).join('；');
+      const end = a.status === 'applied' ? `${a.pickedBy === 'menxia' ? '门下省' : '皇上'}采用${a.lanes.find((l) => l.id === a.pick)?.label ?? ''}路` : a.status === 'failed' ? `没有采用${a.error ? `：${a.error}` : ''}` : '未完';
+      return `${a.subtaskId}「${sub?.title ?? ''}」排班 ${a.lanes.length} 路${a.round > 1 ? `（第 ${a.round} 轮）` : ''}：${lanes}。${end}${a.judgeNote ? `。门下省：${a.judgeNote}` : ''}`;
+    });
+    stages.splice(stages.length - 1, 0, { key: 'attempts', label: '排班比试', at: task.attempts[0].at, items });
+  }
   // 2.1 需求对照: every acceptance criterion, its verdict and the evidence
   const checklist = checklistItems(task);
   if (checklist.length) stages.splice(stages.length - 1, 0, { key: 'requirements', label: '需求对照', at: task.requirementChecks?.at(-1)?.at ?? firstAt(byKind('plan')), items: checklist });

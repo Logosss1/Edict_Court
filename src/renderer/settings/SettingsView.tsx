@@ -14,6 +14,7 @@ import { McpPage } from './pages/Mcp';
 import { WebPage } from './pages/Web';
 import { SkillsPage } from './pages/Skills';
 import { LspPage } from './pages/Lsp';
+import { GuestsPage } from './pages/Guests';
 import { AcpPage } from './pages/Acp';
 import { WorktreesPage } from './pages/Worktrees';
 import { AuditPanel } from '../panels/Audit';
@@ -44,6 +45,7 @@ function pageFor(id: SettingsSection): ReactNode {
     case 'mcp': return <McpPage />;
     case 'skills': return <SkillsPage />;
     case 'lsp': return <LspPage />;
+    case 'guests': return <GuestsPage />;
     case 'acp': return <AcpPage />;
     case 'worktrees': return <WorktreesPage />;
     case 'audit': return <AuditPanel />;

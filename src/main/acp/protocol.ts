@@ -319,3 +319,43 @@ export interface RequestPermissionResponse extends Meta {
 
 /** Text helper: a plain text content block. */
 export const text = (t: string): TextContent => ({ type: 'text', text: t });
+
+// ───────────────────────── client side (2.1: Edict drives outside agents, 客卿) ─────────────────────────
+/** Requests an agent sends to its client (Edict) once the client advertised fs / terminal capabilities. */
+export const CLIENT_FS_TERMINAL = {
+  readTextFile: 'fs/read_text_file',
+  writeTextFile: 'fs/write_text_file',
+  terminalCreate: 'terminal/create',
+  terminalOutput: 'terminal/output',
+  terminalWaitForExit: 'terminal/wait_for_exit',
+  terminalKill: 'terminal/kill',
+  terminalRelease: 'terminal/release',
+} as const;
+
+export interface ReadTextFileRequest extends Meta {
+  sessionId: string;
+  path: string;
+  line?: number | null;
+  limit?: number | null;
+}
+export interface WriteTextFileRequest extends Meta {
+  sessionId: string;
+  path: string;
+  content: string;
+}
+export interface CreateTerminalRequest extends Meta {
+  sessionId: string;
+  command: string;
+  args?: string[];
+  env?: EnvVariable[];
+  cwd?: string | null;
+  outputByteLimit?: number | null;
+}
+export interface TerminalRef extends Meta {
+  sessionId: string;
+  terminalId: string;
+}
+export interface TerminalExitStatus extends Meta {
+  exitCode?: number | null;
+  signal?: string | null;
+}

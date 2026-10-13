@@ -34,6 +34,8 @@ export function defaultSettings(): Settings {
     canon: [],
     commandSnapshots: true,
     worktreePerEdict: true,
+    worktreePortBase: 42000,
+    guests: { agents: [], deptDefault: {}, attemptsInLite: false },
     notify: 'all',
     web: defaultWebSettings(),
     sandbox: defaultSandboxSettings(),

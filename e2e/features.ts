@@ -655,7 +655,7 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     const r: any = await inv('submit', { text: 'SEARCHTEST 查一下 Electron 最新版本', tier: 'solo', multiAgent: false });
     await win.evaluate((id) => (window as any).__edictUI.setUI({ selectedTaskId: id }), r.taskId);
     await win.waitForSelector('[data-testid=choice-card]:has-text("上疏")', { timeout: 20000 });
-    await shot('70-search-petition');
+    await shot('v21-70-search-petition');
     const opts = await win.$$eval('[data-testid=choice-card] [data-testid^=ap-opt-]', (els) => els.map((e) => e.getAttribute('data-testid')));
     ok('官员要搜索而没设搜索服务时上疏：配置 / 只用抓取 / 驳回', ['ap-opt-configure', 'ap-opt-fetch_only', 'ap-opt-deny'].every((x) => opts.includes(x)), opts.join(','));
     await win.click('[data-testid=choice-card] [data-testid=ap-opt-configure]');
@@ -667,7 +667,7 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.waitForSelector('[data-testid=search-setup-dialog] [data-testid=search-test-result]');
     const tr = (await win.textContent('[data-testid=search-setup-dialog] [data-testid=search-test-result]')) ?? '';
     ok('上疏卡片里的搜索设置可以先测试', tr.includes('可以用'), tr.slice(0, 60));
-    await shot('71-search-setup-dialog');
+    await shot('v21-71-search-setup-dialog');
     await win.click('[data-testid=search-setup-dialog] [data-testid=search-save]');
     const done = await waitTask((x) => x.id === r.taskId && (x.state === 'Done' || x.gate?.kind === 'final' || x.state === 'Blocked'), 30000);
     const ws21: any = await inv('webStatus');
@@ -679,16 +679,16 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.evaluate(() => (window as any).__openSettings('web'));
     await win.waitForSelector('[data-testid=search-form]');
     ok('「联网与搜索」页：抓取默认允许，当前搜索服务标为在用', (await win.getAttribute('[data-testid=web-fetch-allow]', 'aria-checked')) === 'true' && ((await win.textContent('[data-testid=search-prov-searxng]')) ?? '').includes('在用'));
-    await shot('72-settings-web');
+    await shot('v21-72-settings-web');
     await win.evaluate(() => (window as any).__openSettings('permissions'));
     await win.waitForSelector('text=命令沙箱');
     await win.locator('text=命令沙箱').first().scrollIntoViewIfNeeded();
-    await shot('73-settings-sandbox');
+    await shot('v21-73-settings-sandbox');
     ok('「权限与审批」页有命令沙箱一节', await win.locator('[data-testid=sandbox-reset]').count() > 0 || (await win.textContent('body'))!.includes('命令沙箱'));
     await win.evaluate(() => (window as any).__openSettings('runtime'));
     await win.waitForSelector('[data-testid=req-check-lite]');
     await win.locator('[data-testid=req-check-lite]').scrollIntoViewIfNeeded();
-    await shot('74-settings-requirements');
+    await shot('v21-74-settings-requirements');
     ok('「运行策略」页有需求对照的开关与补办轮数', await win.locator('[data-testid=req-check-full]').count() === 1 && await win.locator('[data-testid=req-check-rounds]').count() === 1);
 
     // 需求说明 on the plan card, check verdicts, checklist in the memorial
@@ -704,7 +704,7 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.waitForTimeout(300);
     const pr = (await win.textContent('[data-testid=plan-req]').catch(() => '')) ?? '';
     ok('方案卡列出需求与对照结果', pr.includes('需1') && pr.includes('满足'), pr.slice(0, 80));
-    await shot('75-plan-card-requirements');
+    await shot('v21-75-plan-card-requirements');
     if (te.state === 'Done') ok('奏折里有「需求对照」', ((await inv('memorialMarkdown', e.taskId)) as string).includes('需求对照'));
   }
 
@@ -716,7 +716,7 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.click('[data-testid=ab-schedules]');
     await win.waitForSelector('[data-testid=schedules-panel]');
     ok('活动栏有「定时旨意」，没有定时旨意时显示说明', (await win.locator('[data-testid=sch-new-2]').count()) === 1);
-    await shot('76-schedules-empty');
+    await shot('v21-76-schedules-empty');
     await win.click('[data-testid=sch-new]');
     await win.waitForSelector('[data-testid=sch-form]');
     await win.fill('[data-testid=sch-text]', '写一个 greet 函数并测试');
@@ -729,14 +729,14 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     ok('表单里预览接下来的三次', pv.startsWith('接下来：') && pv.split('·').length === 3 && pv.includes('08:30'), pv);
     const ws0 = (await win.textContent('[data-testid=sch-ws]')) ?? '';
     ok('工作区默认是当前打开的文件夹', ws0 === ws, ws0);
-    await shot('77-schedule-form');
+    await shot('v21-77-schedule-form');
     await win.click('[data-testid=sch-save]');
     await win.waitForSelector('[data-testid=sch-detail]');
     const s0: any = ((await inv('scheduleList')) as any[])[0];
     ok('保存后按表单排定', !!s0 && s0.title === '每日问候巡检' && s0.rule.kind === 'weekly' && s0.rule.time === '08:30' && s0.rule.days.join() === '1,2,3,4,5,6' && s0.permission === 'worktree' && s0.workspace === ws && s0.enabled && s0.nextAt > Date.now(), JSON.stringify(s0?.rule));
     const ruleText = (await win.textContent('[data-testid=sch-rule]')) ?? '';
     ok('详情页把时间读成人话', ruleText === '每周一、二、三、四、五、六 08:30', ruleText);
-    await shot('78-schedule-detail');
+    await shot('v21-78-schedule-detail');
     await win.click('[data-testid=sch-run-now]');
     const st: any = await waitTask((x) => x.schedule?.id === s0.id, 10000);
     ok('立即执行一次：下了一道定时旨意，不经太子分拣', st.schedule.permission === 'worktree' && st.workspace === ws && st.flow[0].from === '定时旨意');
@@ -745,11 +745,11 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     ok('「在旨意工作树里改」：在自己的工作树里办完，主目录没动', sd.state === 'Done' && sd.worktree?.status === 'active' && fs.existsSync(path.join(sd.worktree.path, 'greet.js')) && mainClean, `${sd.state} worktree=${sd.worktree?.status} clean=${mainClean} ${sd.blockedReason ?? ''}`);
     await win.waitForSelector('[data-testid=sch-history] .sch-h-row');
     ok('执行记录里有这一次', ((await win.textContent('[data-testid=sch-history]')) ?? '').includes('手动执行'));
-    await shot('79-schedule-history');
+    await shot('v21-79-schedule-history');
     await win.click('[data-testid=ab-kanban]');
     await win.waitForSelector('[data-testid=kc-schedule]', { timeout: 5000 }).catch(() => null);
     ok('看板卡片带「定时」标记', (await win.locator('[data-testid=kc-schedule]').count()) > 0);
-    await shot('80-kanban-schedule-tag');
+    await shot('v21-80-kanban-schedule-tag');
     // an official proposes one; it waits in 待办 until the emperor approves
     const pr: any = await inv('submit', { text: 'SCHEDTEST 看看依赖是不是最新的', tier: 'solo', multiAgent: false });
     await waitTask((x) => x.id === pr.taskId && (x.state === 'Done' || x.gate || x.state === 'Blocked'), 30000);
@@ -757,10 +757,10 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.waitForSelector('[data-testid=attn-schedule]', { timeout: 10000 });
     const card = (await win.textContent('[data-testid=attn-schedule]')) ?? '';
     ok('官员的定时提议出现在待办', card.includes('定时提议') && card.includes('每周查依赖更新'), card.slice(0, 80));
-    await shot('81-schedule-proposal-inbox');
+    await shot('v21-81-schedule-proposal-inbox');
     await win.click('[data-testid=attn-schedule] .a-title');
     await win.waitForSelector('[data-testid=sch-proposal]');
-    await shot('82-schedule-proposal-page');
+    await shot('v21-82-schedule-proposal-page');
     await win.click('[data-testid=sch-approve]');
     await win.waitForTimeout(400);
     const p1: any = ((await inv('scheduleList')) as any[]).find((x: any) => x.title === '每周查依赖更新');
@@ -769,7 +769,102 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.evaluate(() => (window as any).__edictUI.setUI({ sideView: null }));
     await win.click('[data-testid=ab-schedules]');
     await win.waitForSelector('[data-testid=schedules-panel]');
-    await shot('83-schedules-list');
+    await shot('v21-83-schedules-list');
+  }
+
+  if (want('lanes')) {
+    // 2.1 客卿 and 排班: a fake ACP agent on the 外部智能体 page, 排班 on the plan card, the 比试 page, pick a lane
+    const FAKE = path.resolve('tests/fixtures/fake-acp-agent.mjs');
+    const repo = fs.mkdtempSync('/tmp/edict-e2e2-lanes-');
+    fs.writeFileSync(path.join(repo, 'README.md'), '# demo\n');
+    fs.writeFileSync(path.join(repo, 'app.js'), '// app\n');
+    execSync('git init -q -b main && git config user.name e2e && git config user.email e2e@example.com && git config commit.gpgsign false && git add -A && git commit -q -m init', { cwd: repo });
+    await inv('setWorkspace', repo);
+    const g: any = await inv('saveGuest', { name: '测试客卿', commandLine: `node ${FAKE} --mode normal` });
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: null }));
+    await win.evaluate(() => (window as any).__openSettings('guests'));
+    await win.waitForSelector(`[data-testid=guest-row-${g.id}]`);
+    ok('「外部智能体」页列出内置的几位和自定义的客卿', (await win.locator('[data-testid^=guest-row-]').count()) >= 2 && ((await win.textContent(`[data-testid=guest-row-${g.id}]`)) ?? '').includes('已找到'));
+    await win.click(`[data-testid=guest-test-${g.id}]`);
+    await win.waitForSelector(`[data-testid=guest-result-${g.id}]`, { timeout: 20000 });
+    const tr = (await win.textContent(`[data-testid=guest-result-${g.id}]`)) ?? '';
+    ok('测试连接：启动、握手、开会话再关掉', tr.includes('连接成功'), tr.slice(0, 60));
+    await win.click('[data-testid=guest-attempts-lite]');
+    await win.waitForTimeout(300);
+    ok('打开「Court Lite 也可以排班」', ((await inv('guestStatuses')) as any).settings.attemptsInLite === true);
+    await shot('v21-84-settings-guests');
+
+    await inv('updateSettings', { permissionMode: 'auto-edit', planGate: { lite: true, full: true } });
+    const r: any = await inv('submit', { text: '写一个 greet 函数并测试，写法值得多试几种', tier: 'lite', multiAgent: true, forceEdict: true });
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ mode: 'workbench', selectedTaskId: id }), r.taskId);
+    await win.waitForSelector('[data-testid=gate-card] [data-testid=pe-lanes-btn-S1]', { timeout: 30000 });
+    ok('方案里写入类子任务旁有「排班」，中书省建议多试的有标记；验证类没有', (await win.locator('[data-testid=gate-card] [data-testid=pe-suggest-S1]').count()) === 1 && (await win.locator('[data-testid=gate-card] [data-testid=pe-lanes-btn-S2]').count()) === 0);
+    ok('有可用的客卿时，每个子任务可以选由谁办', (await win.locator('[data-testid=gate-card] [data-testid=pe-exec-S2]').count()) === 1);
+    await win.click('[data-testid=gate-card] [data-testid=pe-lanes-btn-S1]');
+    await win.waitForSelector('[data-testid=gate-card] [data-testid=pe-lanes-S1]');
+    await win.selectOption('[data-testid=gate-card] [data-testid=pe-lane-exec-S1-1]', g.id);
+    await win.waitForSelector('[data-testid=gate-card] [data-testid=pe-lanes-est-S1]', { timeout: 5000 });
+    const est = (await win.textContent('[data-testid=gate-card] [data-testid=pe-lanes-est-S1]')) ?? '';
+    ok('排班两路（官员、客卿），给出费用预估，客卿的费用另计', (await win.locator('[data-testid=gate-card] [data-testid^=pe-lane-S1-]').count()) === 2 && est.includes('预估') && est.includes('客卿的费用另计'), est);
+    await win.locator('[data-testid=gate-card] [data-testid=pe-lanes-S1]').scrollIntoViewIfNeeded();
+    await shot('v21-85-plan-lanes');
+    await win.click('[data-testid=gate-card] [data-testid=gate-approve]');
+    // auto-edit asks before the write task and commands: approve them as they come, until 比试 waits for a pick
+    const approveWork = async () => {
+      const snap: any = await inv('snapshot');
+      for (const a of snap.approvals) if (a.status === 'pending' && a.taskId === r.taskId && (a.kind === 'write_task' || a.kind === 'action')) await inv('decideApproval', a.id, true, a.kind === 'write_task' ? 'write' : 'once');
+      return snap;
+    };
+    let card: any;
+    for (let i = 0; i < 240 && !card; i++) {
+      const snap = await approveWork();
+      card = snap.approvals.find((a: any) => a.status === 'pending' && a.kind === 'attempt' && a.taskId === r.taskId);
+      if (!card) await win.waitForTimeout(250);
+    }
+    const t1: any = await waitTask((x) => x.id === r.taskId);
+    ok('两路各在自己的工作树里办完，门下省评了分，等皇上选', !!card && t1.attempts?.[0]?.status === 'choosing' && t1.attempts[0].lanes.every((l: any) => typeof l.score === 'number'), `${t1.state} ${t1.attempts?.[0]?.status} ${t1.blockedReason ?? ''}`);
+    await win.evaluate(() => (window as any).__edictUI.setUI({ sideView: 'inbox' }));
+    await win.waitForSelector('[data-testid=attn-attempt]', { timeout: 5000 });
+    ok('待办里有「比试待选」', ((await win.textContent('[data-testid=attn-attempt]')) ?? '').includes('比试待选'));
+    await win.click('[data-testid=attn-attempts-open]');
+    await win.waitForSelector('[data-testid=attempts-panel]', { timeout: 5000 });
+    await win.evaluate(() => (window as any).__edictUI.setUI({ sideView: null }));
+    const lane2 = (await win.textContent('[data-testid=attempt-lane-乙]')) ?? '';
+    ok('「比试」页并排列出各路：谁办的、几分、改了什么，门下推荐的那路有标记', (await win.locator('[data-testid^=attempt-lane-]').count()) === 2 && lane2.includes('门下推荐') && lane2.includes('测试客卿') && lane2.includes('分'), lane2.slice(0, 80));
+    await shot('v21-86-attempts-page');
+    await win.click('[data-testid=attempt-diff-乙]');
+    await win.waitForTimeout(500);
+    ok('「看改动」打开这一路相对排班起点的差异', (await win.locator('.tab:has-text("乙路")').count()) > 0);
+    await shot('v21-87-attempt-diff');
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ taskDetailTab: { taskId: id, tab: 'attempts' } }), r.taskId);
+    await win.click(`.tab:has-text("${t1.title}")`).catch(() => null);
+    await win.waitForSelector('[data-testid=attempt-pick-甲]', { timeout: 5000 });
+    await win.check('[data-testid=attempt-keep]');
+    await win.click('[data-testid=attempt-pick-甲]');
+    let t2: any;
+    for (let i = 0; i < 240; i++) {
+      await approveWork();
+      t2 = await waitTask((x) => x.id === r.taskId);
+      if (t2.state === 'Done' || t2.state === 'Blocked' || t2.gate) break;
+      await win.waitForTimeout(250);
+    }
+    const rec = t2.attempts[0];
+    const [la, lb] = rec.lanes;
+    const branchesNow = execSync("git branch --format='%(refname:short)'", { cwd: repo }).toString();
+    ok('选了甲路：只有甲路的改动进了旨意工作树，乙路留成分支', t2.state === 'Done' && rec.status === 'applied' && rec.pick === la.id && fs.existsSync(path.join(t2.worktree.path, 'greet.js')) && !fs.existsSync(path.join(t2.worktree.path, 'notes.md')) && branchesNow.includes(lb.worktree.branch), `${t2.state} ${rec.status} ${t2.blockedReason ?? ''}`);
+    // 结案 opens the worktree dialog (auto-edit): leave it for later
+    await win.waitForSelector('[data-testid=wt-later]', { timeout: 5000 }).catch(() => null);
+    if (await win.locator('[data-testid=wt-later]').count()) await win.click('[data-testid=wt-later]');
+    await win.waitForSelector('[data-testid=attempt-lane-甲] .chip.ok', { timeout: 5000 }).catch(() => null);
+    await shot('v21-88-attempts-applied');
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ selectedTaskId: id }), r.taskId);
+    await win.waitForSelector('[data-testid=plan-card]', { timeout: 5000 }).catch(() => null);
+    if (!(await win.locator('[data-testid=plan-lanes-S1]').count())) await win.click('[data-testid=plan-card] .h').catch(() => null);
+    await win.waitForSelector('[data-testid=plan-lanes-S1]', { timeout: 5000 }).catch(() => null);
+    ok('方案卡上标出排班结果', ((await win.textContent('[data-testid=plan-lanes-S1]').catch(() => '')) ?? '').includes('采用甲路'));
+    ok('奏折里有「排班比试」', ((await inv('memorialMarkdown', r.taskId)) as string).includes('排班比试'));
+    await inv('updateSettings', { permissionMode: 'auto', planGate: { lite: false, full: true } });
+    await inv('setWorkspace', ws);
   }
 
   const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json', 'edict.db', 'edict.db-wal'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));

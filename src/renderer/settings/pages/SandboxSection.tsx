@@ -12,7 +12,7 @@ import { DEFAULT_SANDBOX_CACHES, DEFAULT_SANDBOX_DENY_READ } from '../../../shar
 type Status = { available: boolean; platform: string; settings: SandboxSettings };
 
 /** One path per line, edited in place; saved on blur. */
-function PathList({ value, onSave, testid, placeholder }: { value: string[]; onSave: (v: string[]) => void; testid: string; placeholder?: string }) {
+export function PathList({ value, onSave, testid, placeholder }: { value: string[]; onSave: (v: string[]) => void; testid: string; placeholder?: string }) {
   const [text, setText] = useState(value.join('\n'));
   useEffect(() => setText(value.join('\n')), [value.join('\n')]);
   return (

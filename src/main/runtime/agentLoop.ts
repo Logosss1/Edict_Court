@@ -299,10 +299,11 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
   const maxSteps = o.maxSteps ?? (tools ? 24 : 1);
   const signal = o.signal ?? (task ? rt.signalFor(task.id, node?.id) : undefined);
   const busy = rt.agents.get(agentId);
-  if (busy && busy.status !== 'idle' && busy.taskId !== task?.id) {
+  if (busy && busy.status !== 'idle' && busy.taskId !== task?.id && !node?.laneId) {
     if (!role) rt.activity('log', `${agentName(agentId)} 正在处理其他事务，排队等候`, { taskId: task?.id, agentId, nodeId: node?.id });
   }
-  const release = await rt.acquireAgent(role?.key ?? agentId, signal);
+  // one run per official at a time; 排班 lanes of one ministry are separate officials working side by side
+  const release = await rt.acquireAgent(role?.key ?? (node?.laneId ? `${agentId}:${node.laneId}` : agentId), signal);
   rt.setAgent(agentId, { status: 'thinking', taskId: task?.id, nodeId: node?.id, activity: o.label ?? '处理中' });
   rt.audit.record(agentId, 'run_start', { runId, model: model.model, provider: provider.config.name, protocol: provider.config.protocol, effort: effort ?? null, node: node?.id, role: role?.key ?? null }, task?.id);
   let finalText = '';

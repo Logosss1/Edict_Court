@@ -6,10 +6,11 @@ import { Icon } from '../common/Icon';
 import { fmtAgo } from '../common/format';
 import { useAttention, type AttentionItem } from '../common/attention';
 import { openWorktreeDialog } from './WorktreeDialog';
+import { openAttempts } from '../panels/Lanes';
 import { SearchSetupDialog } from '../settings/pages/Web';
 
 const KIND_ICON: Record<AttentionItem['kind'], string> = {
-  write_task: 'edit', question: 'help', approval: 'shield', risk: 'alert', plan: 'scroll', final: 'scroll', decide: 'gate', blocked: 'alert', merge: 'merge', schedule: 'clock',
+  write_task: 'edit', question: 'help', approval: 'shield', risk: 'alert', plan: 'scroll', final: 'scroll', decide: 'gate', blocked: 'alert', merge: 'merge', schedule: 'clock', attempt: 'layers',
 };
 
 /** Open the edict in the agent pane (where the full card lives). */
@@ -79,7 +80,17 @@ export function AttnActions({ it }: { it: AttentionItem }) {
         </div>
       );
     }
-    // 上疏 for search: 配置 opens the setup; the petition is answered once the service is saved
+    // 排班办完: look at the lanes side by side, or take 门下省's pick at once
+    if (it.kind === 'attempt' && a.taskId) {
+      const rec = choices.find((c) => c.approve && c.tone === 'primary');
+      return (
+        <div className="a-act">
+          <button className="btn sm primary" onClick={() => openAttempts(a.taskId!)} data-testid="attn-attempts-open">打开比试</button>
+          {rec && <button className="btn sm" disabled={busy} onClick={go(() => call('decideApproval', a.id, true, rec.id), rec.label.replace(/（.*）$/, ''))} data-testid="attn-attempt-rec">{rec.label.replace(/（.*）$/, '')}</button>}
+        </div>
+      );
+    }
+        // 上疏 for search: 配置 opens the setup; the petition is answered once the service is saved
     if (a.kind === 'search_setup') {
       return (
         <div className="a-act">
@@ -152,7 +163,7 @@ export function InboxView() {
   const groups: { title: string; kinds: AttentionItem['kind'][] }[] = [
     { title: '请你批准', kinds: ['write_task', 'approval', 'risk'] },
     { title: '官员请旨', kinds: ['question'] },
-    { title: '御览与御批', kinds: ['plan', 'final', 'decide'] },
+    { title: '御览与御批', kinds: ['plan', 'final', 'decide', 'attempt'] },
     { title: '阻塞', kinds: ['blocked'] },
     { title: '结案合并', kinds: ['merge'] },
     { title: '定时提议', kinds: ['schedule'] },

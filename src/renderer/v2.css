@@ -169,6 +169,7 @@
 .sub-row .sid { font-size: 10.5px; color: var(--muted); flex: none; }
 .sub-row .st-title { flex: 1; min-width: 0; }
 .sub-row .eff { font-size: 10px; padding: 0 5px; border-radius: 4px; background: var(--bg3); color: var(--muted); flex: none; line-height: 16px; }
+.sub-row .pc-guest { color: var(--jade); }
 .sub-row .eff.w { color: var(--acc); background: color-mix(in srgb, var(--acc) 10%, transparent); }
 .sub-row .eff.v { color: var(--jade); background: color-mix(in srgb, var(--jade) 12%, transparent); }
 .sub-row .dept { font-size: 11px; flex: none; }
@@ -227,6 +228,7 @@
 /* ── change list tags, node actions, preview steps ── */
 .chg-tag { font-size: 10.5px; padding: 0 5px; border-radius: 4px; background: var(--bg3); color: var(--muted); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; line-height: 16px; }
 .chg-tag.cmd { color: var(--blue); background: color-mix(in srgb, var(--blue) 10%, transparent); font-family: var(--mono); }
+.chg-tag.guest { color: var(--jade); background: color-mix(in srgb, var(--jade) 12%, transparent); }
 .node-acts { white-space: nowrap; }
 .node-acts .btn + .btn { margin-left: 4px; }
 .pv-steps, .pv-vps { margin-top: 6px; font-size: 12px; }
@@ -341,3 +343,35 @@ button.wt-chip { background: transparent; font-family: var(--mono); cursor: poin
 .sch-intro ul { padding-left: 18px; line-height: 1.8; margin: 8px 0 14px; }
 .mini.sch { color: var(--blue); border-color: color-mix(in srgb, var(--blue) 45%, transparent); }
 .td-sch { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--blue); margin: 2px 0; }
+
+/* 排班 (2.1): lanes on the plan card, and the 比试 page */
+.pe-tag.sug { background: color-mix(in srgb, var(--jade) 16%, transparent); color: var(--jade); cursor: default; }
+.pe-row .pe-lanes-btn { flex: none; }
+.pe-lanes { display: flex; flex-direction: column; gap: 4px; border: 1px dashed color-mix(in srgb, var(--jade) 55%, var(--line)); border-radius: 6px; padding: 6px; }
+.pe-lanes.ro { border: none; padding: 0 2px; }
+.pe-lanes-h { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.pe-lanes-h > b { flex: none; white-space: nowrap; }
+.pe-lane { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.pe-lane-k { flex: none; width: 30px; font: 600 11.5px var(--mono); color: var(--jade); }
+.pe-lane select.input { width: 130px; flex: none; }
+.pe-lane select.input.pe-lane-model, .pe-lane .pe-lane-model { flex: 1 1 110px; width: auto; min-width: 110px; }
+.pe-lanes-f { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.att-list { display: flex; flex-direction: column; gap: 10px; padding: 8px 0; }
+.att-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); display: flex; flex-direction: column; gap: 6px; }
+.att-card.st-choosing { border-color: color-mix(in srgb, var(--warn) 60%, var(--line)); }
+.att-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.att-note { padding: 4px 8px; border-radius: 6px; background: var(--bg2); }
+.att-note.warn { color: var(--warn); }
+.att-card .bad { color: var(--danger); }
+.att-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 8px; }
+.att-lane { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; min-width: 0; background: var(--panel); }
+.att-lane.rec { border-color: color-mix(in srgb, var(--jade) 55%, var(--line)); }
+.att-lane.picked { border-color: var(--jade); box-shadow: 0 0 0 1px var(--jade) inset; }
+.att-lane-h { display: flex; align-items: center; gap: 6px; font-size: 12px; min-width: 0; }
+.att-lane-h > b { flex: none; color: var(--jade); }
+.att-lane-h > .ellipsis { flex: 1; min-width: 0; }
+.att-score b { font-size: 20px; line-height: 1; }
+.att-acts { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.att-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.att-foot .grow { flex: 1; }
+.sub-row .pc-lanes { flex: none; font-size: 10.5px; padding: 0 6px; border-radius: 8px; color: var(--jade); background: color-mix(in srgb, var(--jade) 12%, transparent); white-space: nowrap; }

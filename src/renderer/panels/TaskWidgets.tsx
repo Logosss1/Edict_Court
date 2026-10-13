@@ -10,6 +10,8 @@ import { Icon } from '../common/Icon';
 import { deptOptions, roleInfo } from '../common/roles';
 import { Markdown } from '../common/Markdown';
 import { fmtCost, fmtTokens, usageTokens } from '../common/format';
+import { guestLabel, useGuests } from '../common/guests';
+import { LanesEditor, lanesOffered, startLanes } from './Lanes';
 
 export const PIPE: { key: string; label: string; states: TaskState[] }[] = [
   { key: 'edict', label: '下旨', states: ['Pending'] },
@@ -94,6 +96,10 @@ export function UsageLine({ task }: { task: Task }) {
 // ───────── Plan editor (L2: 皇上朱笔涂改中书省方案) ─────────
 export function PlanEditor({ plan, onChange, readOnly, task }: { plan: Plan; onChange?: (p: Plan) => void; readOnly?: boolean; task?: Task }) {
   const depts = deptOptions(task);
+  const gi = useGuests();
+  const usable = (gi?.guests ?? []).filter((g) => g.enabled && g.found);
+  const deptDefault = gi?.settings.deptDefault ?? {};
+  const lanesOk = lanesOffered(task, gi);
   const set = (patch: Partial<Plan>) => onChange?.({ ...plan, ...patch });
   const setSub = (i: number, patch: Partial<Subtask>) => set({ subtasks: plan.subtasks.map((s, k) => (k === i ? { ...s, ...patch } : s)) });
   const nextId = () => {
@@ -118,6 +124,22 @@ export function PlanEditor({ plan, onChange, readOnly, task }: { plan: Plan; onC
               ))}
               {!depts.some((m) => m.id === s.dept) && <option value={s.dept}>{roleInfo(task, s.dept).name}</option>}
             </select>
+            {(usable.length > 0 || (s.executor && s.executor !== 'self')) && task?.tier !== 'solo' && !s.lanes?.length && (
+              <select className="input pe-exec" value={s.executor ?? ''} disabled={readOnly} onChange={(e) => setSub(i, { executor: e.target.value || undefined })} title="由谁办：本部官员，或请本机的外部智能体（客卿）代办" data-testid={`pe-exec-${s.id}`}>
+                <option value="">默认：{deptDefault[s.dept] ? `客卿 ${guestLabel(gi, deptDefault[s.dept]!)}` : '本部官员'}</option>
+                <option value="self">本部官员办</option>
+                {usable.map((g) => (
+                  <option key={g.id} value={g.id}>客卿 {g.name}</option>
+                ))}
+                {s.executor && s.executor !== 'self' && !usable.some((g) => g.id === s.executor) && <option value={s.executor}>客卿 {guestLabel(gi, s.executor)}（不可用）</option>}
+              </select>
+            )}
+            {lanesOk && s.suggestAttempts && <span className="pe-tag sug" title={`中书省：${s.suggestAttempts}`} data-testid={`pe-suggest-${s.id}`}>建议多试</span>}
+            {!readOnly && lanesOk && s.effect === 'write' && !s.lanes?.length && (
+              <button className="btn sm pe-lanes-btn" onClick={() => setSub(i, { lanes: startLanes(s) })} title="排班：让两三路人马各在自己的工作树里同时办这个子任务，门下省评分后你选一路合入（多花一份费用）" data-testid={`pe-lanes-btn-${s.id}`}>
+                <Icon name="layers" size={12} /> 排班
+              </button>
+            )}
             {!readOnly && (
               <button className="icon-btn" title="删去此子任务" onClick={() => set({ subtasks: plan.subtasks.filter((_, k) => k !== i).map((x) => ({ ...x, dependsOn: x.dependsOn.filter((d) => d !== s.id) })) })}>
                 <Icon name="trash" size={13} />
@@ -138,6 +160,7 @@ export function PlanEditor({ plan, onChange, readOnly, task }: { plan: Plan; onC
               {s.supplement && <span className="pe-tag">补办</span>}
             </div>
           )}
+          {(lanesOk || readOnly) && <LanesEditor sub={s} readOnly={readOnly} onChange={(lanes) => setSub(i, { lanes })} />}
         </div>
       ))}
       {!readOnly && (
@@ -331,6 +354,7 @@ export function ChangesList({ task, onOpen }: { task: Task; onOpen?: (path: stri
             <span className={`git-badge git-${last.op === 'create' ? 'added' : last.op === 'delete' ? 'deleted' : 'modified'}`}>{last.op === 'create' ? 'A' : last.op === 'delete' ? 'D' : 'M'}</span>
             <span className={`tree-name ${last.oversize ? '' : 'clickable'}`} onClick={() => !last.oversize && openDiff(p)} title={last.oversize ? '超过快照大小上限：只记录了改动，没有保存内容，无法查看差异或撤回' : undefined}>{p}</span>
             {list.some((c) => c.via === 'command') && <span className="chg-tag cmd" title={[...new Set(list.filter((c) => c.via === 'command').map((c) => c.command ?? ''))].join('\n')} data-testid="change-via-command">命令改动 · {shortCmd(list.find((c) => c.via === 'command')?.command)}</span>}
+            {list.some((c) => c.via === 'guest') && <span className="chg-tag guest" title="客卿用它自带的工具改的（没有经过 Edict 的工具，由快照对比发现）" data-testid="change-via-guest">客卿 {list.find((c) => c.via === 'guest')?.command}</span>}
             {last.oversize && <span className="chg-tag" data-testid="change-oversize">大文件 · 不可撤回</span>}
             {last.binary && !last.oversize && <span className="chg-tag">二进制</span>}
             <span className="muted small">{AGENT_MAP[last.agentId]?.name} · {list.length} 次</span>

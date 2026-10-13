@@ -327,6 +327,7 @@ select.input { padding: 4px 6px; }
 .pe-sub { border: 1px solid var(--line); border-left: 3px solid var(--gold); border-radius: 6px; padding: 6px; display: flex; flex-direction: column; gap: 4px; background: var(--bg); }
 .pe-row { display: flex; align-items: center; gap: 5px; }
 .pe-row select.input { width: 90px; }
+.pe-row select.input.pe-exec { width: 150px; flex: none; }
 .pe-id { font: 600 11px var(--mono); color: var(--gold); width: 26px; }
 .pe-deps { width: 90px !important; }
 .plan-editor.ro .input { border-color: transparent; background: transparent; resize: none; }
