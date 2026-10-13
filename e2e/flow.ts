@@ -42,8 +42,9 @@ const ok = (step: string, cond: boolean, note?: string) => {
     throw new Error('waitTask timeout');
   };
 
-  // 1. configure provider through the UI (模型配置)
-  await win.click('button[title="模型配置（⌘,）"]');
+  // 1. configure provider through the UI (设置 · 模型服务)
+  await win.click('[data-testid=tb-settings]');
+  await win.click('[data-testid=sn-providers]');
   await win.selectOption('[data-testid=add-provider]', 'custom');
   await win.fill('[data-testid=provider-baseurl]', mock.url);
   await win.fill('[data-testid=provider-key]', 'sk-e2e-SECRET-KEY-000');
@@ -67,12 +68,27 @@ const ok = (step: string, cond: boolean, note?: string) => {
   // 3. Court Lite edict through the composer (封驳 once → re-plan)
   await win.fill('#composer-input', '写一个 greet 函数并测试');
   await win.click('[data-testid=composer-send]');
-  // high-risk / non-safe command approval appears (node greet.test.js) → approve in dock
-  const ap = await win.waitForSelector('[data-testid=approval-approve]', { timeout: 30000 });
-  await shot('02-workbench-approval');
-  await ap.click();
-  ok('命令执行需皇上批准（审批卡片）', true);
-  const t1 = await waitTask((t) => t.gate?.kind === 'final');
+  // write-task start (S1) and the non-safe command (node greet.test.js) each ask on a decision card in the
+  // agent pane; the first option (准许 / 准许开工) is preselected, ⏎ or 确定 confirms
+  const seen: string[] = [];
+  const startAt = Date.now();
+  let t1: any = null;
+  while (!t1 && Date.now() - startAt < 40000) {
+    const card = await win.$('[data-testid=choice-card]');
+    if (card) {
+      seen.push(((await card.textContent()) ?? '').slice(0, 40));
+      if (seen.length === 1) await shot('02-workbench-approval');
+      if (seen.length === 1) await win.keyboard.press('Enter');
+      else await win.click('[data-testid=choice-card] [data-testid=ap-confirm]');
+      await win.waitForTimeout(300);
+      continue;
+    }
+    const snap: any = await inv('snapshot');
+    t1 = snap.tasks.find((t: any) => t.gate?.kind === 'final') ?? null;
+    if (!t1) await win.waitForTimeout(250);
+  }
+  if (!t1) t1 = await waitTask((t) => t.gate?.kind === 'final');
+  ok('写任务开工与命令执行在代理面板以选项卡片请皇上批准（数字键 / ⏎）', seen.length >= 2 && seen.some((x) => x.includes('写任务开工')), seen.join(' | '));
   ok('Court Lite：门下封驳 1 次后重拟并准奏', t1.reviews.filter((r: any) => r.verdict === 'reject').length === 1 && t1.planHistory.length === 2);
   await win.waitForTimeout(400);
   await shot('03-workbench-final-gate');

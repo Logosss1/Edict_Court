@@ -123,18 +123,20 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.click('[data-testid=reasoning-btn] >> nth=0');
     await win.waitForSelector('[data-testid=reasoning-editor]');
     await shot('32-models-reasoning-probe');
-    // per-official models: one row each, model dropdown wide enough to read "model · service"
-    const rows = win.locator('[data-testid=agent-model-list] [data-testid^=agent-model-]');
-    await rows.first().scrollIntoViewIfNeeded();
-    const boxes = await rows.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); const sel = e.querySelector('select')!.getBoundingClientRect(); return { y: r.y, w: sel.width }; }));
-    ok('官员模型竖排：每位官员一行，模型下拉足够宽', boxes.length >= 10 && boxes.every((b, i) => i === 0 || b.y > boxes[i - 1].y) && boxes.every((b) => b.w >= 230), JSON.stringify(boxes.slice(0, 3)));
-    await shot('33-models-agent-list');
     // 检测思考档位: the mock accepts any level, so the result is "unconfirmed" and the hand-set ladder is kept
     const before = mock.calls.length;
     await win.click('[data-testid=reasoning-detect]');
     await win.waitForSelector('.toast >> text=不校验思考档位', { timeout: 15000 });
     const summary = (await win.textContent('[data-testid=reasoning-btn] >> nth=0')) ?? '';
     ok('检测思考档位：服务不校验时标「未能确认」，保留原档位', summary.startsWith('未能确认') && summary.includes('Low→XHigh') && mock.calls.length - before === 2, `${summary} calls=${mock.calls.length - before}`);
+    // per-official models (设置 · 官员模型与路由): one row each, model dropdown wide enough to read "model · service"
+    await win.evaluate(() => (window as any).__openSettings('routing'));
+    const rows = win.locator('[data-testid=agent-model-list] [data-testid^=agent-model-]');
+    await rows.first().waitFor({ timeout: 5000 });
+    await rows.first().scrollIntoViewIfNeeded();
+    const boxes = await rows.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); const sel = e.querySelector('select')!.getBoundingClientRect(); return { y: r.y, w: sel.width }; }));
+    ok('官员模型竖排：每位官员一行，模型下拉足够宽', boxes.length >= 10 && boxes.every((b, i) => i === 0 || b.y > boxes[i - 1].y) && boxes.every((b) => b.w >= 230), JSON.stringify(boxes.slice(0, 3)));
+    await shot('33-models-agent-list');
   }
 
   // ── 3. HTML 预览
@@ -524,21 +526,21 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
   }
 
   if (want('tips')) {
-    // hover descriptions on the activity bar and the 军机处 list
-    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: 'court' }));
+    // hover descriptions on the activity bar (screens, bottom group, shortcuts)
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: 'explorer' }));
     await win.mouse.move(700, 450);
     await win.hover('[data-testid=ab-designs]');
     await win.waitForSelector('[data-testid=tip]', { timeout: 3000 });
     const t1 = await win.textContent('[data-testid=tip]');
     ok('活动栏悬停显示名称与一行说明', !!t1 && t1.includes('协同设计') && t1.includes('分工协作') && !t1.includes('朝堂谁站哪'), t1 ?? '');
     await shot('48-tip-activitybar');
-    await win.hover('[data-testid=ab-court-mode]');
-    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('⌘J'), null, { timeout: 3000 });
+    await win.hover('[data-testid=ab-settings]');
+    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('⌘,'), null, { timeout: 3000 });
     ok('带快捷键的入口在提示里显示快捷键', true);
-    await win.hover('.court-nav-item >> text=奏折阁');
-    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('回奏存档'), null, { timeout: 3000 });
-    ok('军机处侧栏各项也有悬停说明', true);
-    await shot('49-tip-court-nav');
+    await win.hover('[data-testid=ab-permissions]');
+    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('官员动手前'), null, { timeout: 3000 });
+    ok('活动栏底部的权限、MCP 等入口也有悬停说明（含当前权限模式）', true);
+    await shot('49-tip-permissions');
     // the composer's controls explain themselves too (cards open above, inside the window)
     await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
     const sw = win.locator('[data-testid=composer] label.switch input');
@@ -558,13 +560,12 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
   }
 
   if (want('sidebar')) {
-    // left activity bar: 网页预览 / 协同设计 / 进入朝堂, and the grouped 军机处 list
+    // left activity bar: 待办 / 网页预览 side views, pinned screens, right-click customize, 进入朝堂
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: null }));
-    await win.click('[data-testid=ab-court]');
-    await win.waitForSelector('.court-nav-h');
-    const groups = await win.$$eval('.court-nav-h', (els) => els.map((e) => e.textContent));
-    ok('军机处侧栏按 政务 / 配置 / 记录 分组', groups.join(',') === '政务,配置,记录', groups.join(','));
-    await shot('42-sidebar-court-nav');
+    await win.click('[data-testid=ab-inbox]');
+    await win.waitForSelector('[data-testid=inbox]');
+    ok('活动栏「待办」打开等你处理的事', true);
+    await shot('42-sidebar-inbox');
     await win.click('[data-testid=ab-preview]');
     await win.waitForSelector('[data-testid=preview-side]');
     await win.waitForTimeout(400);
@@ -577,9 +578,21 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.click('[data-testid=ab-designs]');
     await win.waitForSelector('[data-testid=designs-panel]');
     ok('活动栏「协同设计」直达设计面板', true);
-    await win.click('[data-testid=ab-court-mode]');
+    // right-click → customize: unpin 朝堂议政, pin 旨库, then reset
+    await win.click('[data-testid=activitybar]', { button: 'right', position: { x: 24, y: 520 } });
+    await win.waitForSelector('[data-testid=ab-customize]');
+    await win.click('[data-testid=ab-pin-debate]');
+    await win.click('[data-testid=activitybar]', { button: 'right', position: { x: 24, y: 520 } });
+    await win.click('[data-testid=ab-pin-templates]');
+    await win.waitForTimeout(200);
+    const pinned = await win.evaluate(() => [!!document.querySelector('[data-testid=ab-debate]'), !!document.querySelector('[data-testid=ab-templates]') || !!document.querySelector('[data-testid=ab-more]')]);
+    ok('右键活动栏可增减常用页面', !pinned[0] && pinned[1], JSON.stringify(pinned));
+    await win.click('[data-testid=activitybar]', { button: 'right', position: { x: 24, y: 520 } });
+    await win.click('[data-testid=ab-reset]');
+    await win.mouse.click(700, 450);
+    await win.click('[data-testid=to-court]');
     await win.waitForTimeout(600);
-    ok('活动栏「进入朝堂」切换到朝堂', await win.locator('[data-testid=court]').isVisible());
+    ok('标题栏「朝堂」切换到朝堂', await win.locator('[data-testid=court]').isVisible());
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
   }
 

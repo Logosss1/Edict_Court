@@ -6,8 +6,8 @@ import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
 import { AgentChip, StateChip, fmtCost, fmtDur, fmtTime, fmtTokens, usageTokens } from '../common/format';
 import { AGENTS, AGENT_MAP, TIER_LABEL } from '../../shared/court';
-import type { AgentId, Task } from '../../shared/types';
-import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode } from './TaskWidgets';
+import type { AgentId, RevertResult, RunNode, Task } from '../../shared/types';
+import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode, revertTaskChanges, runRevert } from './TaskWidgets';
 import { levelLabel } from '../../shared/reasoning';
 import { ActivityStream } from '../workbench/ActivityStream';
 
@@ -31,6 +31,7 @@ export function TaskDetail({ taskId }: { taskId: string }) {
         <UsageLine task={task} />
         <div className="row-gap">
           <TaskControls task={task} />
+          {task.changes.some((c) => !c.reverted) && <button className="btn sm" onClick={() => void revertTaskChanges(task)} data-testid="td-revert-task"><Icon name="undo" size={12} /> 撤回本旨改动</button>}
           <button className="btn sm" onClick={() => setUI({ mode: 'court', review: { taskId: task.id }, courtScene: 'taihe' })}><Icon name="crown" size={12} /> 朝堂批阅</button>
           {['Done', 'Cancelled'].includes(task.state) && <button className="btn sm" onClick={async () => { await navigator.clipboard.writeText(await call<string>('memorialMarkdown', task.id)); toast('奏折已复制为 Markdown', 'success'); }}><Icon name="copy" size={12} /> 复制奏折</button>}
         </div>
@@ -71,13 +72,38 @@ function Nodes({ task }: { task: Task }) {
             <td className="small">{fmtDur(n.startedAt, n.endedAt)}</td>
             <td className="small">{fmtTokens(usageTokens(n.usage))} · {fmtCost(n.usage?.costUsd ?? 0)}</td>
             <td className="small node-out">{n.error ? <span style={{ color: '#d0453a' }} title={n.errorInfo?.raw}>{n.errorInfo ? `${n.errorInfo.hint}${n.errorInfo.status ? `（HTTP ${n.errorInfo.status}）` : ''}` : n.error}</span> : <NodeOutput text={n.output} />}</td>
-            <td>{(n.status === 'failed' || n.status === 'cancelled') && !['Done', 'Cancelled'].includes(task.state) && (
-              <button className="btn sm" onClick={() => call('retryNode', task.id, n.id).then(() => toast(`局部重试：${n.label}`, 'success')).catch((e) => toast(e.message, 'error'))} data-testid="retry-node"><Icon name="retry" size={12} /> 局部重试</button>
-            )}</td>
+            <td className="node-acts">
+              {(n.status === 'failed' || n.status === 'cancelled') && !['Done', 'Cancelled'].includes(task.state) && (
+                <button className="btn sm" onClick={() => call('retryNode', task.id, n.id).then(() => toast(`局部重试：${n.label}`, 'success')).catch((e) => toast(e.message, 'error'))} data-testid="retry-node"><Icon name="retry" size={12} /> 局部重试</button>
+              )}
+              <NodeRevert task={task} n={n} />
+            </td>
           </tr>
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** E3: undo one node's file changes; 撤回并重做 when the node can be redone (failed, or a ministry node at the final gate). */
+function NodeRevert({ task, n }: { task: Task; n: RunNode }) {
+  const files = new Set(task.changes.filter((c) => c.nodeId === n.id && !c.reverted).map((c) => c.path)).size;
+  if (!files || n.status === 'running') return null;
+  const atGate = !!task.gate && (task.gate.kind === 'final' || task.gate.kind === 'reject_limit');
+  const redo = !['Done', 'Cancelled'].includes(task.state) && (n.status === 'failed' || n.status === 'cancelled' || (n.status === 'done' && n.kind === 'exec' && !!n.subtaskId && atGate));
+  return (
+    <>
+      <button className="btn sm" title={`撤回这个节点写过的 ${files} 个文件`} onClick={async () => {
+        if (await call<boolean>('confirm', `撤回「${n.label}」的改动？`, `${files} 个文件会恢复到这个节点动手之前。`)) await runRevert(`撤回「${n.label}」的改动`, (force) => call<RevertResult>('revertNode', task.id, n.id, force));
+      }} data-testid="revert-node"><Icon name="undo" size={12} /> 撤回改动</button>
+      {redo && (
+        <button className="btn sm" title="先撤回这个节点的改动，再让官员在原状态上重做" onClick={async () => {
+          if (!(await call<boolean>('confirm', `撤回「${n.label}」的改动并重做？`, `${files} 个文件先恢复原状，再由${AGENT_MAP[n.agentId]?.name ?? '官员'}重新办这个子任务。`))) return;
+          const r = await runRevert(`撤回「${n.label}」的改动`, (force) => call<RevertResult & { redo: string | null }>('revertNodeAndRedo', task.id, n.id, undefined, force));
+          if (r?.redo) toast(`已开始重做：${n.label}`, 'success');
+        }} data-testid="revert-redo"><Icon name="retry" size={12} /> 撤回并重做</button>
+      )}
+    </>
   );
 }
 

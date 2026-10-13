@@ -276,17 +276,22 @@ function shallowEqual(a: unknown, b: unknown) {
   return true;
 }
 
-/** useStore(selector) — re-renders only when the selected slice changes (shallow). */
+/**
+ * useStore(selector) — re-renders only when the selected slice changes (shallow). The cache is keyed on the
+ * state AND the selector: a selector that closes over props (e.g. the selected task id) must be re-run when
+ * it changes even if the state object did not, or the hook keeps returning the previous id's value.
+ */
 export function useStore<T>(selector: (s: AppState) => T): T {
-  const cache = useRef<{ s?: AppState; v?: T }>({});
+  const cache = useRef<{ s?: AppState; f?: (s: AppState) => T; v?: T }>({});
   const get = () => {
-    if (cache.current.s === state) return cache.current.v as T;
+    if (cache.current.s === state && cache.current.f === selector) return cache.current.v as T;
     const v = selector(state);
     if (cache.current.s !== undefined && shallowEqual(v, cache.current.v)) {
       cache.current.s = state;
+      cache.current.f = selector;
       return cache.current.v as T;
     }
-    cache.current = { s: state, v };
+    cache.current = { s: state, f: selector, v };
     return v;
   };
   return useSyncExternalStore(subscribe, get, get);

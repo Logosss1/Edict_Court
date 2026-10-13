@@ -11,7 +11,10 @@ import type { ModelRef, Tier } from '../../shared/types';
 import { ActivityStream } from './ActivityStream';
 import { EffortSlider } from '../common/EffortSlider';
 import { tip } from '../common/Tip';
-import { GateCard, ModelErrorCard, Pipeline, TaskControls, UsageLine, failedModelNode, useSelectedTask } from '../panels/TaskWidgets';
+import { GateCard, ModelErrorCard, Pipeline, TaskControls, UsageLine, failedModelNode, revertTaskChanges, useSelectedTask } from '../panels/TaskWidgets';
+import { OtherPendingNotice, PendingChoices } from './ChoiceCard';
+import { PlanCard } from './PlanCard';
+import { wtBranch } from '../panels/Kanban';
 
 export function AgentPane() {
   const task = useSelectedTask();
@@ -60,13 +63,18 @@ export function AgentPane() {
             <div className="ap-title-row">
               <StateChip state={task.state} />
               {task.design && !task.design.native ? <span className="tier-tag design-tag" title={`协同设计 ${task.design.name} v${task.design.version} · ${task.design.hash.slice(0, 12)}`}>{task.design.name} v{task.design.version}</span> : <span className="tier-tag">{TIER_SHORT[task.tier]}</span>}
-              <code className="muted small">{task.id}</code>
+              {wtBranch(task) ? <span className="wt-chip" title="这道旨意在自己的 git 工作树里办，结案时再决定合并、保留分支或丢弃" data-testid="ap-branch"><Icon name="branch" size={11} /> {wtBranch(task)}</span> : <code className="muted small">{task.id}</code>}
               {task.paused && <span className="chip chip-sm warn">已叫停</span>}
             </div>
             <Pipeline task={task} />
             <UsageLine task={task} />
             <div className="ap-controls">
               <TaskControls task={task} />
+              {task.changes.some((c) => !c.reverted) && (
+                <button className="btn sm" {...tip('撤回本旨改动', '把这道旨意改过的文件全部恢复原状（命令产生的改动也算）；旨意本身不取消', undefined, 'below')} onClick={() => void revertTaskChanges(task)} data-testid="revert-task">
+                  <Icon name="undo" size={12} /> 撤回本旨改动
+                </button>
+              )}
               {task.state === 'Blocked' && !failedModelNode(task) && <span className="muted small ellipsis" title={task.blockedReason}>⚠ {task.blockedReason}</span>}
               {task.nodes.some((n) => n.status === 'failed') && !failedModelNode(task) && (
                 <button className="btn sm" onClick={() => openTaskTab(task.id)}>
@@ -77,10 +85,10 @@ export function AgentPane() {
           </div>
           {task.state === 'Blocked' && failedModelNode(task) && <ModelErrorCard task={task} node={failedModelNode(task)!} />}
           {task.gate && <GateCard key={task.gate.since} task={task} />}
-          <PendingApprovals taskId={task.id} />
           <div className="ap-stream">
-            <ActivityStream taskId={task.id} />
+            <ActivityStream taskId={task.id} header={<PlanCard task={task} />} footer={<PendingChoices taskId={task.id} />} />
           </div>
+          <OtherPendingNotice taskId={task.id} />
           {task.state === 'Done' && task.result?.summary && task.tier === 'solo' && null}
         </div>
       ) : (
@@ -94,6 +102,7 @@ export function AgentPane() {
           ) : (
             <Intro />
           )}
+          <OtherPendingNotice taskId={null} />
         </div>
       )}
       {composerHidden ? (
@@ -129,26 +138,6 @@ function Intro() {
         </div>
       )}
       <button className="link" onClick={() => openPanel('templates')}>从「旨库」选择模板下旨 →</button>
-    </div>
-  );
-}
-
-function PendingApprovals({ taskId }: { taskId: string }) {
-  const aps = useStore((s) => s.approvals.filter((a) => a.taskId === taskId && a.status === 'pending'));
-  if (!aps.length) return null;
-  return (
-    <div className="inline-approvals">
-      {aps.map((a) => (
-        <div key={a.id} className={`approval ${a.risk}`}>
-          <div>
-            <b>{a.risk === 'high' ? '⚠ 高风险' : '待批准'}</b> {a.summary} <span className="muted small">— {a.reason}</span>
-          </div>
-          <div className="gate-actions">
-            <button className="btn sm primary" onClick={() => call('decideApproval', a.id, true)}>准</button>
-            <button className="btn sm danger" onClick={() => call('decideApproval', a.id, false)}>驳</button>
-          </div>
-        </div>
-      ))}
     </div>
   );
 }

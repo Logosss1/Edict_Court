@@ -84,6 +84,8 @@ export function AttnActions({ it }: { it: AttentionItem }) {
 /** 准许，本子任务内写入与命令免询问 → 免询问 (cards are narrow) */
 function shortLabel(l: string) {
   if (l.startsWith('准许，本子任务内')) return '免询问';
+  if (l.startsWith('准许，本旨意内')) return '本旨免询问';
+  if (l.startsWith('准许，本工作区')) return '本工作区永久';
   if (l === '改为只读执行') return '只读执行';
   return l.length > 8 ? `${l.slice(0, 7)}…` : l;
 }

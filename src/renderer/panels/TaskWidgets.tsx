@@ -1,6 +1,6 @@
 // Task widgets shared by the workbench and the court overlays (same actions, same data).
 import { useEffect, useState } from 'react';
-import type { MinistryId, ModelRef, Plan, RunNode, Subtask, Task, TaskState } from '../../shared/types';
+import type { MinistryId, ModelRef, Plan, RevertResult, RunNode, Subtask, Task, TaskState } from '../../shared/types';
 import { levelLabel } from '../../shared/reasoning';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL } from '../../shared/court';
 import { call } from '../api';
@@ -209,12 +209,43 @@ export function GateCard({ task, variant = 'pane', onDecided }: { task: Task; va
   );
 }
 
+/**
+ * E3 撤回 with the conflict step: when files changed again after the agent wrote them nothing is touched,
+ * and the emperor may force it (overwriting those later edits). Returns the final result, or null if cancelled.
+ */
+export async function runRevert<R extends RevertResult>(what: string, fn: (force?: boolean) => Promise<R>): Promise<R | null> {
+  try {
+    let r = await fn();
+    if (r.conflicts.length) {
+      const list = r.conflicts.slice(0, 6).join('、') + (r.conflicts.length > 6 ? ` 等 ${r.conflicts.length} 个` : '');
+      if (!(await call<boolean>('confirm', `${what}未执行：有文件在官员改过之后又被改动`, `${list}\n\n强制撤回会覆盖这些后来的改动（包括你自己的编辑）。仍要撤回吗？`))) return null;
+      r = await fn(true);
+    }
+    if (r.reverted.length) toast(`已撤回 ${r.reverted.length} 个文件${r.skipped.length ? `；${r.skipped.length} 个大文件无法撤回` : ''}`, 'success');
+    else if (r.skipped.length) toast(`没有可撤回的内容：${r.skipped.length} 个大文件未保存原内容`, 'warn');
+    else toast('没有需要撤回的改动', 'info');
+    return r;
+  } catch (e) {
+    toast((e as Error).message, 'error');
+    return null;
+  }
+}
+
+/** 撤回本旨改动: every unreverted change of the edict, after a confirm. */
+export async function revertTaskChanges(task: Task) {
+  const files = new Set(task.changes.filter((c) => !c.reverted).map((c) => c.path));
+  const cmd = task.changes.some((c) => !c.reverted && c.via === 'command');
+  if (!(await call<boolean>('confirm', `撤回「${task.title}」的全部文件改动？`, `${files.size} 个文件会恢复到官员动手之前${cmd ? '（包括命令产生的改动）' : ''}。撤回会记入审计，旨意本身不会取消。`))) return;
+  await runRevert('撤回本旨改动', (force) => call<RevertResult>('revertTask', task.id, force));
+}
+
 export function ChangesList({ task, onOpen }: { task: Task; onOpen?: (path: string) => void }) {
   const latest = new Map<string, (typeof task.changes)[number][]>();
   for (const c of task.changes) latest.set(c.path, [...(latest.get(c.path) ?? []), c]);
   if (!latest.size) return <div className="muted small">（本旨意无文件改动）</div>;
   const openDiff = async (path: string) => {
     const list = latest.get(path)!;
+    if (list.some((c) => c.binary)) return toast('二进制文件，不显示文本差异', 'info');
     const first = list.find((c) => !c.reverted) ?? list[0];
     const last = [...list].reverse().find((c) => !c.reverted) ?? list[list.length - 1];
     const [before, after] = await Promise.all([first.beforeHash ? call<string>('blob', first.beforeHash) : '', last.afterHash ? call<string>('blob', last.afterHash) : '']);
@@ -230,7 +261,10 @@ export function ChangesList({ task, onOpen }: { task: Task; onOpen?: (path: stri
         return (
           <div key={p} className={`change-row ${reverted ? 'reverted' : ''}`}>
             <span className={`git-badge git-${last.op === 'create' ? 'added' : last.op === 'delete' ? 'deleted' : 'modified'}`}>{last.op === 'create' ? 'A' : last.op === 'delete' ? 'D' : 'M'}</span>
-            <span className="tree-name clickable" onClick={() => openDiff(p)}>{p}</span>
+            <span className={`tree-name ${last.oversize ? '' : 'clickable'}`} onClick={() => !last.oversize && openDiff(p)} title={last.oversize ? '超过快照大小上限：只记录了改动，没有保存内容，无法查看差异或撤回' : undefined}>{p}</span>
+            {list.some((c) => c.via === 'command') && <span className="chg-tag cmd" title={[...new Set(list.filter((c) => c.via === 'command').map((c) => c.command ?? ''))].join('\n')} data-testid="change-via-command">命令改动 · {shortCmd(list.find((c) => c.via === 'command')?.command)}</span>}
+            {last.oversize && <span className="chg-tag" data-testid="change-oversize">大文件 · 不可撤回</span>}
+            {last.binary && !last.oversize && <span className="chg-tag">二进制</span>}
             <span className="muted small">{AGENT_MAP[last.agentId]?.name} · {list.length} 次</span>
             <code className="muted small">{last.afterHash?.slice(0, 8) ?? '—'}</code>
             {!reverted && last.op !== 'delete' && /\.(html?|svg)$/i.test(p) && (
@@ -238,7 +272,7 @@ export function ChangesList({ task, onOpen }: { task: Task; onOpen?: (path: stri
                 <Icon name="play" size={12} />
               </button>
             )}
-            {!reverted && (
+            {!reverted && !last.oversize && (
               <button className="icon-btn" title="撤回此文件的最近一次改动" onClick={async () => {
                 const c = [...list].reverse().find((x) => !x.reverted)!;
                 try {
@@ -257,6 +291,8 @@ export function ChangesList({ task, onOpen }: { task: Task; onOpen?: (path: stri
     </div>
   );
 }
+
+const shortCmd = (c?: string) => (!c ? 'cmd' : c.length > 28 ? `${c.slice(0, 27)}…` : c);
 
 export function StateLabel({ task }: { task: Task }) {
   return <>{STATE_LABEL[task.state]}{task.paused ? ' · 已叫停' : ''}{task.gate ? ' · 待御批' : ''}</>;
