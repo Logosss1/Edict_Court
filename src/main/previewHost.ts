@@ -1,5 +1,5 @@
-// Electron side of HTML 预览: the `preview://ws/` scheme in an isolated partition, the network policy,
-// <webview> hardening, and the hidden sandboxed browser used by the agent tool `preview_page` (load → wait →
+// Electron side of HTML 预览: the `preview://` scheme (ws / per-edict wt-<id>) in an isolated partition, the network
+// policy, <webview> hardening, and the hidden sandboxed browser used by the agent tool `preview_page` (load → wait →
 // optional interactive steps from services/previewActions → text + screenshot + extra viewports).
 import { BrowserWindow, session, type WebContents } from 'electron';
 import { PREVIEW_PARTITION, isAllowedPreviewUrl, isLocalRequest, servePreview } from './services/preview';
@@ -10,7 +10,14 @@ import type { PreviewResult } from '../shared/types';
 export function installPreview(rt: Runtime, onBlocked: (url: string) => void) {
   const ses = session.fromPartition(PREVIEW_PARTITION);
   ses.protocol.handle('preview', (req) => {
-    const r = servePreview(rt.workspace?.root, req.url);
+    // preview://ws/ = the open workspace; preview://wt-<task id>/ = that edict's worktree
+    let host = '';
+    try {
+      host = new URL(req.url).host;
+    } catch {
+      /* served as 404 below */
+    }
+    const r = servePreview(rt.previewRoot(host), req.url);
     return new Response(new Uint8Array(r.body), { status: r.status, headers: r.headers });
   });
   // Outbound network from previewed pages: local only unless the emperor allows it (pages may be agent-written).

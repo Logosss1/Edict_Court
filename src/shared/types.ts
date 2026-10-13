@@ -229,7 +229,8 @@ export interface Task {
   createdAt: number;
   updatedAt: number;
   workspace: string | null;
-  repoRoot?: string | null; // worktree edicts: the repository the worktree was made from (permissions, merge)
+  repoRoot?: string | null; // worktree edicts: the main checkout the worktree was made from (permission rules stay keyed by it)
+  worktree?: EdictWorktree; // per-edict git worktree (absent = works in the open workspace)
   flow: FlowEntry[];
   plan?: Plan;
   planHistory: PlanVersion[];
@@ -263,6 +264,59 @@ export interface Task {
   questions?: EdictQuestion[]; // 请旨 (ask_emperor) asked during this edict
   execRound?: number; // 1 = first execution; >1 = rework rounds
   rework?: { round: number; targets: string[]; feedback: string; by: 'menxia' | 'emperor' };
+}
+
+export type WorktreeStatus = 'active' | 'merged' | 'kept' | 'discarded';
+export type WorktreeAction = 'merge' | 'keep' | 'discard';
+
+/** An edict's own git worktree on branch edict/<taskId>, made from the repo's HEAD when it leaves triage. */
+export interface EdictWorktree {
+  path: string; // worktree root (<dataDir>/worktrees/<repo hash>/<taskId>)
+  branch: string; // edict/<taskId>
+  base: string; // commit the branch started from
+  baseBranch?: string; // branch checked out in the main checkout at creation
+  repoRoot: string; // git toplevel of the main checkout (merge target)
+  sub?: string; // the opened folder relative to repoRoot (absent = repo root)
+  status: WorktreeStatus;
+  createdAt: number;
+  links?: string[]; // dependency folders symlinked from the main checkout (never committed)
+  dirtyBase?: number; // uncommitted files in the main checkout at creation (not included)
+  finishedAt?: number;
+  commit?: string; // last commit made on the branch when finishing
+  mergeCommit?: string;
+  conflicts?: string[]; // files that blocked the last merge attempt
+  error?: string; // last finish failure
+}
+
+/** Outcome of worktreeFinish (also what the 结案 card's choice did). */
+export interface WorktreeFinishResult {
+  ok: boolean;
+  action: WorktreeAction;
+  status: WorktreeStatus;
+  message: string;
+  branch: string;
+  path: string;
+  commit?: string;
+  mergeCommit?: string;
+  conflicts?: string[];
+}
+
+/** One entry of `git worktree list` for the open repository. */
+export interface WorktreeInfo {
+  path: string;
+  head: string;
+  branch: string | null; // null = detached
+  main: boolean; // the repository's main working tree
+  current: boolean; // the open workspace
+  managed: boolean; // lives under <dataDir>/worktrees (made by Edict)
+  kind: 'main' | 'edict' | 'manual' | 'external';
+  taskId?: string; // edict worktrees: the edict using / owning it
+  taskTitle?: string;
+  taskState?: TaskState;
+  status?: WorktreeStatus;
+  locked?: boolean;
+  prunable?: boolean; // directory is gone (git worktree prune cleans it up)
+  exists: boolean;
 }
 
 export type AgentStatus = 'idle' | 'thinking' | 'writing' | 'tool' | 'waiting' | 'error' | 'paused';
@@ -308,7 +362,7 @@ export interface Activity {
   streaming?: boolean;
 }
 
-export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question';
+export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree';
 
 export interface EdictQuestion {
   id: string;
@@ -598,6 +652,8 @@ export interface Settings {
   canon: CanonEntry[];
   /** record files changed by run_command (shadow git snapshots before / after each command) */
   commandSnapshots: boolean;
+  /** each court edict on a git repository works in its own worktree (branch edict/<id>), merged on 结案 */
+  worktreePerEdict: boolean;
 }
 
 export type CanonKind = 'forbid' | 'rule' | 'preference' | 'lesson';

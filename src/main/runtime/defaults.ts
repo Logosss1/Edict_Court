@@ -31,6 +31,7 @@ export function defaultSettings(): Settings {
     askTimeoutMin: 10,
     canon: [],
     commandSnapshots: true,
+    worktreePerEdict: true,
   };
 }
 

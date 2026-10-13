@@ -8,7 +8,7 @@ import { runCommand } from '../services/exec';
 import { sha256, truncate } from './util';
 import { PathBoundaryError, type Workspace } from '../services/workspace';
 import { OVERSIZE, type ShadowChange } from '../services/shadowSnapshot';
-import { isAllowedPreviewUrl, previewUrlFor } from '../services/preview';
+import { isAllowedPreviewUrl, previewHostFor, previewUrlFor } from '../services/preview';
 import { PREVIEW_LIMITS, parsePreviewPlan, storePreviewShots } from '../services/previewActions';
 import { executeMcpResourceTool, isMcpResourceTool } from '../mcp/resourceTools';
 import { skillRole } from '../../shared/skills';
@@ -206,12 +206,9 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
   if (tool === 'preview_page') return previewPage(ctx, args);
   if (tool === 'ask_emperor') return askEmperor(ctx, args);
 
-  let ws;
-  try {
-    ws = rt.requireWorkspace();
-  } catch (e) {
-    return { ok: false, output: (e as Error).message };
-  }
+  // an edict works in its own worktree (or the workspace it was submitted on); chat in the open workspace
+  const ws = rt.workspaceFor(task);
+  if (!ws) return { ok: false, output: noWorkspace(task) };
 
   // permission decision
   const target = str('path');
@@ -299,7 +296,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
       }
       case 'lsp': {
         if (target) ws.resolve(target); // boundary check (audited below on violation)
-        return runLspTool(rt.lsp, ws, args);
+        return runLspTool(rt.lspFor(ws), ws, args);
       }
       case 'write_file': {
         const stale = staleGuard(ctx, ws, target);
@@ -348,7 +345,7 @@ export async function executeTool(ctx: ToolContext, name: string, args: Record<s
         const rec = s?.tracked ? recordCommandChanges(ctx, ws, cmd, s.changes) : null;
         rt.audit.record(agentId, 'command', { command: cmd, exitCode: r.exitCode, timedOut: r.timedOut, durationMs: r.durationMs, ...(rec ? { changed: rec.count } : {}) }, task?.id);
         if (s && !s.tracked) rt.audit.record('system', 'command_snapshot_skipped', { command: truncate(cmd, 300), reason: s.note ?? '' }, task?.id);
-        rt.emit({ type: 'fs_changed', paths: [] });
+        if (ws === rt.workspace) rt.emit({ type: 'fs_changed', paths: [] });
         let note = '';
         if (s && !s.tracked) note = `（未能记录命令的文件改动：${s.note ?? '快照不可用'}）`;
         else if (s && rec?.count) {
@@ -394,6 +391,8 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s
 const fmtSize = (n: number) => (n >= 1024 * 1024 ? `${+(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`);
 
 const readOnlyNode = (n: RunNode) => n.kind === 'exec' && (n.effect ?? 'read') === 'read' && !n.grant;
+
+const noWorkspace = (task?: Task) => (task ? '本旨意的工作区当前不可用（已切换到别的文件夹，或独立工作树已不存在）' : '尚未打开工作区：请先选择项目文件夹');
 
 const deniedText = (reason: string, comment?: string) => `皇上未批准此操作（${reason}）。${comment ? `皇上的话：${comment}\n` : ''}请调整方案（例如改用更安全的做法）或在结论中说明。`;
 
@@ -490,11 +489,12 @@ async function previewPage(ctx: ToolContext, args: Record<string, unknown>): Pro
   let url = typeof args.url === 'string' ? args.url.trim() : '';
   if (!url) {
     const p = typeof args.path === 'string' && args.path.trim() ? args.path.trim() : 'index.html';
-    let ws;
+    const ws = rt.workspaceFor(task);
+    if (!ws) return { ok: false, output: noWorkspace(task) };
     try {
-      ws = rt.requireWorkspace();
       if (!ws.exists(p)) return { ok: false, output: `文件不存在：${p}` };
-      url = previewUrlFor(ws.rel(ws.resolve(p)));
+      // an edict's worktree is served on its own origin (same read-only, boundary-checked server)
+      url = previewUrlFor(ws.rel(ws.resolve(p)), task?.worktree?.status === 'active' ? previewHostFor(task.id) : undefined);
     } catch (e) {
       return { ok: false, output: (e as Error).message };
     }
@@ -514,8 +514,9 @@ async function previewPage(ctx: ToolContext, args: Record<string, unknown>): Pro
   const warns = r.console.filter((c) => c.level === 'warning' || c.level === 'warn');
   const at = (c: { step?: number }) => (c.step ? `（第 ${c.step} 步期间）` : '');
   const pass = r.ok && !errors.length && stepsOk;
+  const short = (u: string) => u.replace(/^preview:\/\/[^/]+\//, '');
   rt.audit.record(agentId, 'preview_page', { url, ok: r.ok, errors: errors.length, failed: r.failed.length, blocked: r.blocked.length, screenshot: shot ?? null, ...(steps.length ? { steps: steps.length, stepsPassed: stepPassed, stepsFailed: steps.length - stepPassed } : {}), ...(res.viewports?.length ? { viewports: res.viewports.map((v) => `${v.width}x${v.height}`) } : {}) }, task?.id);
-  rt.activity('preview', `${pass ? '✅' : '⚠'} 预览 ${url.replace('preview://ws/', '')} · ${r.title || '（无标题）'} · 错误 ${errors.length}${steps.length ? ` · 交互 ${stepPassed}/${steps.length} 步通过` : ''}${res.viewports?.length ? ` · 另截 ${res.viewports.length} 种尺寸` : ''}`, { taskId: task?.id, agentId, nodeId: ctx.node?.id, data: res as unknown as Record<string, unknown> });
+  rt.activity('preview', `${pass ? '✅' : '⚠'} 预览 ${short(url)} · ${r.title || '（无标题）'} · 错误 ${errors.length}${steps.length ? ` · 交互 ${stepPassed}/${steps.length} 步通过` : ''}${res.viewports?.length ? ` · 另截 ${res.viewports.length} 种尺寸` : ''}`, { taskId: task?.id, agentId, nodeId: ctx.node?.id, data: res as unknown as Record<string, unknown> });
   const mark = (s: (typeof steps)[number]) => (s.ok ? '✓' : s.skipped ? '·' : s.optional ? '⚠' : '✗');
   const lines = [
     `URL: ${url}`,
@@ -524,7 +525,7 @@ async function previewPage(ctx: ToolContext, args: Record<string, unknown>): Pro
     steps.length
       ? `交互检查：${stepsOk ? '通过' : '未通过'}（${stepPassed}/${steps.length} 步成功${firstBad ? `；第 ${firstBad.index} 步「${firstBad.action}」失败` : ''}${steps.some((s) => s.skipped) ? (firstBad ? '，后续步骤未执行' : '，步骤未执行') : ''}）\n${steps.map((s) => `  ${mark(s)} ${s.index}. ${s.action}${s.optional ? '（可选）' : ''} — ${truncate(s.note, 300)}${s.screenshot ? ' [截图]' : ''}`).join('\n')}`
       : '',
-    `控制台错误 ${errors.length} 条${errors.length ? '：\n' + errors.slice(0, 20).map((c) => `  - ${c.message}${c.source ? ` (${c.source.replace('preview://ws/', '')}:${c.line ?? ''})` : ''}${at(c)}`).join('\n') : ''}`,
+    `控制台错误 ${errors.length} 条${errors.length ? '：\n' + errors.slice(0, 20).map((c) => `  - ${c.message}${c.source ? ` (${short(c.source)}:${c.line ?? ''})` : ''}${at(c)}`).join('\n') : ''}`,
     warns.length ? `控制台警告 ${warns.length} 条：\n${warns.slice(0, 8).map((c) => `  - ${c.message}${at(c)}`).join('\n')}` : '',
     r.failed.length ? `加载失败的资源：\n${r.failed.slice(0, 20).map((f) => `  - ${f}`).join('\n')}` : '',
     r.blocked.length ? `已拦截的外部网络请求（预览默认仅允许本地资源；如需 CDN 请改用本地文件，或由皇上在预览中允许外部网络）：\n${r.blocked.slice(0, 12).map((f) => `  - ${f}`).join('\n')}` : '',

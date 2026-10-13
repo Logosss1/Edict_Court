@@ -52,7 +52,7 @@ function moveTo(rt: Runtime, t: Task, to: TaskState, remark: string): boolean {
 }
 
 function toolsFor(rt: Runtime, t: Task, r: RoleSpec, extra: ToolName[] = []): ToolName[] | undefined {
-  if (!rt.workspace || t.workspace !== rt.workspace.root || r.toolAccess === 'none') return undefined;
+  if (!rt.workspaceFor(t) || r.toolAccess === 'none') return undefined;
   return r.toolAccess === 'write' ? [...ALL_TOOLS, ...extra.filter((x) => !ALL_TOOLS.includes(x))] : [...READ_TOOLS, ...extra.filter((x) => !READ_TOOLS.includes(x))];
 }
 
@@ -381,8 +381,7 @@ async function execSubtask(rt: Runtime, t: Task, s: StepSpec, plan: Plan, node: 
       const c2 = parseConclusion(r2.text);
       if (c2.structured) c = c2;
     }
-    const hasWs = !!rt.workspace && t.workspace === rt.workspace.root;
-    const { conclusion, systemCheck } = checkEvidence(t, node, c, r.toolCounts, hasWs ? rt.workspace! : undefined);
+    const { conclusion, systemCheck } = checkEvidence(t, node, c, r.toolCounts, rt.workspaceFor(t) ?? undefined);
     if (conclusion.status === 'failed') throw new Error(`${role.name}自报失败：${conclusion.summary}`);
     if (conclusion.status === 'partial') rt.activity('log', `⚠ ${node.label} 成果存疑：${conclusion.issues.join('；') || '自报部分完成'}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
     const { structured: _s, ...plain } = conclusion as typeof conclusion & { structured?: boolean };

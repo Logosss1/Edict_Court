@@ -151,7 +151,8 @@ export class RuntimeAcpHost implements AcpHost {
     if (!real) throw RpcError.invalidParams(`工作目录不存在或不是文件夹 / cwd is not a directory: ${cwd}`);
     const cur = this.rt.workspace?.root ?? null;
     if (cur && realDir(cur) === real) return cur;
-    const busy = [...this.rt.tasks.values()].filter((t) => !TERMINAL.includes(t.state) && t.state !== 'Blocked' && !t.gate && !t.paused);
+    // edicts in their own worktree do not depend on the open workspace
+    const busy = [...this.rt.tasks.values()].filter((t) => !TERMINAL.includes(t.state) && t.state !== 'Blocked' && !t.gate && !t.paused && t.worktree?.status !== 'active');
     if (busy.length) {
       throw RpcError.internal(`Edict 正在执行其他旨意（${busy.slice(0, 3).map((t) => t.id).join('、')}），暂不能把工作区切换到 ${cwd}；请稍后再试或在 Edict 中打开该文件夹 / Edict is busy in ${cur ?? 'another workspace'}`);
     }
@@ -458,8 +459,14 @@ class PromptTurn {
     this.thought(`\n【${who}${node?.label && node.label !== who ? ` · ${node.label}` : ''}】\n`);
   }
 
+  /** Where this turn's edict works: its own worktree, or the open workspace. */
+  private ws() {
+    const task = this.taskId ? this.rt.tasks.get(this.taskId) : undefined;
+    return task ? this.rt.workspaceFor(task) : this.rt.workspace;
+  }
+
   private locations(args: Record<string, unknown>): ToolCallLocation[] | undefined {
-    const ws = this.rt.workspace;
+    const ws = this.ws();
     if (!ws || typeof args.path !== 'string' || !args.path) return undefined;
     try {
       const line = Number(args.start_line);
@@ -499,7 +506,7 @@ class PromptTurn {
 
   /** Real before/after from the runtime's change records (not the model's claim). */
   private diffFor(st: ToolState): ToolCallContent | null {
-    const ws = this.rt.workspace;
+    const ws = this.ws();
     const task = this.taskId ? this.rt.tasks.get(this.taskId) : undefined;
     if (!ws || !task || typeof st.args.path !== 'string') return null;
     let rel: string;
@@ -595,6 +602,7 @@ class PromptTurn {
       const summary = t.result?.summary?.trim() ?? '';
       if (this.court) this.message(summary || '旨意已完成。');
       else if (!this.reply.trim() && summary) this.message(summary);
+      if (t.worktree?.status === 'active') this.message(`\n\n（本旨意的改动在独立工作树的分支 ${t.worktree.branch} 上，请在 Edict 的结案对话中选择合并到工作区、保留分支或丢弃。）`);
       return void this.end('end_turn');
     }
     if (t.state === 'Blocked') {

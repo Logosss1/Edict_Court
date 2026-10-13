@@ -1,4 +1,5 @@
-// HTML 预览 — serves the open workspace read-only on the private `preview://ws/` scheme
+// HTML 预览 — serves the open workspace read-only on the private `preview://ws/` scheme (an edict's
+// worktree on `preview://wt-<task id>/`)
 // (no network port is opened), inside an isolated session partition whose outbound network is limited to
 // local addresses unless the user allows it. Pure functions here are shared by Electron and node tests.
 import fs from 'node:fs';
@@ -59,29 +60,34 @@ export function servePreview(root: string | null | undefined, rawUrl: string): P
   return { status: 200, headers: { 'content-type': type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }, body };
 }
 
-/** Workspace-relative path → preview URL. */
-export function previewUrlFor(rel: string): string {
+/** Workspace-relative path → preview URL (`host` = previewHostFor(taskId) for an edict's worktree). */
+export function previewUrlFor(rel: string, host = 'ws'): string {
   const clean = rel.replace(/^\.?\/+/, '').split('/').map(encodeURIComponent).join('/');
-  return `${PREVIEW_ORIGIN}/${clean}`;
+  return `${PREVIEW_SCHEME}://${host}/${clean}`;
 }
+
+/** Each edict worktree is its own preview origin: preview://wt-<task id>/ (served read-only like ws). */
+export const previewHostFor = (taskId: string) => `wt-${taskId.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`;
+export const taskIdFromPreviewHost = (host: string): string | null => (/^wt-[a-z0-9-]{1,80}$/.test(host.toLowerCase()) ? host.toLowerCase().slice(3) : null);
+const isPreviewHost = (host: string) => host.toLowerCase() === 'ws' || taskIdFromPreviewHost(host) !== null;
 
 /** Subresource policy for the preview partition: workspace scheme, inline data, local dev servers. */
 export function isLocalRequest(url: string): boolean {
   if (/^(data|blob|devtools|chrome-extension|about):/i.test(url)) return true;
   try {
     const u = new URL(url);
-    if (u.protocol === `${PREVIEW_SCHEME}:`) return u.host === 'ws';
+    if (u.protocol === `${PREVIEW_SCHEME}:`) return isPreviewHost(u.host);
     return ['http:', 'https:', 'ws:', 'wss:'].includes(u.protocol) && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
   } catch {
     return false;
   }
 }
 
-/** Only the workspace scheme and local dev servers may be previewed. */
+/** Only the workspace scheme (open workspace or an edict worktree) and local dev servers may be previewed. */
 export function isAllowedPreviewUrl(url: string): boolean {
   try {
     const u = new URL(url);
-    if (u.protocol === `${PREVIEW_SCHEME}:`) return u.host === 'ws';
+    if (u.protocol === `${PREVIEW_SCHEME}:`) return isPreviewHost(u.host);
     return (u.protocol === 'http:' || u.protocol === 'https:') && ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname);
   } catch {
     return false;
