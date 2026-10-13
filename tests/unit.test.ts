@@ -114,7 +114,16 @@ test('endpoint resolution per protocol', () => {
   assert.equal(mk('openai-responses', 'https://api.openai.com/v1'), 'https://api.openai.com/v1/responses');
 });
 
-test('art import: blurred 4× upscale is re-aligned to the exact original pixels', () => {
+// The art check drives Pillow from python3; machines without it (a stock Mac) skip it.
+const HAS_PIL = (() => {
+  try {
+    execFileSync('python3', ['-c', 'import PIL'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+test('art import: blurred 4× upscale is re-aligned to the exact original pixels', { skip: HAS_PIL ? false : 'python3 has no Pillow' }, () => {
   const src = path.resolve('assets/pixel/chars/menxia.png');
   const tmp = tmpDir('art-');
   // nearest 4× upscale via the project raster (exact) → import with --downscale 4 must reproduce it

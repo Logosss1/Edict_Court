@@ -14,12 +14,12 @@ xvfb-run -a npx tsx e2e/smoke.ts          # 启动冒烟：打开构建好的应
 ```
 - `e2e/features.ts` 的段（`ONLY=` 的取值，逗号分隔；不设则全跑）：`effort`、`error`、`preview`、`mcp`、`designs`、`designer`、`manage`、`tips`、`sidebar`、`worktree`、`v21`。
 - 截图目录由 `SHOTS` 指定：`flow.ts` / `features.ts` 默认写进 `docs/screenshots/`（会改动仓库里的截图），`court-smoke.ts` 默认写到脚本里设定的临时目录；`smoke.ts` 的截图路径写死在脚本里。`EDICT_ELECTRON` 可换 Electron 可执行文件，`APP_DIR` 可让两个冒烟脚本启动别处的构建。每个脚本都用临时数据目录，不碰你的 EdictData。
-- 2.1.0 第一批的结果（Linux + Xvfb，mock LLM）：单元 + 集成 222/222，另有 1 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 21/21；`e2e/features.ts` 88/88（含 `v21` 段 11 项）；`e2e/court-smoke.ts` 与 `e2e/smoke.ts` 通过。
+- 2.1.0 第一批的结果（Linux + Xvfb，mock LLM）：单元 + 集成 222/222，另有 2 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 21/21；`e2e/features.ts` 88/88（含 `v21` 段 11 项）；`e2e/court-smoke.ts` 与 `e2e/smoke.ts` 通过。同一份代码在一台 Apple Silicon Mac 上：单元 + 集成 222/222（含 2 项真实沙箱测试），跳过 2 项（没装 pyright、python3 没有 Pillow）。
 - 2.0.3 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 196/196；`e2e/flow.ts` 21/21；`e2e/features.ts` 79/79；`e2e/court-smoke.ts` 通过。
 - 2.0.0 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 179/179；`e2e/flow.ts` 21/21；`e2e/features.ts` 78/78；`e2e/court-smoke.ts` 与 `e2e/smoke.ts` 通过。
 
 ## 1. 单元测试（纯逻辑）
-`npm test` 运行 `tests/` 下全部测试（本节的单元测试与第 2 节的集成测试）。`tests/unit.test.ts`：SSE 解析与空闲超时、JSON 抽取、Key 脱敏、权限策略、工作区边界 / 搜索替换 / 符号大纲、RSS/Atom、方案校验（部门 / 依赖 / 环）、审计哈希链防篡改、各协议端点解析、美术导入网格还原。
+`npm test` 运行 `tests/` 下全部测试（本节的单元测试与第 2 节的集成测试）。`tests/unit.test.ts`：SSE 解析与空闲超时、JSON 抽取、Key 脱敏、权限策略、工作区边界 / 搜索替换 / 符号大纲、RSS/Atom、方案校验（部门 / 依赖 / 环）、审计哈希链防篡改、各协议端点解析、美术导入网格还原（要用 python3 的 Pillow，没有则跳过）。
 
 ## 2. 集成测试（mock LLM，真实线协议）
 `tests/runtime.test.ts` 启动 `tests/mockLlm.ts`：一个按角色脚本化回复的 HTTP 服务，**逐字节**输出 OpenAI Chat Completions / Anthropic Messages / OpenAI Responses 的 SSE 流（含 reasoning、分片 tool call、usage）。覆盖：
@@ -62,7 +62,7 @@ xvfb-run -a npx tsx e2e/smoke.ts          # 启动冒烟：打开构建好的应
 
 ### v2.1 新增
 - `tests/web.test.ts`（假网络、假 DNS、假搜索服务）：内网 / 回环 / 链路本地地址判定（含 IPv4 映射的 IPv6）与 DNS 解析后再判定；网页转文本（标题、链接、实体、脚本与样式去除）；`webFetch` 每一跳重定向都重查、内网目标从不请求、跳数上限、非文本拒绝、404 的正文保留、字数与 2 MB 上限、GBK 编码；四种搜索后端（Brave、Tavily、SearXNG 及其 403 提示、模型自带搜索：Anthropic 与 Responses，后者不支持时回退旧工具名）；`web_fetch` 工具的允许 / 每次询问（准一次、本旨意、永久、驳回）/ 关闭；`web_search` 上疏：每道旨意只问一次、配置后保存并接着搜索、Key 不进设置与审计、Key 错误、删除 Key、打开配置却没保存按驳回处理、全自动模式超时只用抓取；设置保存的规整。
-- `tests/sandbox.test.ts`：沙箱规则文件（只有拒绝项、路径转义、网络规则）；`~` 展开与真实路径；`git` 公共目录（假文件与真实 git 工作树）；从命令输出识别被拦下的写 / 读 / 联网；策略默认值、数据目录不可读、工作区可写目录增删、设置保存；`run_command` 被拦下时的选项卡（假沙箱后端）：作罢、重跑一次、允许本工作区写该目录，关网时的联网失败，发版命令不进沙箱，关闭沙箱；系统没有沙箱时只提示一次。**真实 `sandbox-exec` 测试只在 macOS 上运行**（工作区外写入被拒、密钥目录读取被拒、普通命令照常、关网后本机回环可连而外网不通），Linux 上跳过。
+- `tests/sandbox.test.ts`：沙箱规则文件（只有拒绝项、路径转义、网络规则）；`~` 展开与真实路径；`git` 公共目录（假文件与真实 git 工作树）；从命令输出识别被拦下的写 / 读 / 联网；策略默认值、数据目录不可读、工作区可写目录增删、设置保存；`run_command` 被拦下时的选项卡（假沙箱后端）：作罢、重跑一次、允许本工作区写该目录，关网时的联网失败，发版命令不进沙箱，关闭沙箱；系统没有沙箱时只提示一次。**真实 `sandbox-exec` 测试只在 macOS 上运行**，Linux 上跳过：工作区外写入被拒、密钥目录的文件读不到也列不出、普通命令照常、关网后本机回环可连而外网不通；旨意工作树里改文件、跑 node、`git commit` 都正常，提交进了仓库，主工作区和家目录不受影响。
 - `tests/requirements.test.ts`：需求说明的解析（编号规整、负责关系）与由验收标准推出；对照检查结果的解析（判定同义词、无证据的「满足」降级）；补办子任务的生成；Court Lite 全流程（对照检查用经济模型、顺序、提示词、奏折「需求对照」）；一轮补办后满足；补办后仍未满足 → 停在御批（关掉结案御批时按封驳上限处理、补办轮数为 0）；关闭对照检查；Full Court 方案御览中皇上改方案后推出的需求说明随之重推；复制的设计带「对照检查」步骤、校验规则与解释器里的补办。
 - `tests/runtime.test.ts`：奏折多出「需求对照」一节。
 - `e2e/features.ts` 的 `v21`：Solo 官员要搜索时的上疏卡片（配置 / 只用抓取 / 驳回）→ 配置窗口选 SearXNG（本机假服务）、测试、保存 → 设置里出现该服务、这次搜索接着执行并记入审计；「联网与搜索」「权限与审批 › 命令沙箱」「运行策略 › 需求对照」三个设置页；Court Lite 旨意的方案卡列出需求与对照结果、奏折有「需求对照」。

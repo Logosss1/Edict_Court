@@ -365,7 +365,8 @@ test('manual worktrees: create / list / open / remove and their guards', async (
   assert.equal(a.branch, 'feature/x');
   assert.ok(a.managed && a.exists && !a.current);
   assert.equal(path.basename(a.path), 'manual-feature-x');
-  assert.equal(path.dirname(a.path), path.join(rt.opts.dataDir, 'worktrees', repoHash(gitc(repo, 'rev-parse', '--show-toplevel'))));
+  // git reports resolved paths (/private/var/… on macOS), the data folder may be a symlinked temp path
+  assert.equal(fs.realpathSync(path.dirname(a.path)), fs.realpathSync(path.join(rt.opts.dataDir, 'worktrees', repoHash(gitc(repo, 'rev-parse', '--show-toplevel')))));
   // an existing branch is checked out as is
   gitc(repo, 'branch', 'topic');
   const b = await worktreeCreate(rt, { branch: 'topic' });

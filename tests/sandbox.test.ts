@@ -256,7 +256,7 @@ test('macOS sandbox-exec: writes outside, secret reads and (when off) the networ
   try {
     const policy: SandboxPolicy = { writable: [ws, os.tmpdir(), '/private/tmp', '/private/var/folders'], denyRead: [secret], allowRead: [ws], network: true };
     const run = (cmd: string, p = policy) => runCommand(cmd, ws, { timeoutMs: 30_000, sandboxProfile: buildProfile(p) });
-    let r = await run('echo hi > a.txt && cat a.txt && mkdir -p sub/dir && echo x > sub/dir/y && echo tmp > "$TMPDIR/edict-sbx-$$" && rm "$TMPDIR/edict-sbx-$$" && ls /usr/bin >/dev/null && git --version');
+    let r = await run('echo hi > a.txt && cat a.txt && mkdir -p sub/dir && echo x > sub/dir/y && echo tmp > "${TMPDIR:-/tmp}/edict-sbx-$$" && rm "${TMPDIR:-/tmp}/edict-sbx-$$" && ls /usr/bin >/dev/null && git --version');
     assert.equal(r.exitCode, 0, r.stderr);
     assert.match(r.stdout, /^hi/);
     r = await run(`mkdir -p ${JSON.stringify(blocked)} && echo x > ${JSON.stringify(path.join(blocked, 'f'))}`);
@@ -267,8 +267,14 @@ test('macOS sandbox-exec: writes outside, secret reads and (when off) the networ
     assert.notEqual(r.exitCode, 0);
     assert.ok(!r.stdout.includes('TOPSECRET'));
     assert.equal(detectDenial(`${r.stdout}\n${r.stderr}`, policy)?.kind, 'read', r.stderr);
+    // on macOS listing a folder needs read-data on it too, so a secret folder cannot even be listed
     r = await run(`ls ${JSON.stringify(secret)}`);
-    assert.equal(r.exitCode, 0, 'listing a folder is not reading its files');
+    assert.notEqual(r.exitCode, 0);
+    assert.ok(!r.stdout.includes('key'));
+    assert.equal(detectDenial(`${r.stdout}\n${r.stderr}`, policy)?.kind, 'read', r.stderr);
+    r = await run(`ls ${JSON.stringify(outsideRoot)} && cat ${JSON.stringify(path.join(ws, 'a.txt'))}`);
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.match(r.stdout, /secret/);
     // network off: outbound refused, loopback still fine
     const srv = (await import('node:http')).createServer((_q, s) => s.end('local-ok'));
     await new Promise<void>((res) => srv.listen(0, '127.0.0.1', () => res()));
@@ -283,5 +289,36 @@ test('macOS sandbox-exec: writes outside, secret reads and (when off) the networ
     }
   } finally {
     fs.rmSync(outsideRoot, { recursive: true, force: true });
+  }
+});
+
+test('macOS sandbox-exec: an edict worktree can edit, run node and commit; the main checkout and the home folder stay untouched', { skip: process.platform !== 'darwin' || !fs.existsSync('/usr/bin/sandbox-exec') }, async () => {
+  // outside the temp folders (those are writable), like a real repository in the home folder
+  const root = realish(fs.mkdtempSync(path.join(HOME, '.edict-sbx-check-')));
+  const repo = path.join(root, 'repo');
+  const wt = path.join(root, 'wt');
+  const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', ...args], { cwd, encoding: 'utf8' });
+  try {
+    fs.mkdirSync(repo);
+    git(repo, 'init', '-q');
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'a\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'init');
+    assert.equal(git(repo, 'worktree', 'add', '-q', '-b', 'edict/T1', wt).status, 0);
+    const policy: SandboxPolicy = { writable: [wt, gitCommonDir(wt)!, os.tmpdir(), '/private/tmp', '/private/var/folders'], denyRead: DEFAULT_SANDBOX_DENY_READ.map((p) => expandHome(p)), allowRead: [wt], network: true };
+    const run = (cmd: string) => runCommand(cmd, wt, { timeoutMs: 60_000, sandboxProfile: buildProfile(policy) });
+    let r = await run(`echo b > b.txt && node -e "require('fs').writeFileSync('n.txt','1')" && git add -A && git -c user.name=t -c user.email=t@t commit -qm b && git log --oneline | wc -l`);
+    assert.equal(r.exitCode, 0, r.stderr);
+    assert.equal(r.stdout.trim(), '2');
+    assert.equal(git(repo, 'log', '--oneline', 'edict/T1').stdout.trim().split('\n').length, 2, 'the commit is in the repository');
+    r = await run(`echo x > ${JSON.stringify(path.join(repo, 'outside.txt'))}`);
+    assert.notEqual(r.exitCode, 0);
+    assert.equal(detectDenial(`${r.stdout}\n${r.stderr}`, policy)?.kind, 'write', r.stderr);
+    r = await run(`echo x > ${JSON.stringify(path.join(root, 'stray.txt'))}`);
+    assert.notEqual(r.exitCode, 0);
+    assert.ok(!fs.existsSync(path.join(repo, 'outside.txt')) && !fs.existsSync(path.join(root, 'stray.txt')), 'nothing written outside the worktree');
+    assert.equal(git(repo, 'status', '--porcelain').stdout.trim(), '', 'main checkout untouched');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
