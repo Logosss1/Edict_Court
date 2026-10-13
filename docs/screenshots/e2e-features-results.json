@@ -4,14 +4,19 @@
   "mcp": "real stdio child process (test fixture server)",
   "results": [
     {
-      "step": "思考程度滑块按模型档位显示（mock-strong：低→超高，4 档）",
+      "step": "思考程度滑块按模型档位显示（mock-strong：Low→XHigh，4 档）",
       "ok": true,
       "note": "max=3"
     },
     {
-      "step": "滑到最右 = 该模型最高档（超高 xhigh）",
+      "step": "滑到最右 = 该模型最高档，显示英文原名 XHigh",
       "ok": true,
-      "note": "超高"
+      "note": "XHigh"
+    },
+    {
+      "step": "思考程度说明：新文案，不再写「最右是该模型最高档」",
+      "ok": true,
+      "note": "模型想得越深结果越好，但更慢、更费 token。档位按模型名推测，还没检测（可在「模型配置」里点「检测思考档位」）。当前：XHigh"
     },
     {
       "step": "请求体携带 reasoning_effort=xhigh（真实 Electron → mock 服务）",
@@ -36,6 +41,16 @@
       "ok": true
     },
     {
+      "step": "检测思考档位：服务不校验时标「未能确认」，保留原档位",
+      "ok": true,
+      "note": "未能确认：Low→XHigh · 默认 Medium calls=2"
+    },
+    {
+      "step": "官员模型竖排：每位官员一行，模型下拉足够宽",
+      "ok": true,
+      "note": "[{\"y\":488.34375,\"w\":240},{\"y\":540.09375,\"w\":240},{\"y\":591.84375,\"w\":240}]"
+    },
+    {
       "step": "预览页签：webview 加载工作区页面并捕获控制台错误",
       "ok": true,
       "note": "控制台 ✖1"
@@ -58,9 +73,34 @@
       "note": "{\"title\":\"凌烟阁\",\"blocked\":1}"
     },
     {
+      "step": "无头预览交互：填写 / 选择 / 勾选 / 回车 / 点击后文字改变，断言通过",
+      "ok": true,
+      "note": "[\"✓ 填写 #name ← “魏征”: 已填写 input#name “姓名” ← “魏征”\",\"✓ 选择 #dept = “兵部”: 已选择 “兵部”（select#dept）\",\"✓ 勾选 #ok: 已勾选 input#ok “已核”\",\"✓ 按键 Enter（#name）: 已按 Enter（input#name “姓名”）\",\"✓ 断言文本 “已点名：魏征（兵部，已核）”: 找到文本 “已点名：魏征（兵部，已核）”\",\"✓ 填写 #name ← “房玄龄”: 已填写 input#name “姓名” ← “房玄龄”\",\"✓ 点击 #go: 已点击 button#go “点名”；已截图\",\"✓ 断言文本 “已点名：房玄龄（兵部，已核）”（#out 内）: 找到文本 “已点名：房玄龄（兵部，已核）”\",\"✓ 断言可见 #out: 可见：p#out “已点名：房玄龄（兵部，已核）”\"]"
+    },
+    {
+      "step": "交互期间：alert 不阻塞（记入控制台）、外部请求仍被拦截、步骤截图存为 blob",
+      "ok": true,
+      "note": "{\"console\":[{\"level\":\"info\",\"message\":\"[alert] 点名完成\",\"source\":\"\",\"line\":6,\"step\":4},{\"level\":\"info\",\"message\":\"[alert] 点名完成\",\"source\":\"\",\"line\":6,\"step\":7}],\"blocked\":[\"https://cdn.example.com/track\"]}"
+    },
+    {
+      "step": "交互后另截手机尺寸：375 宽截图，并发现横向溢出",
+      "ok": true,
+      "note": "{\"vpWidth\":375,\"overflowX\":true,\"contentWidth\":536}"
+    },
+    {
+      "step": "交互断言失败：该步报错并给出当前文本，后续步骤不执行",
+      "ok": true,
+      "note": "[\"已点击 button#go “点名”\",\"未找到文本 “不存在的文字”；当前文本：点名册 吏部 兵部 已核点名 已点名：（吏部）（已等待 207ms）\",\"未执行（第 2 步失败后中止）\"]"
+    },
+    {
       "step": "Agent 调用 preview_page：活动流展示截图与控制台错误",
       "ok": true,
-      "note": "🧑‍💻 独相11:40:55⚠ 凌烟阁index.html · 1280×800 · 483ms控制台错误 1 · 已拦截外部请求 1✖ Uncaught ReferenceError: broken is not defined 打开"
+      "note": "🧑‍💻 独相05:18:56⚠ 凌烟阁index.html · 1280×800 · 409ms控制台错误 1 · 已拦截外部请求 1✖ Uncaught ReferenceError: broken is not defined 打开"
+    },
+    {
+      "step": "Agent 调用 preview_page 带 actions：工具结果逐步列出，断言失败判为未通过",
+      "ok": true,
+      "note": "URL: preview://ws/click.html\n加载：成功（1243ms，视口 1280×800）\n标题：点名册\n交互检查：未通过（2/3 步成功；第 3 步「断言文本 “已点名：李靖”」失败）\n  ✓ 1. 填写 #name ← “魏征” — 已填写 input#name “姓名” ← “魏征”\n  ✓ 2. 点击 #go — 已点击 button#go “点名”\n  ✗ 3. 断言文本 “已点名：李靖” — 未找到文本 “已点名：李靖”；当前文本：点名册 吏部 兵部 已核点名 已点名：魏征（吏部）（已等待 213ms）\n控制台错误 0 条\n已拦截的外部网络请求（预览默认仅允许本地"
     },
     {
       "step": "技能中心：新建技能并保存",
@@ -72,14 +112,243 @@
       "note": "允许 Edict 在本机运行以下 1 个 MCP 服务命令？"
     },
     {
-      "step": "MCP：Cursor 格式 mcp.json 保存后连接 stdio 服务并列出工具",
+      "step": "MCP：标准格式 mcp.json 保存后连接 stdio 服务并列出工具",
       "ok": true,
-      "note": "demo本地进程已连接echo-fixture 0.1.0 · 协议 2025-06-18停止/opt/node22/bin/node /home/claude/edict-mac/tests/fixtures/mcp-echo-server.mjs工具 5/5 ▾echo · add · delete_everyth"
+      "note": "demo本地已连接工具权限停止5 个工具直接用 2 · 先问我 3/opt/node22/bin/node /home/claude/Edict_Court/tests/fixtures/mcp-echo-server.mjs启用此服务授予全体官员指定官员…工具风险官员调用时回声 echo服务声明只读Echo text"
     },
     {
       "step": "Agent 调用 MCP 工具 mcp__demo__echo 并拿到结果",
       "ok": true,
       "note": "Done · /root:朕知道了"
+    },
+    {
+      "step": "协同设计面板：内置三省六部只读并展示流程",
+      "ok": true
+    },
+    {
+      "step": "「复制完整版修改」打开编辑器（未保存前不产生新设计）",
+      "ok": true
+    },
+    {
+      "step": "保存后成为我的设计（v1）",
+      "ok": true,
+      "note": "三省六部 · 完整版 · 我的版本"
+    },
+    {
+      "step": "下旨框出现协同设计选择，默认选中刚复制的设计",
+      "ok": true
+    },
+    {
+      "step": "选择自定义设计时隐藏 Solo/Lite/Full 档位",
+      "ok": true
+    },
+    {
+      "step": "按复制的设计下旨：钉住版本并走到方案御览",
+      "ok": true,
+      "note": "Menxia "
+    },
+    {
+      "step": "设计更新为 v2 后，进行中的旨意仍按 v1（含尚书派发、六部执行、门下审议成果）完成",
+      "ok": true
+    },
+    {
+      "step": "版本回滚：v2 → v1",
+      "ok": true
+    },
+    {
+      "step": "设计操作全程审计",
+      "ok": true
+    },
+    {
+      "step": "新建空白设计：校验通过",
+      "ok": true
+    },
+    {
+      "step": "画布：从工具条拖入一个审议步骤",
+      "ok": true,
+      "note": "fc-card-step,fc-card-summary,fc-card-review"
+    },
+    {
+      "step": "画布：拖 ↺ 设定封驳退回到第一步",
+      "ok": true
+    },
+    {
+      "step": "画布：拖到卡片正上方即与它并行",
+      "ok": true
+    },
+    {
+      "step": "表单：添加并改名角色",
+      "ok": true
+    },
+    {
+      "step": "表单：角色默认跟随路由，可指定模型和思考程度",
+      "ok": true,
+      "note": "跟随经济路由（mock-economy）"
+    },
+    {
+      "step": "朝堂布局：按角色自动排班",
+      "ok": true,
+      "note": "3"
+    },
+    {
+      "step": "保存：流程、并行、封驳、角色与朝堂布局都写入新设计",
+      "ok": true,
+      "note": "{\"review\":{\"id\":\"review\",\"label\":\"审议\",\"type\":\"review\",\"phase\":\"report\",\"instruction\":\"从可行性、完整性和风险审议前面的产出。不合格就封驳，并写清要改什么。\",\"output\":\"verdict\",\"role\":\"bingbu\",\"onReject\":{\"goto\":\"step\",\"max\":2}},\"step2\":{\"id\":\"step2\",\"label\":\"并行查资料\",\"type\":\"agent\",\"phase\":\"execute\",\"instruction\":\"请完成这一步，并写清结果。\",\"output\":\"text\",\"role\":\"zhongshu\",\"parallel\":true},\"roles\":[\"中书省\",\"兵部\",\"史官\"],\"seat\":{\"role\":\"zhongshu\",\"scene\":\"taihe\",\"x\":330,\"y\":240,\"facing\":\"left\",\"pose\":\"sit\",\"desk\":true,\"idle\":\"write\"}}"
+    },
+    {
+      "step": "详情页角色表显示每个角色用的模型",
+      "ok": true,
+      "note": "mock-strong · Mock 中转 · 思考 High"
+    },
+    {
+      "step": "朝堂按设计布局：只站本设计的角色，位置与姿态一致",
+      "ok": true,
+      "note": "中书省@330,240 兵部@250,226 史官@444,226"
+    },
+    {
+      "step": "内置三省六部没有删除按钮",
+      "ok": true
+    },
+    {
+      "step": "收藏后排到内置之后的最前面，并显示 ★",
+      "ok": true,
+      "note": "edict-court,d-bdc04660,d-737e0a2b,d-d2281735,d-7ba168c0"
+    },
+    {
+      "step": "列表上的 ✎ 直接进入修改",
+      "ok": true
+    },
+    {
+      "step": "编辑页右上角「朝堂站位」打开站位面板",
+      "ok": true
+    },
+    {
+      "step": "详情页角落的「朝堂站位」直接打开站位编辑",
+      "ok": true
+    },
+    {
+      "step": "取消删除时设计保留",
+      "ok": true
+    },
+    {
+      "step": "确认后删除，列表与下旨选择里都消失",
+      "ok": true
+    },
+    {
+      "step": "删除写入审计",
+      "ok": true
+    },
+    {
+      "step": "删除后可在提示里一键撤销，设计连同版本恢复",
+      "ok": true
+    },
+    {
+      "step": "选中步骤按 Delete 删除，撤销后回来",
+      "ok": true,
+      "note": "4→3→4"
+    },
+    {
+      "step": "撤销 / 重做按钮",
+      "ok": true,
+      "note": "E2E 甲"
+    },
+    {
+      "step": "Esc 关闭站位面板",
+      "ok": true
+    },
+    {
+      "step": "没保存就离开：列表顶部提示「继续编辑」",
+      "ok": true
+    },
+    {
+      "step": "继续编辑恢复未保存的修改",
+      "ok": true
+    },
+    {
+      "step": "Ctrl/⌘+S 保存为新版本，自动保存的副本随之清除",
+      "ok": true,
+      "note": "{\"v\":2,\"n\":\"E2E 甲 改\"}"
+    },
+    {
+      "step": "内置的 ✎ 是「复制后修改」，不保存就不留下",
+      "ok": true
+    },
+    {
+      "step": "活动栏悬停显示名称与一行说明",
+      "ok": true,
+      "note": "协同设计自己设计多个 AI 怎么分工协作"
+    },
+    {
+      "step": "带快捷键的入口在提示里显示快捷键",
+      "ok": true
+    },
+    {
+      "step": "活动栏底部的权限、MCP 等入口也有悬停说明（含当前权限模式）",
+      "ok": true
+    },
+    {
+      "step": "下旨框的「协同」「直接下旨」等也有悬停说明，且完整显示在窗口内",
+      "ok": true,
+      "note": "{\"x\":943,\"y\":795.328125,\"width\":260,\"height\":68.171875}"
+    },
+    {
+      "step": "移开鼠标提示消失",
+      "ok": true
+    },
+    {
+      "step": "活动栏「待办」打开等你处理的事",
+      "ok": true
+    },
+    {
+      "step": "网页预览侧栏列出工作区 HTML 文件",
+      "ok": true,
+      "note": "click.html,index.html"
+    },
+    {
+      "step": "点击即在预览标签页打开",
+      "ok": true
+    },
+    {
+      "step": "活动栏「协同设计」直达设计面板",
+      "ok": true
+    },
+    {
+      "step": "右键活动栏可增减常用页面",
+      "ok": true,
+      "note": "[false,true]"
+    },
+    {
+      "step": "标题栏「朝堂」切换到朝堂",
+      "ok": true
+    },
+    {
+      "step": "设置导航的「新」点开看过后消失，重开仍不显示；没看过的还在",
+      "ok": true,
+      "note": "{\"tagsNow\":[false,true],\"tagsAfter\":[false,true]}"
+    },
+    {
+      "step": "Git 仓库里每道旨意在自己的工作树分支上办",
+      "ok": true,
+      "note": "edict/JJC-20261013-007 /tmp/edict-e2e2-data-hAtqeq/EdictData/worktrees/ea50fa19b5ea/JJC-20261013-007"
+    },
+    {
+      "step": "办理期间主工作区一个文件都没动",
+      "ok": true,
+      "note": ""
+    },
+    {
+      "step": "结案对话框列出改动的文件、行数和经手的部",
+      "ok": true,
+      "note": "2 个文件+4 −0greet.js兵部+1greet.test.js刑部+3"
+    },
+    {
+      "step": "合并是默认选项",
+      "ok": true
+    },
+    {
+      "step": "合并后主工作区有旨意提交和合并提交，工作树目录已清理",
+      "ok": true,
+      "note": "合并旨意 JJC-20261013-007：写一个 greet 函数并测试 | 实现 greet（e2e） | init | "
     },
     {
       "step": "API Key 未出现在审计/状态/设置/mcp.json 中",

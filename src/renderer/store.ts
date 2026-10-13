@@ -4,7 +4,9 @@ import { useSyncExternalStore, useRef } from 'react';
 import type { Activity, AgentId, RuntimeEvent, Snapshot, Task, Debate, Session, Memorial, ApprovalRequest, Annotation } from '../shared/types';
 import { call } from './api';
 
-export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help';
+export type PanelId = 'kanban' | 'monitor' | 'memorials' | 'templates' | 'officials' | 'news' | 'models' | 'designs' | 'skills' | 'sessions' | 'ceremony' | 'debate' | 'audit' | 'help' | 'settings';
+/** 设置中心 pages (one editor tab, left nav) */
+export type SettingsSection = 'appearance' | 'storage' | 'providers' | 'routing' | 'runtime' | 'permissions' | 'canon' | 'mcp' | 'skills' | 'lsp' | 'acp' | 'worktrees' | 'audit' | 'help';
 export type CourtScene = 'taihe' | 'guangchang' | 'junjichu' | 'liubu' | 'chengtian';
 
 export interface Tab {
@@ -32,7 +34,10 @@ export interface UIState {
   selectedTaskId: string | null;
   tabs: Tab[];
   activeTab: string | null;
-  sideView: 'explorer' | 'search' | 'git' | 'court' | 'preview' | null;
+  sideView: 'explorer' | 'search' | 'git' | 'inbox' | 'preview' | null;
+  settingsSection: SettingsSection;
+  /** 旨意看板: board columns or a flat list */
+  kanbanView: 'board' | 'list';
   bottomOpen: boolean;
   bottomTab: 'terminal' | 'problems' | 'output' | 'audit';
   composerHidden: boolean;
@@ -46,8 +51,11 @@ export interface UIState {
   ceremony: boolean;
   lastChat: { sessionId: string; reply: string } | null;
   fsVersion: number;
+  lspVersion?: number;
   changedPaths: string[];
   previewBlocked: { url: string; at: number } | null;
+  /** 结案 dialog for an edict's git worktree (choice = preselected 合并 / 保留分支 / 丢弃) */
+  worktreeDialog: { taskId: string; choice?: string } | null;
 }
 
 export interface AppState extends Snapshot {
@@ -58,8 +66,8 @@ export interface AppState extends Snapshot {
 
 const initialUI: UIState = {
   mode: 'workbench', selectedTaskId: null, tabs: [{ id: 'panel:kanban', kind: 'panel', title: '旨意看板', panel: 'kanban' }], activeTab: 'panel:kanban',
-  sideView: 'explorer', bottomOpen: false, bottomTab: 'terminal', composerHidden: false, courtScene: 'taihe', courtDept: 'bingbu', review: null,
-  agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [], previewBlocked: null,
+  sideView: 'explorer', settingsSection: 'appearance', kanbanView: 'board', bottomOpen: false, bottomTab: 'terminal', composerHidden: false, courtScene: 'taihe', courtDept: 'bingbu', review: null,
+  agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [], previewBlocked: null, worktreeDialog: null,
 };
 
 let state: AppState = {
@@ -200,6 +208,12 @@ export function applyEvent(e: RuntimeEvent) {
     case 'fs_changed':
       setUI((ui) => ({ fsVersion: ui.fsVersion + 1, changedPaths: e.paths }));
       break;
+    case 'lsp_diagnostics':
+      void import('./workbench/editorBus').then((b) => b.applyLspDiagnostics(e.path, e.server, e.diagnostics));
+      break;
+    case 'lsp_status':
+      setUI((ui) => ({ lspVersion: (ui.lspVersion ?? 0) + 1 }));
+      break;
     case 'toast':
       toast(e.message, e.level);
       break;
@@ -215,7 +229,9 @@ export function applyEvent(e: RuntimeEvent) {
 const menuHandlers = new Set<(cmd: string, arg?: unknown) => void>();
 export function onMenu(h: (cmd: string, arg?: unknown) => void) {
   menuHandlers.add(h);
-  return () => menuHandlers.delete(h);
+  return () => {
+    menuHandlers.delete(h);
+  };
 }
 
 export async function initStore() {
@@ -246,7 +262,9 @@ export function selectTask(id: string | null) {
 
 export function subscribe(fn: () => void) {
   listeners.add(fn);
-  return () => listeners.delete(fn);
+  return () => {
+    listeners.delete(fn);
+  };
 }
 
 function shallowEqual(a: unknown, b: unknown) {
@@ -260,17 +278,22 @@ function shallowEqual(a: unknown, b: unknown) {
   return true;
 }
 
-/** useStore(selector) — re-renders only when the selected slice changes (shallow). */
+/**
+ * useStore(selector) — re-renders only when the selected slice changes (shallow). The cache is keyed on the
+ * state AND the selector: a selector that closes over props (e.g. the selected task id) must be re-run when
+ * it changes even if the state object did not, or the hook keeps returning the previous id's value.
+ */
 export function useStore<T>(selector: (s: AppState) => T): T {
-  const cache = useRef<{ s?: AppState; v?: T }>({});
+  const cache = useRef<{ s?: AppState; f?: (s: AppState) => T; v?: T }>({});
   const get = () => {
-    if (cache.current.s === state) return cache.current.v as T;
+    if (cache.current.s === state && cache.current.f === selector) return cache.current.v as T;
     const v = selector(state);
     if (cache.current.s !== undefined && shallowEqual(v, cache.current.v)) {
       cache.current.s = state;
+      cache.current.f = selector;
       return cache.current.v as T;
     }
-    cache.current = { s: state, v };
+    cache.current = { s: state, f: selector, v };
     return v;
   };
   return useSyncExternalStore(subscribe, get, get);
@@ -288,8 +311,23 @@ export function openTab(tab: Tab) {
   });
 }
 
+export const SETTINGS_TITLE: Record<SettingsSection, string> = {
+  appearance: '外观与通知', storage: '存储与备份', providers: '模型服务', routing: '官员模型与路由', runtime: '运行策略', permissions: '权限与审批', canon: '典章',
+  mcp: '连接服务', skills: '技能', lsp: '语言服务', acp: '编辑器接入', worktrees: '工作树', audit: '审计日志', help: '使用说明',
+};
+
+/** Open the settings center tab on a page. */
+export function openSettings(section: SettingsSection = state.ui.settingsSection) {
+  setUI({ settingsSection: section });
+  openTab({ id: 'panel:settings', kind: 'panel', title: `设置 · ${SETTINGS_TITLE[section]}`, panel: 'settings' });
+}
+
 export function openPanel(panel: PanelId) {
-  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', designs: '协同设计', skills: '技能与 MCP', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明' };
+  // 2.0: model, skill and MCP configuration moved into the settings center
+  if (panel === 'models') return openSettings('providers');
+  if (panel === 'skills') return openSettings('skills');
+  if (panel === 'settings') return openSettings();
+  const titles: Record<PanelId, string> = { kanban: '旨意看板', monitor: '省部调度', memorials: '奏折阁', templates: '旨库', officials: '官员总览', news: '天下要闻', models: '模型配置', designs: '协同设计', skills: '技能', sessions: '小任务', ceremony: '上朝仪式', debate: '朝堂议政', audit: '审计日志', help: '使用说明', settings: '设置' };
   openTab({ id: `panel:${panel}`, kind: 'panel', title: titles[panel], panel });
 }
 

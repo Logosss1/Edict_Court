@@ -70,6 +70,9 @@ export interface FlowEntry {
   state?: TaskState;
 }
 
+/** What a subtask does to the workspace: read (research / review, runs in parallel), write (changes files), verify (runs tests / builds). */
+export type SubtaskEffect = 'read' | 'write' | 'verify';
+
 export interface Subtask {
   id: string;
   title: string;
@@ -77,7 +80,12 @@ export interface Subtask {
   detail: string;
   acceptance: string;
   dependsOn: string[];
+  /** missing = read */
+  effect?: SubtaskEffect;
 }
+
+/** What the emperor granted one exec node: write (normal permission mode), write_free (no asks except high risk), readonly. */
+export type NodeGrant = 'write' | 'write_free' | 'readonly';
 
 export interface Plan {
   summary: string;
@@ -142,6 +150,10 @@ export interface RunNode {
   roleName?: string;
   output?: string; // structured conclusion (JSON string or text)
   usage?: Usage;
+  effect?: SubtaskEffect; // exec nodes: the subtask's declared effect
+  grant?: NodeGrant; // exec nodes: what the emperor allowed (write-task dialog / escalation)
+  grantNote?: string; // the emperor's note given with the grant
+  sideEffects?: boolean; // a write, command or non-read MCP call ran in this node (not auto-resumed after restart)
 }
 
 export type GateKind = 'plan' | 'final' | 'budget' | 'reject_limit' | 'risk';
@@ -173,6 +185,23 @@ export interface FileChange {
   nodeId?: string;
   at: number;
   reverted?: boolean;
+  /** how the file changed: a file tool (also every record without this field) or a side effect of run_command */
+  via?: 'tool' | 'command';
+  /** the run_command text, when via === 'command' */
+  command?: string;
+  /** over the snapshot size cap: listed without content (hashes null), no diff, cannot be reverted */
+  oversize?: boolean;
+  /** before or after content looks binary (NUL bytes): show sizes, not a text diff */
+  binary?: boolean;
+}
+
+/** Result of reverting a node's or an edict's changes (E3). Paths are workspace-relative. */
+export interface RevertResult {
+  reverted: string[];
+  /** files changed on disk after the agent wrote them: nothing was reverted (unless forced) */
+  conflicts: string[];
+  /** changes that cannot be reverted (content over the size cap was never stored) */
+  skipped: string[];
 }
 
 export interface Annotation {
@@ -200,6 +229,8 @@ export interface Task {
   createdAt: number;
   updatedAt: number;
   workspace: string | null;
+  repoRoot?: string | null; // worktree edicts: the main checkout the worktree was made from (permission rules stay keyed by it)
+  worktree?: EdictWorktree; // per-edict git worktree (absent = works in the open workspace)
   flow: FlowEntry[];
   plan?: Plan;
   planHistory: PlanVersion[];
@@ -227,8 +258,65 @@ export interface Task {
   lastActivityAt: number;
   sessionId?: string; // solo conversation
   templateId?: string;
+  allowRules?: AllowRule[]; // 「本旨意内不再询问」 rules granted on approvals
+  skillsUsed?: SkillUse[]; // load_skill calls during this edict
+  canonUsed?: string[]; // 典章 entries injected into this edict's prompts
+  questions?: EdictQuestion[]; // 请旨 (ask_emperor) asked during this edict
   execRound?: number; // 1 = first execution; >1 = rework rounds
   rework?: { round: number; targets: string[]; feedback: string; by: 'menxia' | 'emperor' };
+}
+
+export type WorktreeStatus = 'active' | 'merged' | 'kept' | 'discarded';
+export type WorktreeAction = 'merge' | 'keep' | 'discard';
+
+/** An edict's own git worktree on branch edict/<taskId>, made from the repo's HEAD when it leaves triage. */
+export interface EdictWorktree {
+  path: string; // worktree root (<dataDir>/worktrees/<repo hash>/<taskId>)
+  branch: string; // edict/<taskId>
+  base: string; // commit the branch started from
+  baseBranch?: string; // branch checked out in the main checkout at creation
+  repoRoot: string; // git toplevel of the main checkout (merge target)
+  sub?: string; // the opened folder relative to repoRoot (absent = repo root)
+  status: WorktreeStatus;
+  createdAt: number;
+  links?: string[]; // dependency folders symlinked from the main checkout (never committed)
+  dirtyBase?: number; // uncommitted files in the main checkout at creation (not included)
+  finishedAt?: number;
+  commit?: string; // last commit made on the branch when finishing
+  mergeCommit?: string;
+  conflicts?: string[]; // files that blocked the last merge attempt
+  error?: string; // last finish failure
+}
+
+/** Outcome of worktreeFinish (also what the 结案 card's choice did). */
+export interface WorktreeFinishResult {
+  ok: boolean;
+  action: WorktreeAction;
+  status: WorktreeStatus;
+  message: string;
+  branch: string;
+  path: string;
+  commit?: string;
+  mergeCommit?: string;
+  conflicts?: string[];
+}
+
+/** One entry of `git worktree list` for the open repository. */
+export interface WorktreeInfo {
+  path: string;
+  head: string;
+  branch: string | null; // null = detached
+  main: boolean; // the repository's main working tree
+  current: boolean; // the open workspace
+  managed: boolean; // lives under <dataDir>/worktrees (made by Edict)
+  kind: 'main' | 'edict' | 'manual' | 'external';
+  taskId?: string; // edict worktrees: the edict using / owning it
+  taskTitle?: string;
+  taskState?: TaskState;
+  status?: WorktreeStatus;
+  locked?: boolean;
+  prunable?: boolean; // directory is gone (git worktree prune cleans it up)
+  exists: boolean;
 }
 
 export type AgentStatus = 'idle' | 'thinking' | 'writing' | 'tool' | 'waiting' | 'error' | 'paused';
@@ -274,6 +362,31 @@ export interface Activity {
   streaming?: boolean;
 }
 
+export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree';
+
+export interface EdictQuestion {
+  id: string;
+  agentId: AgentId;
+  nodeId?: string;
+  question: string;
+  options: string[];
+  answer?: string;
+  how?: 'option' | 'free' | 'self' | 'timeout' | 'none';
+  at: number;
+  answeredAt?: number;
+}
+
+/** One button on an approval card (proceed / proceed and don't ask again / no, and say what to do instead). */
+export interface ApprovalChoice {
+  id: string;
+  label: string;
+  hint?: string;
+  approve: boolean;
+  tone?: 'primary' | 'danger' | 'default';
+  /** 'optional' shows a note box; 'required' needs one */
+  comment?: 'optional' | 'required';
+}
+
 export interface ApprovalRequest {
   id: string;
   taskId?: string;
@@ -287,6 +400,27 @@ export interface ApprovalRequest {
   at: number;
   status: 'pending' | 'approved' | 'denied';
   decidedAt?: number;
+  kind?: ApprovalKind;
+  /** when present the card shows these instead of 准许 / 驳回 */
+  choices?: ApprovalChoice[];
+  choice?: string; // picked choice id
+  comment?: string; // the emperor's note
+  ruleLabel?: string; // what an always-allow choice would allow, e.g. 「npm test」
+}
+
+/** An always-allow rule: `key` like cmd:npm test · tool:write · mcp:server/tool. */
+export interface AllowRule {
+  key: string;
+  label: string;
+  at: number;
+  /** the edict (and official) whose approval card granted it */
+  source?: { taskId: string; title: string; agentId?: string };
+}
+
+export interface WorkspacePerms {
+  rules: AllowRule[];
+  /** release / deploy commands (git push, npm publish, deploy CLIs) run without asking in this workspace */
+  releaseAlways?: boolean;
 }
 
 export interface DebateMessage {
@@ -335,7 +469,7 @@ export interface Session {
 }
 
 export interface MemorialStage {
-  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'report';
+  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'questions' | 'skills' | 'report';
   label: string;
   at?: number;
   items: string[];
@@ -354,6 +488,7 @@ export interface Memorial {
   models: string[];
   runs: { nodeId: string; label: string; runId?: string; model?: string; exitStatus?: string; startedAt?: number; endedAt?: number }[];
   flow: FlowEntry[];
+  skillsUsed?: SkillUse[];
 }
 
 export interface NewsItem {
@@ -410,7 +545,7 @@ export interface ReasoningDetectResult {
 }
 
 export interface ErrorInfo {
-  kind: 'auth' | 'config' | 'param' | 'billing' | 'rate' | 'server' | 'network' | 'timeout' | 'other';
+  kind: 'auth' | 'config' | 'param' | 'billing' | 'rate' | 'server' | 'network' | 'timeout' | 'context' | 'other';
   status?: number;
   hint: string;
   raw: string;
@@ -437,11 +572,31 @@ export type PermissionMode = 'readonly' | 'ask' | 'auto-edit' | 'auto';
 export interface SkillInfo {
   name: string;
   description: string;
+  /** extra skills the emperor equipped (switched on per official); 'all' = every official */
   agents: AgentId[] | 'all';
+  /** officials that hold this as a fixed duty skill (职责技能) */
+  duty: AgentId[];
   path: string;
   source: 'builtin' | 'local' | 'remote';
   sourceUrl?: string;
   enabled: boolean;
+  title?: string; // short Chinese name
+  category?: string; // plan | review | investigate | qa | design | release | deploy | safety | everyday
+  icon?: string;
+  risk?: 'release' | 'deploy';
+  version?: number; // built-in pack version
+  /** sha256 of the skill body as loaded (which text an agent actually read) */
+  sha256: string;
+  /** remote skills: sha256 of the body when it was downloaded */
+  remoteSha256?: string;
+}
+
+/** A load_skill call recorded on the edict (shown in the memorial). */
+export interface SkillUse {
+  name: string;
+  agentId: AgentId;
+  sha256: string;
+  at: number;
 }
 
 export interface Template {
@@ -481,6 +636,67 @@ export interface Settings {
   defaultDesign?: string; // design id preselected in the composer
   previewAllowNetwork?: boolean; // HTML 预览可加载外部网络资源（默认仅本地） // last 思考程度 slider value ('default' | 'top' | level)
   language: 'zh';
+  /** ask before each write subtask starts, unless permissionMode is auto */
+  confirmWriteTasks: boolean;
+  /** after a restart, resume interrupted nodes that had no side effects instead of blocking */
+  autoResumeSafe: boolean;
+  /** wall-clock limit per node, minutes (0 = none) */
+  nodeTimeoutMin: number;
+  /** per workspace root: 「本工作区永久允许」 rules */
+  workspacePerms: Record<string, WorkspacePerms>;
+  /** external editors may connect over ACP through a local socket */
+  acpEnabled: boolean;
+  /** high-risk approvals from ACP edicts are answered in Edict only, never in the editor */
+  acpHighRiskInEdictOnly: boolean;
+  /** 全自动 mode only: an unanswered 请旨 (ask_emperor) continues on the default after this many minutes (0 = wait) */
+  askTimeoutMin: number;
+  /** 典章: the emperor's standing rules, preferences and lessons, injected into prompts by keyword */
+  canon: CanonEntry[];
+  /** record files changed by run_command (shadow git snapshots before / after each command) */
+  commandSnapshots: boolean;
+  /** each court edict on a git repository works in its own worktree (branch edict/<id>), merged on 结案 */
+  worktreePerEdict: boolean;
+  /** desktop notifications (window not focused): all · only what needs the emperor · none */
+  notify: NotifyPref;
+}
+
+export type NotifyPref = 'all' | 'attention' | 'off';
+
+/** 存储与备份: where the data lives and the copies made of it. */
+export interface StorageBackup {
+  name: string;
+  at: number;
+  bytes: number;
+}
+export interface StorageInfo {
+  dataDir: string;
+  dbFile: string;
+  dbBytes: number;
+  walBytes: number;
+  /** meta.origin: fresh | import:1.x | import:backup | unknown */
+  origin: string;
+  /** backup-1.x-<stamp> folder made when 1.x JSON data was imported */
+  importBackup?: string;
+  /** rows per table (tasks, memorials …) */
+  counts: Record<string, number>;
+  backups: StorageBackup[];
+  /** API keys are encrypted with the system keychain (safeStorage) */
+  encrypted: boolean;
+}
+
+export type CanonKind = 'forbid' | 'rule' | 'preference' | 'lesson';
+export interface CanonEntry {
+  id: string;
+  kind: CanonKind;
+  text: string;
+  /** injected when the edict mentions any of these; empty = every edict */
+  keywords: string[];
+  /** workspace root it applies to; absent = every workspace */
+  root?: string;
+  enabled: boolean;
+  at: number;
+  /** where it came from (e.g. a 门下 rejection collected into the canon) */
+  source?: { taskId: string; label: string };
 }
 
 export interface Snapshot {
@@ -529,7 +745,23 @@ export type RuntimeEvent =
   | { type: 'menu'; command: string; arg?: unknown }
   | { type: 'preview_blocked'; url: string }
   | { type: 'mcp'; servers: McpServerState[] }
-  | { type: 'designs'; designs: DesignInfo[] };
+  | { type: 'designs'; designs: DesignInfo[] }
+  | { type: 'lsp_diagnostics'; path: string; server: string; diagnostics: LspDiagnostic[] }
+  | { type: 'lsp_status' };
+
+/** One diagnostic from a language server (1-based lines / columns, end exclusive). */
+export interface LspDiagnostic {
+  line: number;
+  column: number;
+  endLine: number;
+  endColumn: number;
+  severity: 'error' | 'warning' | 'info' | 'hint';
+  message: string;
+  source?: string;
+  code?: string;
+  unnecessary?: boolean;
+  deprecated?: boolean;
+}
 
 export const emptyUsage = (): Usage => ({ inputTokens: 0, outputTokens: 0, cachedTokens: 0, costUsd: 0, calls: 0 });
 
@@ -542,17 +774,46 @@ export interface PreviewResult {
   ok: boolean;
   title: string;
   text: string;
-  console: { level: string; message: string; source?: string; line?: number }[];
+  /** step: 1-based index of the interactive step that was running when the line was logged */
+  console: { level: string; message: string; source?: string; line?: number; step?: number }[];
   failed: string[];
   blocked: string[];
   screenshot?: string; // blob hash (PNG)
   width: number;
   height: number;
   loadMs: number;
+  /** interactive steps (preview_page `actions`), in order */
+  steps?: PreviewStepResult[];
+  /** extra viewport screenshots taken after the steps (preview_page `viewports`) */
+  viewports?: PreviewViewportResult[];
+}
+
+/** One step of an interactive preview check (click / fill / press / assert …). */
+export interface PreviewStepResult {
+  index: number; // 1-based
+  action: string; // e.g. 点击 #start
+  ok: boolean;
+  note: string;
+  ms: number;
+  /** a failure here does not stop the run */
+  optional?: boolean;
+  /** not run: an earlier step failed, the page hung or the time budget ran out */
+  skipped?: boolean;
+  screenshot?: string; // blob hash (PNG), when the step asked for one
+}
+
+export interface PreviewViewportResult {
+  width: number;
+  height: number;
+  screenshot?: string; // blob hash (PNG)
+  /** page content is wider than the viewport (horizontal scrollbar) */
+  overflowX?: boolean;
+  contentWidth?: number;
+  note?: string;
 }
 
 // ───────────────────────── MCP (Model Context Protocol) ─────────────────────────
-/** One server entry in Cursor-compatible `mcp.json` (`{ "mcpServers": { name: entry } }`). */
+/** One server entry in the standard `mcp.json` format (`{ "mcpServers": { name: entry } }`). */
 export interface McpServerEntry {
   type?: 'stdio' | 'http' | 'sse' | 'streamable-http';
   command?: string;
@@ -562,8 +823,12 @@ export interface McpServerEntry {
   cwd?: string;
   url?: string;
   headers?: Record<string, string>;
+  /** Remote servers only. Omitted = OAuth on demand when the server answers 401 (unless a static Authorization header is set). */
+  auth?: McpAuthConfig;
   disabled?: boolean;
 }
+/** `clientSecret` is moved to the SecretStore on save (`${secret:<server>/auth/clientSecret}`). */
+export type McpAuthConfig = { type: 'oauth'; clientId?: string; clientSecret?: string; scopes?: string[] } | { type: 'none' };
 export interface McpConfig { mcpServers: Record<string, McpServerEntry> }
 
 export type McpRisk = 'read' | 'write' | 'high';
@@ -581,12 +846,28 @@ export interface McpToolInfo {
   policy: McpToolPolicy;
 }
 
+/** OAuth login state of a remote server (never carries token values). */
+export interface McpAuthState {
+  type: 'oauth';
+  loggedIn: boolean; // tokens stored for this server URL
+  loggingIn?: boolean; // browser login in progress
+  expiresAt?: number; // access-token expiry (ms epoch), when the server said
+  scopes?: string[];
+  issuer?: string;
+  dynamicClient?: boolean; // client registered via RFC 7591
+}
+
+export interface McpResourceInfo { uri: string; name: string; title?: string; description?: string; mimeType?: string; size?: number }
+export interface McpResourceTemplateInfo { uriTemplate: string; name: string; title?: string; description?: string; mimeType?: string }
+export interface McpPromptArgument { name: string; title?: string; description?: string; required?: boolean }
+export interface McpPromptInfo { name: string; title?: string; description?: string; arguments: McpPromptArgument[] }
+
 export interface McpServerState {
   name: string;
   transport: 'stdio' | 'http' | 'sse';
   target: string; // command line or URL (secrets already masked)
-  status: 'disabled' | 'untrusted' | 'stopped' | 'starting' | 'ok' | 'error';
-  error?: string;
+  status: 'disabled' | 'untrusted' | 'stopped' | 'starting' | 'ok' | 'error' | 'needs_auth';
+  error?: string; // for needs_auth: a hint to log in
   serverInfo?: { name: string; version?: string };
   protocolVersion?: string;
   instructions?: string;
@@ -594,4 +875,18 @@ export interface McpServerState {
   policy: McpServerPolicy;
   logs: { at: number; level: 'info' | 'error' | 'stderr'; text: string }[];
   startedAt?: number;
+  auth?: McpAuthState;
+  capabilities?: { tools: boolean; resources: boolean; prompts: boolean };
+  resources?: McpResourceInfo[]; // first 200; see resourceCount
+  resourceCount?: number;
+  resourceTemplates?: McpResourceTemplateInfo[];
+  prompts?: McpPromptInfo[];
 }
+
+export interface McpResourceListItem extends McpResourceInfo { server: string }
+export interface McpResourceTemplateListItem extends McpResourceTemplateInfo { server: string }
+export interface McpPromptListItem extends McpPromptInfo { server: string }
+/** `blob` = BlobStore hash (binary contents, or the full text when `truncated`). */
+export interface McpResourceContent { uri: string; mimeType?: string; text?: string; blob?: string; bytes?: number; truncated?: boolean }
+export interface McpReadResult { server: string; uri: string; contents: McpResourceContent[]; text: string }
+export interface McpPromptResult { server: string; name: string; description?: string; messages: { role: 'user' | 'assistant'; text: string }[]; text: string }

@@ -4,10 +4,14 @@ import { safeEnv } from './exec';
 function git(cwd: string, args: string[], maxBuffer = 16 * 1024 * 1024): Promise<{ code: number; out: string; err: string }> {
   return new Promise((resolve) => {
     execFile('git', args, { cwd, env: safeEnv({ GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }), maxBuffer }, (e, stdout, stderr) => {
-      resolve({ code: e ? ((e as { code?: number }).code ?? 1) : 0, out: String(stdout), err: String(stderr) });
+      const code = e ? (e as { code?: number | string }).code : 0;
+      // a spawn failure (git missing) has a string code: report it as exit 1 with the message
+      resolve({ code: typeof code === 'number' ? code : e ? 1 : 0, out: String(stdout), err: String(stderr) || (e ? e.message : '') });
     });
   });
 }
+
+export const runGit = git;
 
 export interface GitFile {
   path: string;

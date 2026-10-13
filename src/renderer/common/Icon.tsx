@@ -60,6 +60,21 @@ const P: Record<string, string> = {
   diff: 'M12 3v8M8 7h8M8 17h8M5 3h14v18H5z',
   history: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5M12 7v5l3 2',
   gate: 'M4 21V8l8-5 8 5v13M9 21v-6h6v6',
+  puzzle: 'M10 3.5a2 2 0 0 1 4 0V5h4a1 1 0 0 1 1 1v4h-1.5a2 2 0 0 0 0 4H19v4a1 1 0 0 1-1 1h-4v-1.5a2 2 0 0 0-4 0V19H6a1 1 0 0 1-1-1v-4h1.5a2 2 0 0 0 0-4H5V6a1 1 0 0 1 1-1h4z',
+  lock: 'M6 11h12v10H6zM8 11V7a4 4 0 0 1 8 0v4',
+  grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
+  help: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM9.5 9.2a2.5 2.5 0 1 1 3.6 2.2c-.7.4-1.1 1-1.1 1.7v.4M12 17v.4',
+  inbox: 'M3 13l3-8h12l3 8v6H3zM3 13h5l1 3h6l1-3h5',
+  list: 'M9 6h12M9 12h12M9 18h12M4 6h.01M4 12h.01M4 18h.01',
+  link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  db: 'M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3',
+  branch: 'M6 3v12M6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM18 9c0 4-4 4-9 7',
+  bell: 'M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0',
+  rules: 'M5 4h11l3 3v13H5zM9 9h6M9 13h6M9 17h3',
+  key: 'M15 3a6 6 0 1 0 0 12 6 6 0 0 0 0-12zM10.5 13.5L3 21M6 18l2 2M8.5 15.5l2 2',
+  merge: 'M6 3v18M6 9a3 3 0 1 0 0-.01M18 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 9c0 5 4 6 9 7',
+  filter: 'M3 5h18l-7 8v6l-4 2v-8z',
+  dots: 'M5 12h.01M12 12h.01M19 12h.01',
 };
 
 export function Icon({ name, size = 16, style, className, stroke = 1.8 }: { name: string; size?: number; style?: CSSProperties; className?: string; stroke?: number }) {

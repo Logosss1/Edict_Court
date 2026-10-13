@@ -1,5 +1,5 @@
 import { PREVIEWABLE, openPreview } from './PreviewView';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, type ReactElement } from 'react';
 import { useStore, openTab, toast } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
@@ -115,9 +115,9 @@ export function Explorer() {
     }
   };
 
-  const renderDir = (dir: string, depth: number): JSX.Element[] => {
+  const renderDir = (dir: string, depth: number): ReactElement[] => {
     const items = children[dir] ?? [];
-    const out: JSX.Element[] = [];
+    const out: ReactElement[] = [];
     if (creating?.parent === dir)
       out.push(
         <div key="__create" className="tree-row" style={{ paddingLeft: 8 + depth * 12 }}>

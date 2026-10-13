@@ -1,21 +1,30 @@
-// Electron side of HTML 预览: the `preview://ws/` scheme in an isolated partition, the network policy,
-// <webview> hardening, and the hidden sandboxed browser used by the agent tool `preview_page`.
+// Electron side of HTML 预览: the `preview://` scheme (ws / per-edict wt-<id>) in an isolated partition, the network
+// policy, <webview> hardening, and the hidden sandboxed browser used by the agent tool `preview_page` (load → wait →
+// optional interactive steps from services/previewActions → text + screenshot + extra viewports).
 import { BrowserWindow, session, type WebContents } from 'electron';
 import { PREVIEW_PARTITION, isAllowedPreviewUrl, isLocalRequest, servePreview } from './services/preview';
+import { captureViewports, runPreviewSteps, skippedSteps, withTimeout, type PreviewHostResult, type PreviewHostStep, type PreviewIO, type PreviewRenderOptions } from './services/previewActions';
 import type { Runtime } from './runtime/runtime';
 import type { PreviewResult } from '../shared/types';
 
 export function installPreview(rt: Runtime, onBlocked: (url: string) => void) {
   const ses = session.fromPartition(PREVIEW_PARTITION);
   ses.protocol.handle('preview', (req) => {
-    const r = servePreview(rt.workspace?.root, req.url);
+    // preview://ws/ = the open workspace; preview://wt-<task id>/ = that edict's worktree
+    let host = '';
+    try {
+      host = new URL(req.url).host;
+    } catch {
+      /* served as 404 below */
+    }
+    const r = servePreview(rt.previewRoot(host), req.url);
     return new Response(new Uint8Array(r.body), { status: r.status, headers: r.headers });
   });
   // Outbound network from previewed pages: local only unless the emperor allows it (pages may be agent-written).
   ses.webRequest.onBeforeRequest((d, cb) => {
     if (isLocalRequest(d.url) || rt.settings.previewAllowNetwork) return cb({});
     onBlocked(d.url);
-    blockedSink?.(d.url);
+    blockedSink?.(d.url, d.webContentsId);
     cb({ cancel: true });
   });
   ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
@@ -23,7 +32,7 @@ export function installPreview(rt: Runtime, onBlocked: (url: string) => void) {
   ses.on('will-download', (e) => e.preventDefault());
 }
 
-let blockedSink: ((url: string) => void) | null = null;
+let blockedSink: ((url: string, webContentsId?: number) => void) | null = null;
 
 /** Called from web-contents-created: lock down <webview> guests and hidden preview windows. */
 export function hardenContents(contents: WebContents) {
@@ -46,15 +55,15 @@ export function hardenContents(contents: WebContents) {
 
 let queue: Promise<unknown> = Promise.resolve();
 
-/** Render one page off-screen; serialized so agents never open many hidden browsers at once. */
-export function previewPage(url: string, o: { waitMs: number; width: number; height: number }): Promise<Omit<PreviewResult, 'screenshot'> & { png?: Buffer }> {
+/** Render one page off-screen (optionally running interactive steps); serialized so agents never open many hidden browsers at once. */
+export function previewPage(url: string, o: PreviewRenderOptions): Promise<PreviewHostResult> {
   const run = () => renderOnce(url, o);
   const p = queue.then(run, run);
   queue = p.catch(() => undefined);
   return p;
 }
 
-async function renderOnce(url: string, o: { waitMs: number; width: number; height: number }): Promise<Omit<PreviewResult, 'screenshot'> & { png?: Buffer }> {
+async function renderOnce(url: string, o: PreviewRenderOptions): Promise<PreviewHostResult> {
   const started = Date.now();
   const consoleLines: PreviewResult['console'] = [];
   const failed: string[] = [];
@@ -64,9 +73,11 @@ async function renderOnce(url: string, o: { waitMs: number; width: number; heigh
     width: o.width,
     height: o.height,
     useContentSize: true,
-    webPreferences: { partition: PREVIEW_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true, backgroundThrottling: false, spellcheck: false },
+    // disableDialogs: an alert()/confirm() must never block the hidden browser (the steps also stub them and log the text)
+    webPreferences: { partition: PREVIEW_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false, offscreen: true, backgroundThrottling: false, spellcheck: false, disableDialogs: true },
   });
   const wc = win.webContents;
+  let step = 0;
   wc.setWindowOpenHandler(() => ({ action: 'deny' }));
   wc.on('will-navigate', (e, u) => {
     if (!isAllowedPreviewUrl(u)) e.preventDefault();
@@ -76,13 +87,16 @@ async function renderOnce(url: string, o: { waitMs: number; width: number; heigh
     const levelRaw = ev.level ?? a[1];
     if (/Electron Security Warning/.test(String(ev.message ?? a[2] ?? ''))) return;
     const level = typeof levelRaw === 'number' ? (['verbose', 'info', 'warning', 'error'][levelRaw] ?? 'info') : String(levelRaw ?? 'info');
-    consoleLines.push({ level, message: String(ev.message ?? a[2] ?? '').slice(0, 2000), source: ev.sourceId ?? (a[4] as string | undefined), line: ev.lineNumber ?? (a[3] as number | undefined) });
+    consoleLines.push({ level, message: String(ev.message ?? a[2] ?? '').slice(0, 2000), source: ev.sourceId ?? (a[4] as string | undefined), line: ev.lineNumber ?? (a[3] as number | undefined), ...(step ? { step } : {}) });
   });
   wc.on('did-fail-load', (_e, code, desc, u, isMain) => {
     if (code !== -3) failed.push(`${isMain ? '[主页面] ' : ''}${u} — ${desc} (${code})`);
   });
   const prevSink = blockedSink;
-  blockedSink = (u) => blocked.push(u);
+  // only this window's requests (the editor's preview <webview> shares the partition)
+  blockedSink = (u, id) => {
+    if (id === undefined || id === wc.id) blocked.push(u);
+  };
   let ok = true;
   try {
     await Promise.race([
@@ -93,12 +107,19 @@ async function renderOnce(url: string, o: { waitMs: number; width: number; heigh
       failed.push(`${url} — ${(e as Error).message}`);
     });
     await new Promise((r) => setTimeout(r, o.waitMs));
-    const info = (await wc
-      .executeJavaScript(`(() => ({ title: document.title, text: (document.body && document.body.innerText || '').slice(0, 6000), status: document.readyState }))()`, true)
-      .catch(() => ({ title: '', text: '' }))) as { title: string; text: string };
-    const img = await wc.capturePage().catch(() => null);
-    const png = img && !img.isEmpty() ? img.toPNG() : undefined;
-    return { url, ok: ok && !failed.some((f) => f.startsWith('[主页面]')), title: info.title, text: info.text, console: consoleLines.slice(0, 200), failed, blocked: [...new Set(blocked)], png, width: o.width, height: o.height, loadMs: Date.now() - started };
+    const loaded = ok && !failed.some((f) => f.startsWith('[主页面]'));
+    const capture = async () => {
+      const img = await wc.capturePage();
+      return img.isEmpty() ? null : img.toPNG();
+    };
+    // steps run in this same window: same partition, network policy, navigation guard and denied popups/permissions
+    const io: PreviewIO = { exec: (js) => wc.executeJavaScript(js, true), capture, resize: (w, h) => win.setContentSize(w, h), onStep: (i) => (step = i) };
+    let steps: PreviewHostStep[] | undefined;
+    if (o.actions?.length) steps = loaded ? await runPreviewSteps(o.actions, io) : skippedSteps(o.actions, '未执行（页面加载失败）');
+    const info = (await withTimeout(wc.executeJavaScript(`(() => ({ title: document.title, text: (document.body && document.body.innerText || '').slice(0, 6000), status: document.readyState }))()`, true), 10000).catch(() => ({ title: '', text: '' }))) as { title: string; text: string };
+    const png = (await withTimeout(capture(), 10000).catch(() => null)) ?? undefined;
+    const viewports = o.viewports?.length && loaded ? await captureViewports(o.viewports, io) : undefined;
+    return { url, ok: loaded, title: info.title, text: info.text, console: consoleLines.slice(0, 200), failed, blocked: [...new Set(blocked)], png, width: o.width, height: o.height, loadMs: Date.now() - started, ...(steps ? { steps } : {}), ...(viewports ? { viewports } : {}) };
   } finally {
     blockedSink = prevSink;
     if (!win.isDestroyed()) win.destroy();

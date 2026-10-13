@@ -3,8 +3,11 @@ import { useStore, setUI, closeTab, markDirty, onMenu, getState, toast, type Tab
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { loadMonaco, languageFor, monacoTheme } from '../common/loaders';
-import { takeReveal, onReveal, setProblems, registerSave, saveActiveEditor } from './editorBus';
+import { takeReveal, onReveal, setProblems, registerSave, saveActiveEditor, applyLspDiagnostics, paintLspMarkers, forgetLspDiagnostics } from './editorBus';
 import { PanelView } from '../panels/PanelView';
+import type { PanelId } from '../store';
+
+const PANEL_ICON: Partial<Record<PanelId, string>> = { kanban: 'kanban', monitor: 'monitor', memorials: 'scroll', templates: 'book', officials: 'users', news: 'news', designs: 'layers', sessions: 'message', ceremony: 'flag', debate: 'gavel', audit: 'shield', help: 'help', settings: 'settings' };
 import { askText } from '../common/Prompt';
 import { TaskDetail } from '../panels/TaskDetail';
 import { PreviewView, PREVIEWABLE, openPreview } from './PreviewView';
@@ -58,7 +61,7 @@ export function EditorArea() {
       <div className="tabbar" role="tablist">
         {tabs.map((t) => (
           <div key={t.id} role="tab" aria-selected={t.id === active} className={`tab ${t.id === active ? 'on' : ''} ${t.preview ? 'preview' : ''}`} onClick={() => setUI({ activeTab: t.id })} onDoubleClick={() => setUI((ui) => ({ tabs: ui.tabs.map((x) => (x.id === t.id ? { ...x, preview: false } : x)) }))} onMouseDown={(e) => e.button === 1 && closeTab(t.id)} title={t.path ?? t.title}>
-            <Icon name={t.kind === 'file' ? 'file' : t.kind === 'diff' ? 'diff' : t.kind === 'task' ? 'scroll' : t.kind === 'preview' ? 'globe' : 'layers'} size={13} />
+            <Icon name={t.kind === 'file' ? 'file' : t.kind === 'diff' ? 'diff' : t.kind === 'task' ? 'scroll' : t.kind === 'preview' ? 'globe' : PANEL_ICON[t.panel!] ?? 'layers'} size={13} />
             <span className="tab-title">{t.title}</span>
             {t.dirty ? (
               <span className="tab-dirty">●</span>
@@ -89,6 +92,21 @@ function disposeModel(path: string) {
   if (e) {
     e.model.dispose();
     models.delete(path);
+    forgetLspDiagnostics(path);
+    void call('lspUnwatch', path).catch(() => {});
+  }
+}
+
+type LspWatch = { ok: true; result: { path: string; server: string; diagnostics: Parameters<typeof applyLspDiagnostics>[2] } } | { ok: false; reason: string; message: string };
+
+/** Ask the language server (if one is installed for this file type) to keep diagnostics flowing for an open file. */
+async function watchLsp(path: string) {
+  try {
+    if (!(await call<boolean>('lspHandles', path))) return;
+    const r = await call<LspWatch>('lspWatch', path);
+    if (r.ok) applyLspDiagnostics(path, r.result.server, r.result.diagnostics);
+  } catch {
+    /* language servers are optional */
   }
 }
 
@@ -148,6 +166,8 @@ function FileEditor({ tab }: { tab?: Tab }) {
         entry = { model, saved: model.getAlternativeVersionId(), disk: text };
         models.set(path, entry);
         model.onDidChangeContent(() => markDirty(`file:${path}`, model.getAlternativeVersionId() !== entry!.saved));
+        paintLspMarkers(path);
+        void watchLsp(path);
       }
       const ed = editor.current;
       if (!ed || cancelled) return;

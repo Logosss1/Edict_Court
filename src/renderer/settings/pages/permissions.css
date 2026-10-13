@@ -1,0 +1,48 @@
+/* 权限与审批 — scoped under .permp (display: contents keeps the page's section gap) */
+.permp { display: contents; }
+.permp .sp-sec { padding: 12px 15px 13px; }
+.permp .sp-sec-h { margin-bottom: 10px; }
+.permp-mc { container-type: inline-size; }
+@container (max-width: 600px) { .permp .mode-cards { grid-template-columns: repeat(2, 1fr); } }
+.permp .mode-card { padding: 10px 12px 11px; gap: 5px; min-height: 70px; color: var(--text); }
+.permp .mode-card .d { font-size: 11.5px; }
+.permp .mode-card.on .t { color: var(--acc); }
+.permp .mode-card.warnm .t { color: var(--warn); }
+.permp .mode-card:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.permp-always { display: flex; gap: 6px; align-items: flex-start; margin-top: 9px; font-size: 11.5px; color: var(--muted); line-height: 1.55; }
+.permp-always svg { flex: none; margin-top: 3px; color: var(--jade); }
+.permp-dim { color: var(--warn); }
+
+/* workspace picker (top right of 已允许的操作) */
+.permp-ws { position: relative; display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 8px; border-radius: 6px; border: 1px solid transparent; color: var(--text); font-weight: 600; font-size: 12.5px; cursor: pointer; }
+.permp-ws:hover, .permp-ws:focus-within { border-color: var(--line2); background: var(--bg2); }
+.permp-ws select { appearance: none; -webkit-appearance: none; border: none; background: transparent; font-weight: 600; font-size: 12.5px; padding: 0 2px; outline: none; cursor: pointer; max-width: 220px; color: var(--text); }
+.permp-ws select option { color: var(--text); background: var(--panel); font-weight: 400; }
+.permp-ws svg { color: var(--muted); flex: none; }
+
+/* rules table */
+.permp-tw { container-type: inline-size; }
+.permp-rules { table-layout: fixed; }
+.permp-rules th:nth-child(2) { width: 100px; }
+.permp-rules th:nth-child(3) { width: 30%; }
+.permp-rules th:nth-child(4) { width: 92px; }
+.permp-rules th:nth-child(5) { width: 46px; }
+@container (max-width: 560px) {
+  .permp-rules th:nth-child(4), .permp-rules td:nth-child(4) { display: none; }
+  .permp-rules th:nth-child(3) { width: 34%; }
+}
+.permp-rules th { padding: 5px 8px; }
+.permp-rules td { padding: 7px 8px; }
+.permp-rules tbody tr:hover td { background: color-mix(in srgb, var(--gold) 5%, transparent); }
+.permp-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.permp .permp-what code { margin-right: 2px; background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.permp-src { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.permp-tlink { background: none; border: none; padding: 0; color: var(--text); cursor: pointer; font-size: 12px; }
+.permp-tlink:hover { color: var(--blue); text-decoration: underline; }
+.permp-at { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.permp-act { text-align: right; }
+.permp-act .link { padding: 0; }
+
+.permp-more { display: inline-flex; vertical-align: -2px; margin-left: 2px; color: var(--muted); cursor: help; }
+.permp-more:hover, .permp-more:focus-visible { color: var(--text); outline: none; }
+.permp .warnbox { margin-top: 4px; }

@@ -28,6 +28,8 @@ export interface MockOptions {
   rejectResultTimes?: number;
   failExecTimes?: number; // HTTP 500 for ministry calls N times (tests retry/blocking)
   delayMs?: number;
+  /** per-call SSE chunk delay (overrides delayMs when it returns a number) */
+  delayFor?: (c: MockCall) => number | undefined;
   /** Return an HTTP error for a request (e.g. relay 503 "分组不支持", 400 "unknown parameter reasoning_effort"). */
   reject?: (c: MockCall, body: any) => { status: number; body: string } | undefined;
 }
@@ -57,8 +59,8 @@ export function defaultBrain(opts: MockOptions): Brain {
         text: JSON.stringify({
           summary: u.includes('封驳意见') ? '已按封驳意见补充验收标准。实现 greet 并测试。' : '实现 greet 模块并测试',
           subtasks: [
-            { id: 'S1', title: '实现 greet.js', dept: 'bingbu', detail: '创建 greet.js 导出 greet(name)', acceptance: 'greet("A") 返回 "Hello, A"', dependsOn: [] },
-            { id: 'S2', title: '编写测试', dept: 'xingbu', detail: '创建 greet.test.js', acceptance: '测试可运行', dependsOn: ['S1'] },
+            { id: 'S1', title: '实现 greet.js', dept: 'bingbu', effect: 'write', detail: '创建 greet.js 导出 greet(name)', acceptance: 'greet("A") 返回 "Hello, A"', dependsOn: [] },
+            { id: 'S2', title: '编写测试', dept: 'xingbu', effect: 'verify', detail: '创建 greet.test.js', acceptance: '测试可运行', dependsOn: ['S1'] },
           ],
           risks: ['无'],
         }),
@@ -186,7 +188,7 @@ export async function startMockLlm(opts: MockOptions = {}) {
         return res.end('{"error":{"message":"mock upstream failure"}}');
       }
       const r = brain({ ...call, messages, toolResults });
-      const delay = opts.delayMs ?? 0;
+      const delay = opts.delayFor?.(call) ?? opts.delayMs ?? 0;
       const usage = { in: 100 + system.length / 4, out: 20 + (r.text?.length ?? 0) / 4 };
       if (protocol === 'openai-chat') {
         const ev: { data: unknown }[] = [];

@@ -1,15 +1,16 @@
 import { useEffect, useState, lazy, Suspense, Component, type ReactNode } from 'react';
-import { useStore, setUI, onMenu, getState, openPanel, toast, dismissToast } from './store';
+import { useStore, setUI, onMenu, getState, openPanel, openSettings, toast, dismissToast } from './store';
 import { call, isMac } from './api';
 import { Icon } from './common/Icon';
 import { TipLayer } from './common/Tip';
 import { fmtCost, fmtTokens, usageTokens } from './common/format';
 import { Workbench } from './workbench/Workbench';
 import { ApprovalsDock } from './workbench/Approvals';
+import { WorktreeDialogHost } from './workbench/WorktreeDialog';
 import { CommandPalette } from './workbench/CommandPalette';
 import { CeremonyOverlay } from './panels/Ceremony';
 import { PromptHost } from './common/Prompt';
-import type { CourtScene } from './store';
+import type { CourtScene, SettingsSection } from './store';
 
 const CourtMode = lazy(() => import('./court/CourtMode').then((m) => ({ default: m.CourtMode })));
 
@@ -42,6 +43,9 @@ export function App() {
             break;
           case 'open-panel':
             openPanel(arg as never);
+            break;
+          case 'open-settings':
+            openSettings(arg as SettingsSection | undefined);
             break;
           case 'toggle-terminal':
             setUI({ bottomOpen: !(ui.bottomOpen && ui.bottomTab === 'terminal'), bottomTab: 'terminal', mode: 'workbench' });
@@ -91,6 +95,7 @@ export function App() {
       <TipLayer />
       <CommandPalette />
       <CeremonyOverlay />
+      <WorktreeDialogHost />
       <PromptHost />
     </div>
   );
@@ -142,7 +147,7 @@ function TitleBar() {
         <button className="icon-btn" title="切换主题" onClick={() => call('updateSettings', { theme: theme === 'dark' ? 'light' : theme === 'light' ? 'system' : 'dark' })}>
           <Icon name={theme === 'light' ? 'sparkles' : 'eye'} size={15} />
         </button>
-        <button className="icon-btn" title="模型配置（⌘,）" onClick={() => openPanel('models')}>
+        <button className="icon-btn" title="设置（⌘,）" onClick={() => openSettings()} data-testid="tb-settings">
           <Icon name="settings" size={15} />
         </button>
       </div>

@@ -1,0 +1,156 @@
+/* 技能 page (settings center): officials on the left, skill cards with on/off switches on the right. Scoped under .skp */
+.skp { height: 100%; min-height: 0; min-width: 0; }
+/* the container lives on .skp-body, not .skp: containment would trap the fixed-position dialogs */
+.skp-body { display: flex; height: 100%; min-height: 0; min-width: 0; container-type: inline-size; }
+.skp .grow { flex: 1; }
+
+/* left column */
+.skp-side { width: 196px; flex: none; border-right: 1px solid var(--line); background: color-mix(in srgb, var(--bg2) 45%, var(--bg)); padding: 10px 8px 14px; display: flex; flex-direction: column; gap: 1px; overflow-y: auto; }
+.skp-side .sn-search { margin: 0 0 4px; }
+.skp-g { font-size: 10.5px; color: var(--muted); letter-spacing: 1px; padding: 9px 9px 3px; }
+.skp-i { display: flex; align-items: center; gap: 8px; padding: 5px 9px; border-radius: 6px; font-size: 12.5px; color: var(--text); border: none; background: transparent; cursor: pointer; text-align: left; width: 100%; min-height: 28px; }
+.skp-i:hover { background: var(--bg3); }
+.skp-i.on { background: color-mix(in srgb, var(--acc) 10%, transparent); color: var(--acc); font-weight: 600; }
+.skp-i svg { flex: none; color: var(--muted); }
+.skp-i.on svg { color: currentColor; }
+.skp-i .e { font-size: 13px; width: 18px; text-align: center; flex: none; }
+.skp-i .c { margin-left: auto; font-size: 10.5px; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; flex: none; }
+.skp-i .c .x { color: var(--jade); font-weight: 600; }
+.skp-i .c.blue { color: var(--blue); font-weight: 600; }
+
+/* main column */
+.skp-main { flex: 1; min-width: 0; overflow-y: auto; }
+.skp-pane { padding: 14px 20px 32px; display: flex; flex-direction: column; gap: 11px; max-width: 1180px; }
+.skp-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; row-gap: 8px; }
+.skp-head h2 { margin: 0; font-size: 17px; display: flex; gap: 8px; align-items: center; letter-spacing: .5px; white-space: nowrap; }
+.skp-head h2 .emo { font-size: 18px; }
+.skp-head .duty-t { max-width: 240px; }
+.skp-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: -1px; }
+.skp .fchip { font-size: 12px; height: 23px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line2); color: var(--muted); background: transparent; display: inline-flex; gap: 5px; align-items: center; cursor: pointer; white-space: nowrap; }
+.skp .fchip:hover { border-color: var(--gold); color: var(--text); }
+.skp .fchip.on { color: var(--acc); border-color: color-mix(in srgb, var(--acc) 55%, transparent); background: color-mix(in srgb, var(--acc) 7%, transparent); font-weight: 600; }
+.skp-note { margin-top: -4px; line-height: 1.6; }
+.skp-lane { display: flex; align-items: baseline; gap: 7px; font-size: 13px; margin: 3px 0 -4px; flex-wrap: wrap; }
+.skp-lane > b { font-weight: 650; }
+.skp-lane > .muted { font-size: 11.5px; }
+.skp-foot { line-height: 1.6; }
+.skp-empty { display: flex; align-items: center; gap: 4px; }
+
+/* duty box */
+.skp-duty { background: color-mix(in srgb, var(--gold) 6%, var(--panel)); border: 1px solid color-mix(in srgb, var(--gold) 35%, transparent); border-radius: 10px; padding: 9px 12px 10px; }
+.skp-duty .h { display: flex; gap: 7px; align-items: center; font-size: 12.5px; margin-bottom: 7px; min-width: 0; }
+.skp-duty .h > b, .skp-duty .h > .link { font-weight: 650; white-space: nowrap; flex: none; }
+.skp-duty .h > .link { font-weight: 400; }
+.skp-duty .h .muted { font-size: 11px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skp-duty .h svg { flex: none; }
+.skp-duty .h svg { color: var(--gold); }
+.skp-duty .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.skp .dchip { display: inline-flex; gap: 5px; align-items: center; font-size: 12px; height: 26px; padding: 0 9px; border-radius: 7px; background: var(--panel); border: 1px solid var(--line2); color: var(--text); cursor: pointer; white-space: nowrap; }
+.skp .dchip:hover { border-color: var(--gold); }
+.skp .dchip .muted { font-size: 11px; }
+.skp .dchip .lk { color: var(--gold); opacity: .8; }
+.skp .dchip.off { opacity: .55; }
+.skp .dchip.off .lk { color: var(--muted); }
+
+.skp-adj { display: flex; flex-direction: column; gap: 2px; }
+.skp-adj .adj-row { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-top: 1px dashed color-mix(in srgb, var(--gold) 30%, transparent); flex-wrap: wrap; }
+.skp-adj .adj-row:first-child { border-top: none; }
+.skp-adj .adj-nm { width: 220px; flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; overflow: hidden; }
+.skp-adj .adj-nm .muted { font-size: 11px; }
+.skp-adj .adj-add { display: flex; align-items: center; gap: 10px; padding-top: 7px; border-top: 1px dashed color-mix(in srgb, var(--gold) 30%, transparent); flex-wrap: wrap; }
+.skp-adj .adj-add select { max-width: 320px; }
+
+/* official chips (duty / equip pickers) */
+.skp .ochips { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.skp .ochip { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 7px; border-radius: 999px; border: 1px solid var(--line2); background: transparent; color: var(--muted); font-size: 11.5px; cursor: pointer; white-space: nowrap; }
+.skp .ochip span { font-size: 11px; filter: grayscale(.9); opacity: .7; }
+.skp .ochip:hover { border-color: var(--gold); color: var(--text); }
+.skp .ochip.on { color: var(--jade); border-color: color-mix(in srgb, var(--jade) 55%, transparent); background: color-mix(in srgb, var(--jade) 10%, transparent); font-weight: 600; }
+.skp .ochip.on span { filter: none; opacity: 1; }
+.skp .ochip.hl { box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold) 60%, transparent); }
+.skp .ochip.locked { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 45%, transparent); background: color-mix(in srgb, var(--gold) 8%, transparent); cursor: default; }
+.skp .ochip:disabled { opacity: 1; }
+.skp-pick { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+.skp-pick .ochips { display: contents; }
+
+/* skill glyph (emoji or puzzle icon) */
+.skp .glyph { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; font-size: 17px; line-height: 1; background: var(--bg3); flex: none; color: var(--muted); }
+.skp .glyph.sm { width: auto; height: auto; background: none; font-size: 12.5px; border-radius: 0; }
+.skp .glyph.big { width: 42px; height: 42px; font-size: 22px; border-radius: 10px; }
+
+/* extension cards */
+.skx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(258px, 1fr)); gap: 10px; }
+.skx { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 11px 8px; display: flex; flex-direction: column; gap: 6px; min-width: 0; transition: border-color .15s, box-shadow .15s; }
+.skx:hover { border-color: var(--line2); }
+.skx.on { border-color: color-mix(in srgb, var(--jade) 50%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--jade) 12%, transparent) inset; }
+.skx.disabled { background: color-mix(in srgb, var(--panel) 55%, var(--bg)); }
+.skx.fresh { animation: skp-fresh 2.4s ease-out; }
+@keyframes skp-fresh { 0%, 35% { box-shadow: 0 0 0 2px color-mix(in srgb, var(--gold) 70%, transparent); } 100% { box-shadow: 0 0 0 0 transparent; } }
+.skx.disabled .glyph, .skx.disabled .nm, .skx.disabled .ds { opacity: .6; }
+.skx .h { display: flex; gap: 8px; align-items: flex-start; min-width: 0; }
+.skx .nm { flex: 1; min-width: 0; display: flex; flex-direction: column; text-align: left; border: none; background: transparent; padding: 0; color: var(--text); cursor: pointer; line-height: 1.3; }
+.skx .nm b { font-weight: 650; font-size: 12.5px; }
+.skx .nm:hover b { color: var(--acc); }
+.skx .nm .mono { font-size: 11px; }
+.skx .h .tog { margin-top: 2px; }
+.skx .ds { font-size: 11.5px; color: var(--muted); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; min-height: 33px; }
+.skx .who { font-size: 11px; color: var(--text); display: flex; gap: 8px; align-items: center; min-width: 0; }
+.skx .who svg { color: var(--gold); vertical-align: -1px; }
+.skx .who .ex { color: var(--jade); }
+.skx .who .err { color: var(--danger); }
+.skx .who .upd-t { color: var(--blue); font-weight: 600; }
+.skx .who .ok-t { color: var(--ok); }
+.skx .ft { display: flex; gap: 5px; align-items: center; font-size: 10.5px; color: var(--muted); min-height: 22px; flex-wrap: wrap; }
+.skx .ft .link { font-size: 11px; padding: 0 2px; }
+.skx .ft .link.strong { font-weight: 600; }
+.skx .icon-btn.sm { width: 22px; height: 22px; }
+.skx .icon-btn.danger:hover { color: var(--danger); }
+.skp .tag { font-size: 10.5px; line-height: 17px; padding: 0 6px; border-radius: 4px; background: var(--bg3); color: var(--muted); white-space: nowrap; }
+.skp .tag.risk { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+.skp .tag.upd { color: var(--blue); background: color-mix(in srgb, var(--blue) 12%, transparent); }
+
+.skp-deleted { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.skp-deleted .dchip { height: 24px; font-size: 11.5px; border-style: dashed; }
+
+/* 官员实际获得的能力 */
+.skp-viewer .sp-sec-h { margin-bottom: 6px; }
+.skp-viewer .sp-sec-h svg { color: var(--muted); }
+.skp-viewer .sp-sec-h > .muted { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skp-pre { white-space: pre-wrap; font: 11.5px/1.55 var(--mono); background: var(--bg); border: 1px solid var(--line); padding: 9px 11px; border-radius: 8px; max-height: 360px; overflow: auto; margin: 0 0 8px; user-select: text; }
+.skp-mcp { display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+.skp-mcp code { font-size: 11px; background: var(--bg2); border: 1px solid var(--line); padding: 0 6px; border-radius: 4px; }
+
+/* dialogs (detail / editor / add from link) */
+.skp-backdrop { z-index: 390; }
+.skp-modal { width: 560px; max-width: calc(100vw - 48px); max-height: calc(100vh - 80px); overflow-y: auto; background: var(--panel); border: 1px solid var(--line2); border-radius: 12px; box-shadow: var(--shadow); padding: 14px 18px 14px; display: flex; flex-direction: column; gap: 10px; }
+.skp-modal.wide { width: 760px; }
+.skp-modal-h { display: flex; align-items: center; gap: 8px; font-size: 14px; margin: -2px -6px -2px 0; }
+.skp-modal-h b { font-weight: 650; }
+.skp-modal .warnbox { margin: 0; }
+.skd-head { display: flex; align-items: center; gap: 11px; }
+.skd-t { display: flex; flex-direction: column; min-width: 0; }
+.skd-t h3 { margin: 0; font-size: 16px; font-weight: 700; }
+.skd-t .mono { font-size: 11.5px; }
+.skd-tags { display: flex; gap: 5px; flex-wrap: wrap; }
+.skd-desc { margin: 0; font-size: 12.5px; line-height: 1.6; }
+.skd-src .mono { user-select: text; word-break: break-all; }
+.skd-sec { display: flex; flex-direction: column; gap: 5px; padding-top: 8px; border-top: 1px solid var(--line); }
+.skd-sec .k, .skd-body .k { font-size: 12px; font-weight: 600; display: flex; gap: 5px; align-items: center; }
+.skd-sec .k .muted, .skd-body .k .muted { font-weight: 400; font-size: 11px; }
+.skd-sec .k svg { color: var(--gold); }
+.skd-body { display: flex; flex-direction: column; gap: 5px; padding-top: 8px; border-top: 1px solid var(--line); }
+.skd-body pre { white-space: pre-wrap; font: 11.5px/1.55 var(--mono); background: var(--bg); border: 1px solid var(--line); padding: 9px 11px; border-radius: 8px; max-height: 300px; overflow: auto; margin: 0; user-select: text; }
+.skd-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding-top: 2px; }
+.skp-form { grid-template-columns: 84px 1fr; }
+.skp-form > label { align-self: center; }
+.skp-modal .skill-body { margin: 0; min-height: 220px; }
+
+/* narrow editor area (file tree + 下旨 pane open): slimmer official column, single-column cards */
+@container (max-width: 760px) {
+  .skp-side { width: 150px; padding: 8px 6px 12px; }
+  .skp-i { gap: 6px; padding: 5px 7px; font-size: 12px; }
+  .skp-g { padding: 8px 7px 3px; }
+  .skp-pane { padding: 12px 14px 28px; }
+  .skx-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+  .skp-adj .adj-nm { width: 100%; }
+}

@@ -3,11 +3,13 @@
 import type { Activity, AgentId, ModelRef, RunNode, Session, Task } from '../../shared/types';
 import { AGENT_MAP, agentName } from '../../shared/court';
 import type { LlmMessage, LlmResult, ToolSpec } from '../llm/types';
-import { classifyLlmError, LlmCallError } from '../llm/types';
+import { backoffMs, classifyLlmError, LlmCallError, LlmHttpError } from '../llm/types';
 import { reasoningParams, levelLabel } from '../../shared/reasoning';
 import { streamLlm } from '../llm/adapters';
 import { SOULS } from './souls';
 import { executeTool, describeToolCall, TOOL_SPECS, type ToolName } from './tools';
+import { mcpResourceToolSpecsFor } from '../mcp/resourceTools';
+import { skillRole } from '../../shared/skills';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { estimateTokens, sleep, truncate, uid, redactSecrets } from './util';
 
@@ -47,15 +49,22 @@ export interface AgentRunResult {
   model: ModelRef;
   runId: string;
   steps: number;
+  /** tool calls actually executed in this run, by tool name; `<name>:failed` counts the calls that returned ok: false */
+  toolCounts: Record<string, number>;
 }
 
 export function systemPromptFor(rt: Runtime, agentId: AgentId, role?: RoleRun): string {
-  const skills = rt.skills.filter((s) => s.enabled !== false && (s.agents === 'all' || s.agents.includes(agentId)));
-  const skillIdx = skills.length ? `\n\n可用技能（需要时用 load_skill 加载全文）：\n${skills.map((s) => `- ${s.name}：${s.description}`).join('\n')}` : '';
-  return (role ? role.prompt : SOULS[agentId]) + skillIdx;
+  const duty = rt.skills.filter((s) => skillRole(s, agentId) === 'duty');
+  const extra = rt.skills.filter((s) => skillRole(s, agentId) === 'extra');
+  const line = (s: (typeof duty)[number]) => `- ${s.name}${s.title ? `（${s.title}）` : ''}：${s.description}`;
+  const parts = [
+    duty.length ? `职责技能（你的本职，做相关工作时先用 load_skill 加载全文照做）：\n${duty.map(line).join('\n')}` : '',
+    extra.length ? `已配备的其他技能（需要时用 load_skill 加载全文）：\n${extra.map(line).join('\n')}` : '',
+  ].filter(Boolean);
+  return (role ? role.prompt : SOULS[agentId]) + (parts.length ? `\n\n${parts.join('\n\n')}` : '');
 }
 
-const msgTokens = (ms: LlmMessage[]) => ms.reduce((n, m) => n + estimateTokens(m.content) + (m.toolCalls ? estimateTokens(JSON.stringify(m.toolCalls.map((t) => t.args))) : 0) + 4, 0);
+export const msgTokens = (ms: LlmMessage[]) => ms.reduce((n, m) => n + estimateTokens(m.content) + (m.toolCalls ? estimateTokens(JSON.stringify(m.toolCalls.map((t) => t.args))) : 0) + 4, 0);
 
 function isAbort(e: unknown, signal?: AbortSignal) {
   return signal?.aborted || (e as Error)?.name === 'AbortError' || e instanceof TaskAbortedError;
@@ -80,7 +89,7 @@ function effortRequest(o: AgentRunOptions, model: ModelRef, withEffort: boolean)
 async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, messages: LlmMessage[], tools: ToolSpec[] | undefined, acts: { thinking?: Activity; text?: Activity }, useEffort = true): Promise<LlmResult> {
   const { rt, agentId, task, node } = o;
   const provider = rt.providerRuntime(model.providerId);
-  const signal = o.signal ?? (task ? rt.controller(task.id).signal : undefined);
+  const signal = o.signal ?? (task ? rt.signalFor(task.id, node?.id) : undefined);
   let lastErr: unknown;
   let withEffort = useEffort;
   let paramFallback = false;
@@ -144,9 +153,10 @@ async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, mess
         continue;
       }
       if (!info.retryable || attempt === 2) break;
-      const wait = attempt === 0 ? 2000 : 6000;
-      rt.activity('log', `模型调用失败，${wait / 1000}s 后重试（第 ${attempt + 2} 次）：${redactSecrets(info.hint)} ${redactSecrets(info.raw).slice(0, 160)}`, { taskId: task?.id, agentId, nodeId: node?.id });
-      await sleep(wait);
+      const told = e instanceof LlmHttpError ? e.retryAfterMs : undefined;
+      const wait = backoffMs(attempt, told);
+      rt.activity('log', `模型调用失败，${Math.round(wait / 100) / 10}s 后重试（第 ${attempt + 2} 次${told !== undefined ? '，按服务要求的等待时间' : ''}）：${redactSecrets(info.hint)} ${redactSecrets(info.raw).slice(0, 160)}`, { taskId: task?.id, agentId, nodeId: node?.id });
+      await abortableSleep(wait, signal);
     }
   }
   const info = classifyLlmError(lastErr);
@@ -156,13 +166,54 @@ async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, mess
   });
 }
 
-async function maybeCompress(o: AgentRunOptions, model: ModelRef, messages: LlmMessage[]): Promise<LlmMessage[]> {
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms).then(() => undefined);
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) return reject(new TaskAbortedError());
+    const t = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(t);
+      reject(new TaskAbortedError());
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+const contextWindow = (rt: Runtime, model: ModelRef) => Math.min(rt.modelInfo(model)?.contextWindow ?? 128_000, rt.settings.contextWindowTokens);
+
+const PRUNE_MARK = '[已裁剪]';
+
+/**
+ * Cheap first line of defence before LLM compression: once the conversation passes `budget` tokens,
+ * shorten all but the newest `keep` tool results (skill text is never pruned; command output keeps
+ * its header and tail, other tools keep their head).
+ */
+export function pruneToolResults(messages: LlmMessage[], budget: number, keep = 8): { messages: LlmMessage[]; pruned: number } {
+  if (msgTokens(messages) < budget) return { messages, pruned: 0 };
+  const toolIdx = messages.flatMap((m, i) => (m.role === 'tool' ? [i] : []));
+  const protect = new Set(toolIdx.slice(-keep));
+  let pruned = 0;
+  const out = messages.map((m, i) => {
+    if (m.role !== 'tool' || protect.has(i) || m.toolName === 'load_skill' || m.content.startsWith(PRUNE_MARK) || m.content.length <= 800) return m;
+    pruned++;
+    const note = `${PRUNE_MARK} 较早的 ${m.toolName ?? '工具'} 结果已省略以节省上下文（原 ${m.content.length} 字符），需要时请重新调用。`;
+    if (m.toolName === 'run_command') {
+      const head = m.content.split('\n').slice(0, 2).join('\n');
+      return { ...m, content: `${note}\n${head}\n…末尾：\n${m.content.slice(-1500)}` };
+    }
+    return { ...m, content: `${note}\n开头：\n${m.content.slice(0, 400)}` };
+  });
+  return { messages: out, pruned };
+}
+
+async function maybeCompress(o: AgentRunOptions, model: ModelRef, messages: LlmMessage[], force = false): Promise<LlmMessage[]> {
   const { rt } = o;
-  const info = rt.modelInfo(model);
-  const window = Math.min(info?.contextWindow ?? 128_000, rt.settings.contextWindowTokens);
-  const threshold = Math.floor(window * 0.6);
-  if (msgTokens(messages) < threshold || messages.length < 8) return messages;
-  let cut = messages.length - 6;
+  const threshold = Math.floor(contextWindow(rt, model) * 0.6);
+  if (force ? messages.length < 4 : msgTokens(messages) < threshold || messages.length < 8) return messages;
+  let cut = messages.length - (force ? 2 : 6);
   while (cut > 1 && messages[cut].role === 'tool') cut--;
   const head = messages[0];
   const middle = messages.slice(1, cut);
@@ -226,7 +277,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
       // only routed economy-class models are swapped; the main model the emperor picked fails visibly with its error card
       const economy = (role ? role.modelClass : AGENT_MAP[agentId]?.modelClass) === 'economy' && agentId !== 'solo';
       const fb = e instanceof LlmCallError && e.info.kind === 'config' && economy && !o.model && !switched ? rt.fallbackModel(model, task) : null;
-      if (!fb) throw e;
+      if (!fb || !(e instanceof LlmCallError)) throw e;
       switched = true;
       const bad = model;
       rt.badModels.add(`${bad.providerId}/${bad.model}`);
@@ -242,10 +293,10 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
     }
   };
   // built-in tools + MCP tools granted to this agent (read-only toolsets only see MCP tools marked read)
-  const tools = o.tools?.length ? [...o.tools.map((t) => TOOL_SPECS[t]), ...rt.mcp.toolSpecsFor(agentId, !o.tools.includes('write_file'))] : undefined;
+  const tools = o.tools?.length ? [...o.tools.map((t) => TOOL_SPECS[t]), ...rt.mcp.toolSpecsFor(agentId, !o.tools.includes('write_file')), ...mcpResourceToolSpecsFor(rt, agentId)] : undefined;
   let messages: LlmMessage[] = [...(o.history ?? []), { role: 'user', content: o.prompt }];
   const maxSteps = o.maxSteps ?? (tools ? 24 : 1);
-  const signal = o.signal ?? (task ? rt.controller(task.id).signal : undefined);
+  const signal = o.signal ?? (task ? rt.signalFor(task.id, node?.id) : undefined);
   const busy = rt.agents.get(agentId);
   if (busy && busy.status !== 'idle' && busy.taskId !== task?.id) {
     if (!role) rt.activity('log', `${agentName(agentId)} 正在处理其他事务，排队等候`, { taskId: task?.id, agentId, nodeId: node?.id });
@@ -256,9 +307,30 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
   let finalText = '';
   let steps = 0;
   let pendingResp: ReturnType<Runtime['pendingAnnotations']> | null = null;
+  // files read during this run (read-before-overwrite guard)
+  const reads = new Map<string, string>();
+  // identical consecutive tool calls (doom-loop guard)
+  const loop = { sig: '', streak: 0 };
+  const toolCounts: Record<string, number> = {};
+  // the conversation outgrew the model's context: prune hard, compress, try once more
+  let contextRetried = false;
+  const llmFit = async () => {
+    try {
+      return await llm(messages);
+    } catch (e) {
+      if (!(e instanceof LlmCallError) || e.info.kind !== 'context' || contextRetried) throw e;
+      contextRetried = true;
+      messages = pruneToolResults(messages, 0, 3).messages;
+      messages = await maybeCompress(o, model, messages, true);
+      rt.activity('log', `对话超出 ${model.model} 的上下文长度，已裁剪旧工具结果并压缩上下文后重试。`, { taskId: task?.id, agentId, nodeId: node?.id });
+      rt.audit.record('system', 'context_overflow', { agentId, model: model.model }, task?.id);
+      return await llm(messages);
+    }
+  };
   try {
     for (; steps < maxSteps; steps++) {
       await rt.checkpoint(task, agentId);
+      if (signal?.aborted) throw new TaskAbortedError();
       const anns = rt.pendingAnnotations(agentId, task?.id);
       if (anns.length) {
         messages.push({ role: 'user', content: `【皇上朱批】\n${anns.map((a) => `- ${a.text}`).join('\n')}\n请在本次回复开头明确回应朱批（写明将如何调整），然后继续工作。` });
@@ -266,8 +338,13 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
         pendingResp = [...(pendingResp ?? []), ...anns];
         rt.activity('annotation', `${agentName(agentId)} 已接阅朱批 ${anns.length} 条`, { taskId: task?.id, agentId, nodeId: node?.id });
       }
+      const pr = pruneToolResults(messages, Math.floor(contextWindow(rt, model) * 0.4));
+      if (pr.pruned) {
+        messages = pr.messages;
+        rt.audit.record('system', 'tool_results_pruned', { agentId, count: pr.pruned }, task?.id);
+      }
       messages = await maybeCompress(o, model, messages);
-      const r = await llm(messages);
+      const r = await llmFit();
       if (pendingResp) {
         const resp = r.text.trim() || (r.toolCalls.length ? `（已阅朱批，随即调用：${r.toolCalls.map((t) => describeToolCall(t.name, t.args)).join('；')}）` : '（已阅）');
         rt.respondAnnotations(pendingResp, resp);
@@ -280,25 +357,32 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
         break;
       }
       messages.push({ role: 'assistant', content: r.text, toolCalls: calls, reasoning: r.reasoning || undefined });
-      for (const call of calls) {
+      const ctx = { rt, task, node, agentId, signal: task ? rt.signalFor(task.id, node?.id) : undefined, reads };
+      for (const batch of toolBatches(calls)) {
         await rt.checkpoint(task, agentId);
-        const desc = describeToolCall(call.name, call.args);
-        rt.setAgent(agentId, { status: 'tool', activity: desc });
-        const callAct = rt.activity('tool_call', desc, { taskId: task?.id, agentId, nodeId: node?.id, data: { name: call.name, args: sanitizeArgs(call.args) } });
-        const res = await executeTool({ rt, task, node, agentId, signal: task ? rt.controller(task.id).signal : undefined }, call.name, call.args);
+        const descs = batch.map((c) => describeToolCall(c.name, c.args));
+        rt.setAgent(agentId, { status: 'tool', activity: batch.length > 1 ? `${descs[0]} 等 ${batch.length} 项（并行读取）` : descs[0] });
+        const acts = batch.map((call, i) => rt.activity('tool_call', descs[i], { taskId: task?.id, agentId, nodeId: node?.id, data: { name: call.name, args: sanitizeArgs(call.args) } }));
+        const streaks = batch.map((call) => trackLoop(loop, call.name, call.args));
+        const results = await Promise.all(batch.map((call, i) => runToolGuarded(ctx, call.name, call.args, streaks[i], descs[i], () => (loop.streak = 0))));
         rt.heartbeat(agentId, task?.id);
-        rt.activity('tool_result', truncate(res.output, 5000), { taskId: task?.id, agentId, nodeId: node?.id, data: { ok: res.ok, name: call.name, callId: callAct.id } });
-        messages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: truncate(res.output, 12000) });
+        batch.forEach((call, i) => {
+          const res = results[i];
+          toolCounts[call.name] = (toolCounts[call.name] ?? 0) + 1;
+          if (!res.ok) toolCounts[`${call.name}:failed`] = (toolCounts[`${call.name}:failed`] ?? 0) + 1;
+          rt.activity('tool_result', truncate(res.output, 5000), { taskId: task?.id, agentId, nodeId: node?.id, data: { ok: res.ok, name: call.name, callId: acts[i].id } });
+          messages.push({ role: 'tool', toolCallId: call.id, toolName: call.name, content: truncate(res.output, 12000) });
+        });
       }
     }
     if (!finalText && steps >= maxSteps && tools) {
       messages.push({ role: 'user', content: '已达到本轮工具调用步数上限。请不要再调用工具，直接给出最终结论（按要求的格式）。' });
-      const r = await llm(messages);
+      const r = await llmFit();
       messages.push({ role: 'assistant', content: r.text });
       finalText = r.text;
     }
     rt.audit.record(agentId, 'run_end', { runId, exit: 'ok', steps }, task?.id);
-    return { text: finalText, messages, model, runId, steps };
+    return { text: finalText, messages, model, runId, steps, toolCounts };
   } catch (e) {
     const aborted = e instanceof TaskAbortedError;
     rt.audit.record(agentId, 'run_end', { runId, exit: aborted ? 'cancelled' : 'error', error: redactSecrets(String((e as Error).message)).slice(0, 300) }, task?.id);
@@ -311,6 +395,54 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
     rt.setAgent(agentId, { status: 'idle', activity: '', taskId: undefined, nodeId: undefined });
     release();
   }
+}
+
+/** Built-in tools that only read: consecutive calls to these run concurrently within one step. */
+const PARALLEL_SAFE = new Set<string>(['list_dir', 'read_file', 'search', 'outline', 'load_skill', 'view_changes', 'lsp', 'mcp_list_resources', 'mcp_read_resource']);
+
+/** Split one step's tool calls into batches: runs of read-only built-ins together, everything else alone, order kept. */
+export function toolBatches<T extends { name: string }>(calls: T[]): T[][] {
+  const out: T[][] = [];
+  for (const c of calls) {
+    const last = out[out.length - 1];
+    if (last && PARALLEL_SAFE.has(c.name) && PARALLEL_SAFE.has(last[0].name)) last.push(c);
+    else out.push([c]);
+  }
+  return out;
+}
+
+const DOOM_WARN = 3;
+const DOOM_ASK = 4;
+
+/** Count identical consecutive calls (same tool, same arguments); returns the current streak. */
+export function trackLoop(loop: { sig: string; streak: number }, name: string, args: Record<string, unknown>): number {
+  const sig = `${name}:${stableJson(args)}`;
+  if (sig === loop.sig) loop.streak++;
+  else {
+    loop.sig = sig;
+    loop.streak = 1;
+  }
+  return loop.streak;
+}
+
+function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(',')}]`;
+  if (v && typeof v === 'object') return `{${Object.keys(v as object).sort().map((k) => `${JSON.stringify(k)}:${stableJson((v as Record<string, unknown>)[k])}`).join(',')}}`;
+  return JSON.stringify(v) ?? 'null';
+}
+
+/** executeTool plus the doom-loop guard: warn on the 3rd identical call, ask the emperor from the 4th. */
+async function runToolGuarded(ctx: Parameters<typeof executeTool>[0], name: string, args: Record<string, unknown>, streak: number, desc: string, resetLoop: () => void): Promise<{ ok: boolean; output: string }> {
+  const { rt, task, agentId, node } = ctx;
+  if (streak >= DOOM_ASK) {
+    rt.audit.record(agentId, 'doom_loop', { tool: name, streak }, task?.id);
+    const ok = await rt.requestApproval({ kind: 'loop', taskId: task?.id, agentId, nodeId: node?.id, tool: name, summary: `疑似死循环：${desc}`, detail: `${agentName(agentId)} 已连续 ${streak} 次用相同参数调用 ${name}，结果大概率不会变化。\n准许则继续执行这一次；驳回则让它换个做法或直接给出结论。\n\n参数：\n${truncate(JSON.stringify(args, null, 2), 2000)}`, risk: 'normal', reason: '疑似死循环' });
+    if (!ok) return { ok: false, output: '皇上叫停了这次重复调用。不要再用相同参数重复调用，请换一种做法；做不下去就直接给出结论，说明卡在哪里。' };
+    resetLoop();
+  }
+  const res = await executeTool(ctx, name, args);
+  if (streak === DOOM_WARN) return { ...res, output: `${res.output}\n\n【系统提示】你已连续 ${streak} 次用相同参数调用 ${name}，结果不会因此改变。请换一种做法，或直接给出结论。` };
+  return res;
 }
 
 function sanitizeArgs(args: Record<string, unknown>): Record<string, unknown> {

@@ -1,0 +1,26 @@
+/* 存储与备份 — scoped under .storp (display: contents keeps the page's section gap) */
+.storp { display: contents; }
+.storp .sp-sec { padding: 12px 15px 13px; }
+.storp .sp-sec-h { margin-bottom: 10px; }
+.storp-tiles { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.storp-tiles .stat-tile .v { font-size: 20px; }
+.storp-path { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; font-size: 11px; background: color-mix(in srgb, var(--text) 8%, transparent); padding: 1px 6px; border-radius: 4px; color: var(--text); user-select: text; }
+.storp .sp-row-l code { font-size: 10.5px; background: color-mix(in srgb, var(--text) 8%, transparent); padding: 0 4px; border-radius: 3px; color: var(--text); }
+.storp-size { font-size: 12.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.storp-tag { font-size: 10.5px; font-weight: 600; padding: 0 6px; border-radius: 4px; margin-left: 4px; color: var(--jade); background: color-mix(in srgb, var(--jade) 12%, transparent); }
+.storp-tag.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 13%, transparent); }
+.storp-tbl th:nth-child(2), .storp-tbl th:nth-child(3) { width: 110px; }
+.storp-tbl th:nth-child(4) { width: 110px; }
+.storp-tbl td { padding: 6px 6px; }
+.storp .storp-tbl code { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.storp-num { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.storp-act { text-align: right; white-space: nowrap; }
+.storp-act .link { padding: 0; }
+.storp-howto { display: flex; gap: 6px; align-items: flex-start; margin-top: 10px; font-size: 11.5px; color: var(--muted); line-height: 1.55; }
+.storp-howto svg, .storp-sec svg { flex: none; margin-top: 3px; }
+.storp-sec { list-style: none; margin: 0 0 2px; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.55; }
+.storp-sec li { display: flex; gap: 7px; align-items: flex-start; }
+.storp-sec li svg { color: var(--muted); }
+.storp-sec li.bad { color: var(--danger); }
+.storp-sec li.bad svg { color: var(--danger); }
+.storp .warnbox { margin-top: 8px; }

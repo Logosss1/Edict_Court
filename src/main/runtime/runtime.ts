@@ -1,23 +1,30 @@
 // Edict runtime: owns every task, agent, debate, approval and audit record. Both the
 // workbench and the pixel court are projections of this single state (bidirectional sync
 // = both send commands here and both render the same events).
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
-  Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
-  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, PreviewResult, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo,
+  Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, Plan,
+  ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo, RevertResult,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENTS, AGENT_MAP, STATE_LABEL, agentName, TERMINAL } from '../../shared/court';
-import { AuditLog, BlobStore, JsonFile, JsonlLog } from './persist';
+import { AuditLog, BlobStore, JsonlLog } from './persist';
+import { openStateStore, type DocKind, type PersistedSettingsLike, type PersistedStateLike, type SqliteStore } from './sqliteStore';
 import { assertTransition, IllegalTransitionError } from './stateMachine';
-import { addUsage, estimateTokens, now, sha256, uid, ymd, redactSecrets } from './util';
+import { addUsage, estimateTokens, now, sha256, uid, ymd, redactSecrets, truncate } from './util';
 import { defaultSettings, TEMPLATES } from './defaults';
 import { DETECT_CANDIDATES, LEVEL_RANK, STYLE_LABEL, clampLevel, effectiveConfig, fallbackLadder, levelLabel, presetFor, reasoningParams } from '../../shared/reasoning';
 import { classifyLlmError } from '../llm/types';
 import { Workspace } from '../services/workspace';
+import { ShadowSnapshots } from '../services/shadowSnapshot';
+import type { PreviewHostResult, PreviewRenderOptions } from '../services/previewActions';
 import { McpManager } from '../mcp/manager';
+import { LspManager, loadLspConfig, saveLspConfig, type LspConfig } from '../lsp/manager';
 import { DesignStore } from './designs';
+import { edictDir, raiseWorktreeCard, recoverWorktrees } from './worktrees';
+import { previewHostFor, taskIdFromPreviewHost } from '../services/preview';
 import type { FetchLike, ProviderRuntime } from '../llm/types';
 import { listRemoteModels, streamLlm } from '../llm/adapters';
 import { PROVIDER_PRESETS } from '../llm/presets';
@@ -38,24 +45,19 @@ export interface RuntimeOptions {
   resourcesDir: string; // for builtin skills
   notify?: (title: string, body: string) => void;
   /** Render a page in a hidden sandboxed browser (desktop only; undefined in node tests). */
-  previewPage?: (url: string, o: { waitMs: number; width: number; height: number }) => Promise<Omit<PreviewResult, 'screenshot'> & { png?: Buffer }>;
+  previewPage?: (url: string, o: PreviewRenderOptions) => Promise<PreviewHostResult>;
+  /** Open an https (or loopback http) URL in the system browser — MCP OAuth login (desktop: shell.openExternal). */
+  openExternal?: (url: string) => void | Promise<void>;
 }
 
-interface PersistedState {
-  tasks: Task[];
-  debates: Debate[];
-  sessions: Session[];
-  memorials: Memorial[];
-  annotations: Annotation[];
-  news: NewsItem[];
-  agentStats: Partial<Record<AgentId, Pick<AgentRuntime, 'usage' | 'completed' | 'sessions' | 'errors'>>>;
-  totals: Usage;
-  seqByDay: Record<string, number>;
-}
+type PersistedState = PersistedStateLike;
 
-interface PersistedSettings {
-  settings: Settings;
-  providers: ProviderConfig[];
+type PersistedSettings = PersistedSettingsLike;
+
+export interface ApprovalDecision {
+  approve: boolean;
+  choice: string;
+  comment?: string;
 }
 
 export class TaskAbortedError extends Error {
@@ -103,8 +105,16 @@ export class Runtime {
 
   readonly audit: AuditLog;
   readonly blobs: BlobStore;
-  private stateFile: JsonFile<PersistedState>;
-  private settingsFile: JsonFile<PersistedSettings>;
+  /** edict.db (SQLite); 1.x state.json / settings.json are migrated on first open with a backup */
+  readonly store: SqliteStore;
+  /** language servers found on this machine (auto-detected; missing ones show install hints) */
+  readonly lsp: LspManager;
+  /** R7: shadow snapshots per workspace root — what run_command changed on disk */
+  readonly snapshots: ShadowSnapshots;
+  /** Workspace objects for edict worktrees (and other folders an edict works in), by root */
+  private wsCache = new Map<string, Workspace>();
+  /** language servers for edict worktrees (the editor's diagnostics stay on `lsp`) */
+  private lspByRoot = new Map<string, LspManager>();
   private listeners = new Set<(e: RuntimeEvent) => void>();
   private activityBuf = new Map<string, Activity[]>(); // taskId|'_global' → recent
   private activityLogs = new Map<string, JsonlLog<Activity>>();
@@ -113,7 +123,11 @@ export class Runtime {
   private dirtyTasks = new Set<string>();
   private flushScheduled = false;
   private waiters = new Map<string, Set<() => void>>();
-  private approvalResolvers = new Map<string, (ok: boolean) => void>();
+  private approvalResolvers = new Map<string, (d: ApprovalDecision) => void>();
+  /** per-node abort (wall-clock timeout) — key taskId/nodeId */
+  readonly nodeControllers = new Map<string, AbortController>();
+  /** one writer per edict: taskId → holder nodeId + waiters */
+  private writeLocks = new Map<string, { holder: string; queue: { nodeId: string; resolve: () => void }[] }>();
   readonly controllers = new Map<string, AbortController>();
   healthTimer: NodeJS.Timeout | null = null;
   private alerted = new Set<string>();
@@ -147,14 +161,12 @@ export class Runtime {
     fs.mkdirSync(opts.dataDir, { recursive: true });
     this.audit = new AuditLog(path.join(opts.dataDir, 'audit.jsonl'));
     this.blobs = new BlobStore(path.join(opts.dataDir, 'blobs'));
-    this.stateFile = new JsonFile<PersistedState>(path.join(opts.dataDir, 'state.json'), () => ({
-      tasks: [], debates: [], sessions: [], memorials: [], annotations: [], news: [], agentStats: {}, totals: emptyUsage(), seqByDay: {},
-    }));
-    this.settingsFile = new JsonFile<PersistedSettings>(path.join(opts.dataDir, 'settings.json'), () => ({ settings: defaultSettings(), providers: [] }));
-    const s = this.settingsFile.load();
+    this.snapshots = new ShadowSnapshots(path.join(opts.dataDir, 'snapshots'), { audit: (action, detail) => this.audit.record('system', action, detail) });
+    this.store = openStateStore(opts.dataDir);
+    const s: PersistedSettings = this.store.loadSettings() ?? { settings: defaultSettings(), providers: [] };
     this.settings = { ...defaultSettings(), ...s.settings };
     this.providers = (s.providers ?? []).map((p) => ({ ...p, hasKey: !!opts.secrets.get(`provider:${p.id}`) }));
-    const st = this.stateFile.load();
+    const st = this.store.loadState();
     for (const t of st.tasks ?? []) this.tasks.set(t.id, t);
     for (const d of st.debates ?? []) this.debates.set(d.id, d);
     for (const x of st.sessions ?? []) this.sessions.set(x.id, x);
@@ -170,6 +182,24 @@ export class Runtime {
         usage: stats?.usage ?? emptyUsage(), completed: stats?.completed ?? 0, sessions: stats?.sessions ?? 0, errors: stats?.errors ?? 0,
       });
     }
+    this.store.bind({ state: () => this.persistedState(), settings: () => ({ settings: this.settings, providers: this.providers }) });
+    let lspTimer: ReturnType<typeof setTimeout> | undefined;
+    this.lsp = new LspManager({
+      workspace: () => this.workspace,
+      config: loadLspConfig(path.join(opts.dataDir, 'lsp.json')),
+      clientVersion: opts.version,
+      onDiagnostics: (e) => this.emit({ type: 'lsp_diagnostics', path: e.path, server: e.server, diagnostics: e.diagnostics }),
+      onStatusChange: () => {
+        if (lspTimer) return;
+        lspTimer = setTimeout(() => {
+          lspTimer = undefined;
+          this.emit({ type: 'lsp_status' });
+        }, 300);
+        lspTimer.unref?.();
+      },
+    });
+    const rep = this.store.openReport;
+    if (rep?.imported) this.audit.record('system', 'storage_migrated', { from: rep.imported.from, counts: rep.imported.counts as unknown as Record<string, unknown>, backupDir: rep.backupDir ?? null });
     this.designs.load();
     this.recoverInterrupted();
     if (this.settings.lastWorkspace && fs.existsSync(this.settings.lastWorkspace)) {
@@ -179,6 +209,8 @@ export class Runtime {
         this.workspace = null;
       }
     }
+    recoverWorktrees(this);
+    this.persist();
     this.healthTimer = setInterval(() => this.healthCheck(), 5000);
     this.healthTimer.unref?.();
   }
@@ -203,8 +235,22 @@ export class Runtime {
     this.emit({ type: 'toast', level, message });
   }
 
-  persist() {
-    this.stateFile.saveDebounced(() => this.persistedState());
+  /**
+   * Desktop notification (shown by the host only while the window is not focused), gated by settings.notify:
+   * 'attention' = only what needs the emperor (approvals, 奏折待批, blocked edicts, health alerts); 'off' = none.
+   */
+  notifyDesktop(kind: 'attention' | 'info', title: string, body: string) {
+    const pref = this.settings.notify ?? 'all';
+    if (pref === 'off' || (pref === 'attention' && kind !== 'attention')) return;
+    this.opts.notify?.(title, body);
+  }
+
+  /** Write-behind: one row when `kind`/`id` are given, otherwise everything that changed. */
+  persist(kind?: DocKind, id?: string) {
+    if (kind) return this.store.markDirty(kind, id);
+    this.store.markStateDirty();
+    // tasks are compared by identity; live ones are re-checked by content (cheap: few are active)
+    for (const t of this.tasks.values()) if (!TERMINAL.includes(t.state)) this.store.markDirty('tasks', t.id);
   }
 
   private persistedState(): PersistedState {
@@ -224,16 +270,16 @@ export class Runtime {
   }
 
   saveSettings() {
-    this.settingsFile.saveDebounced(() => ({ settings: this.settings, providers: this.providers }));
+    this.store.markSettingsDirty();
   }
 
   flushAll() {
-    this.stateFile.flush(() => this.persistedState());
-    this.settingsFile.flush(() => ({ settings: this.settings, providers: this.providers }));
+    this.store.flush({ full: true });
   }
 
   touch(task: Task) {
     task.updatedAt = now();
+    this.store.markDirty('tasks', task.id);
     this.dirtyTasks.add(task.id);
     if (!this.flushScheduled) {
       this.flushScheduled = true;
@@ -374,7 +420,7 @@ export class Runtime {
         if (h === 'alert' && !this.alerted.has(a.id)) {
           this.alerted.add(a.id);
           this.activity('error', `${agentName(a.id)} 已 ${Math.round(idle / 1000)} 秒无心跳`, { taskId: a.taskId, agentId: a.id });
-          this.opts.notify?.('Agent 健康告警', `${agentName(a.id)} 长时间无响应`);
+          this.notifyDesktop('attention', 'Agent 健康告警', `${agentName(a.id)} 长时间无响应`);
         }
       }
     }
@@ -559,7 +605,7 @@ export class Runtime {
     task.gate = { ...gate, since: now() };
     this.audit.record('system', 'gate_open', { kind: gate.kind, message: gate.message }, task.id);
     this.activity('gate', `⏸ 待皇上御批：${gate.message}`, { taskId: task.id, data: { kind: gate.kind } });
-    this.opts.notify?.('奏折待批', `${task.title}：${gate.message}`);
+    this.notifyDesktop('attention', '奏折待批', `${task.title}：${gate.message}`);
     this.touch(task);
   }
 
@@ -650,29 +696,45 @@ export class Runtime {
 
   // ───────────────────────── approvals (high-risk confirmation) ─────────────────────────
   requestApproval(req: Omit<ApprovalRequest, 'id' | 'at' | 'status'>): Promise<boolean> {
+    return this.requestDecision(req).then((d) => d.approve);
+  }
+
+  /** Ask the emperor; with `choices` the card offers those buttons and the note box. */
+  requestDecision(req: Omit<ApprovalRequest, 'id' | 'at' | 'status'>, o: { onId?: (id: string) => void } = {}): Promise<ApprovalDecision> {
     const ap: ApprovalRequest = { ...req, id: uid('ap'), at: now(), status: 'pending' };
+    o.onId?.(ap.id);
     this.approvals.set(ap.id, ap);
-    this.audit.record(req.agentId, 'approval_requested', { tool: req.tool, summary: req.summary, risk: req.risk, reason: req.reason }, req.taskId);
+    this.audit.record(req.agentId, 'approval_requested', { tool: req.tool, summary: req.summary, risk: req.risk, reason: req.reason, kind: req.kind ?? 'action' }, req.taskId);
     this.emit({ type: 'approval', approval: ap });
-    this.opts.notify?.(req.risk === 'high' ? '高风险操作待确认' : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
+    this.notifyDesktop('attention', req.risk === 'high' ? '高风险操作待确认' : req.kind === 'write_task' ? '写任务待批准' : req.kind === 'question' ? '官员请旨' : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
     if (req.taskId) this.setAgent(req.agentId, { status: 'waiting', activity: `等待批准：${req.summary}` });
     const signal = req.taskId ? this.controllers.get(req.taskId)?.signal : undefined;
-    return new Promise<boolean>((resolve) => {
+    return new Promise<ApprovalDecision>((resolve) => {
       this.approvalResolvers.set(ap.id, resolve);
       signal?.addEventListener('abort', () => this.decideApproval(ap.id, false, 'system'), { once: true });
     });
   }
 
-  decideApproval(id: string, approve: boolean, actor = 'emperor') {
+  decideApproval(id: string, approve: boolean, actor = 'emperor', choice?: string, comment?: string) {
     const ap = this.approvals.get(id);
     if (!ap || ap.status !== 'pending') return;
+    const note = (comment ?? '').trim() || undefined;
+    if (ap.choices?.length && choice && actor !== 'system') {
+      const c = ap.choices.find((x) => x.id === choice);
+      if (!c) throw new Error(`无效的选项：${choice}`);
+      if (c.comment === 'required' && !note) throw new Error('请先写明理由或要求');
+      approve = c.approve;
+    }
+    const picked = choice && ap.choices?.some((x) => x.id === choice) && actor !== 'system' ? choice : approve ? 'once' : 'deny';
     ap.status = approve ? 'approved' : 'denied';
     ap.decidedAt = now();
-    this.audit.record(actor, approve ? 'approval_granted' : 'approval_denied', { tool: ap.tool, summary: ap.summary }, ap.taskId);
+    ap.choice = picked;
+    ap.comment = note;
+    this.audit.record(actor, approve ? 'approval_granted' : 'approval_denied', { tool: ap.tool, summary: ap.summary, choice: picked, comment: note ?? null }, ap.taskId);
     this.emit({ type: 'approval', approval: ap });
     const r = this.approvalResolvers.get(id);
     this.approvalResolvers.delete(id);
-    r?.(approve);
+    r?.({ approve, choice: picked, comment: note });
     // keep list bounded
     if (this.approvals.size > 300) {
       for (const [k, v] of this.approvals) if (v.status !== 'pending') {
@@ -680,6 +742,109 @@ export class Runtime {
         if (this.approvals.size <= 200) break;
       }
     }
+  }
+
+  // ───────────────────────── always-allow rules (R5) ─────────────────────────
+  /** The workspace root permission rules are keyed by (a worktree maps back to its repository). */
+  permRoot(task?: Task): string | null {
+    return task?.repoRoot ?? task?.workspace ?? this.workspace?.root ?? null;
+  }
+
+  rulesFor(task?: Task): AllowRule[] {
+    const root = this.permRoot(task);
+    return [...(task?.allowRules ?? []), ...((root && this.settings.workspacePerms?.[root]?.rules) || [])];
+  }
+
+  releaseAllowed(task?: Task): boolean {
+    const root = this.permRoot(task);
+    return !!(root && this.settings.workspacePerms?.[root]?.releaseAlways);
+  }
+
+  addAllowRules(scope: 'task' | 'workspace', task: Task | undefined, keys: string[], label: string, agentId?: string) {
+    const source = task ? { taskId: task.id, title: task.title, ...(agentId ? { agentId } : {}) } : undefined;
+    const rules: AllowRule[] = keys.map((key) => ({ key, label, at: now(), ...(source ? { source } : {}) }));
+    if (scope === 'task') {
+      if (!task) return;
+      task.allowRules = [...(task.allowRules ?? []).filter((r) => !keys.includes(r.key)), ...rules];
+      this.touch(task);
+    } else {
+      const root = this.permRoot(task);
+      if (!root) return;
+      const perms = { ...(this.settings.workspacePerms ?? {}) };
+      const cur = perms[root] ?? { rules: [] };
+      perms[root] = { ...cur, rules: [...cur.rules.filter((r) => !keys.includes(r.key)), ...rules] };
+      this.settings = { ...this.settings, workspacePerms: perms };
+      this.saveSettings();
+      this.emit({ type: 'settings', settings: this.settings });
+    }
+    this.audit.record('emperor', 'allow_rule_added', { scope, keys, label, root: scope === 'workspace' ? this.permRoot(task) : null }, task?.id);
+  }
+
+  removeAllowRule(root: string, key: string) {
+    const perms = { ...(this.settings.workspacePerms ?? {}) };
+    const cur = perms[root];
+    if (!cur) return;
+    perms[root] = { ...cur, rules: cur.rules.filter((r) => r.key !== key) };
+    this.settings = { ...this.settings, workspacePerms: perms };
+    this.audit.record('emperor', 'allow_rule_removed', { scope: 'workspace', root, key });
+    this.saveSettings();
+    this.emit({ type: 'settings', settings: this.settings });
+  }
+
+  /** Revoke a 「本旨意内不再询问」 rule before the edict ends. */
+  removeTaskAllowRule(taskId: string, key: string) {
+    const t = this.getTask(taskId);
+    if (!t.allowRules?.some((r) => r.key === key)) return;
+    t.allowRules = t.allowRules.filter((r) => r.key !== key);
+    this.audit.record('emperor', 'allow_rule_removed', { scope: 'task', key }, taskId);
+    this.touch(t);
+  }
+
+  setReleaseAlways(root: string, on: boolean) {
+    const perms = { ...(this.settings.workspacePerms ?? {}) };
+    perms[root] = { rules: perms[root]?.rules ?? [], releaseAlways: on };
+    this.settings = { ...this.settings, workspacePerms: perms };
+    this.audit.record('emperor', 'release_policy', { root, releaseAlways: on });
+    this.saveSettings();
+    this.emit({ type: 'settings', settings: this.settings });
+  }
+
+  // ───────────────────────── node signals & write lock ─────────────────────────
+  /** Abort signal for work inside a node: the edict's cancel plus the node's own timeout. */
+  signalFor(taskId: string, nodeId?: string): AbortSignal {
+    const t = this.controller(taskId).signal;
+    const n = nodeId ? this.nodeControllers.get(`${taskId}/${nodeId}`)?.signal : undefined;
+    return n ? AbortSignal.any([t, n]) : t;
+  }
+
+  /** Wait until `nodeId` is the only writer of this edict (released when the node ends). */
+  async acquireWriteLock(taskId: string, nodeId: string, signal?: AbortSignal): Promise<void> {
+    const l = this.writeLocks.get(taskId);
+    if (!l) {
+      this.writeLocks.set(taskId, { holder: nodeId, queue: [] });
+      return;
+    }
+    if (l.holder === nodeId) return;
+    await new Promise<void>((resolve, reject) => {
+      const entry = { nodeId, resolve };
+      l.queue.push(entry);
+      signal?.addEventListener('abort', () => {
+        l.queue = l.queue.filter((q) => q !== entry);
+        reject(new TaskAbortedError());
+      }, { once: true });
+    });
+  }
+
+  releaseWriteLock(taskId: string, nodeId: string) {
+    const l = this.writeLocks.get(taskId);
+    if (!l) return;
+    l.queue = l.queue.filter((q) => q.nodeId !== nodeId);
+    if (l.holder !== nodeId) return;
+    const next = l.queue.shift();
+    if (next) {
+      l.holder = next.nodeId;
+      next.resolve();
+    } else this.writeLocks.delete(taskId);
   }
 
   // ───────────────────────── annotations (朱批) ─────────────────────────
@@ -716,21 +881,40 @@ export class Runtime {
   }
 
   // ───────────────────────── file changes & artifacts ─────────────────────────
-  recordChange(task: Task | undefined, agentId: AgentId, nodeId: string | undefined, rel: string, before: Buffer | null, after: Buffer | null) {
+  /**
+   * Record one file change. `via: 'command'` marks a run_command side effect (R7). An oversize change passes
+   * `op`: its content was not kept, so a null before / after there does not mean the file was absent.
+   */
+  recordChange(task: Task | undefined, agentId: AgentId, nodeId: string | undefined, rel: string, before: Buffer | null, after: Buffer | null, meta: { via?: 'tool' | 'command'; command?: string; op?: FileChange['op']; oversize?: boolean } = {}) {
     const ch: FileChange = {
       id: uid('fc'), taskId: task?.id ?? '', path: rel,
-      op: before === null ? 'create' : after === null ? 'delete' : 'modify',
+      op: meta.op ?? (before === null ? 'create' : after === null ? 'delete' : 'modify'),
       beforeHash: before === null ? null : this.blobs.put(before),
       afterHash: after === null ? null : this.blobs.put(after),
-      agentId, nodeId, at: now(),
+      agentId, nodeId, at: now(), via: meta.via ?? 'tool',
     };
+    if (meta.command !== undefined) ch.command = meta.command.slice(0, 2000);
+    if (meta.oversize) ch.oversize = true;
+    if (looksBinary(before) || looksBinary(after)) ch.binary = true;
     if (task) {
       task.changes.push(ch);
       this.touch(task);
     }
-    this.audit.record(agentId, 'file_change', { path: rel, op: ch.op, beforeHash: ch.beforeHash, afterHash: ch.afterHash }, task?.id);
-    this.emit({ type: 'fs_changed', paths: [rel] });
+    this.audit.record(agentId, 'file_change', { path: rel, op: ch.op, beforeHash: ch.beforeHash, afterHash: ch.afterHash, via: ch.via, ...(ch.command ? { command: truncate(ch.command, 300) } : {}), ...(ch.oversize ? { oversize: true } : {}) }, task?.id);
+    const ws = task ? this.workspaceFor(task) : this.workspace;
+    // a write inside an edict's worktree leaves the open workspace untouched
+    if (!ws || ws === this.workspace) this.emit({ type: 'fs_changed', paths: [rel] });
+    // (a worktree's language servers exist only once its agent used the lsp tool)
+    void (!ws || ws === this.workspace ? this.lsp : this.lspByRoot.get(ws.root))?.notifyFilesChanged([rel]).catch(() => {});
     return ch;
+  }
+
+  /** Change LSP settings and persist them (lsp.json). */
+  setLspConfig(patch: Partial<LspConfig>) {
+    this.lsp.setConfig(patch);
+    for (const m of this.lspByRoot.values()) m.setConfig(patch);
+    saveLspConfig(path.join(this.opts.dataDir, 'lsp.json'), this.lsp.config);
+    this.audit.record('emperor', 'lsp_config', { keys: Object.keys(patch) });
   }
 
   revertChange(taskId: string, changeId: string, force = false) {
@@ -738,22 +922,167 @@ export class Runtime {
     const ch = t.changes.find((c) => c.id === changeId);
     if (!ch) throw new Error('改动记录不存在');
     if (ch.reverted) throw new Error('该改动已撤回');
-    const ws = this.requireWorkspace();
-    const cur = ws.readBuffer(ch.path);
-    const curHash = cur ? sha256(cur) : null;
-    if (!force && curHash !== ch.afterHash) throw new Error('文件在此改动之后又被修改，撤回可能覆盖新内容（可强制撤回）');
-    if (ch.beforeHash === null) ws.remove(ch.path);
-    else ws.write(ch.path, this.blobs.get(ch.beforeHash)!.toString('utf8'));
-    ch.reverted = true;
-    this.audit.record('emperor', 'revert_change', { path: ch.path, changeId }, taskId);
+    const ws = this.revertWorkspace(t);
+    if (!this.revertable(ch)) throw new Error(ch.oversize ? '该文件超过快照大小上限，改动前的内容没有保存，无法撤回' : '改动前的内容已丢失，无法撤回');
+    if (!force && this.diskHash(ws, ch.path) !== ch.afterHash) throw new Error('文件在此改动之后又被修改，撤回可能覆盖新内容（可强制撤回）');
+    this.undoChange(ws, ch);
+    this.audit.record('emperor', 'revert_change', { path: ch.path, changeId, via: ch.via ?? 'tool', force }, taskId);
     this.activity('human', `皇上撤回改动：${ch.path}`, { taskId });
     this.touch(t);
-    this.emit({ type: 'fs_changed', paths: [ch.path] });
+    this.changedOnDisk(ws, [ch.path]);
+  }
+
+  /** E3: revert every unreverted change one node made, newest first (see revertChanges). */
+  revertNode(taskId: string, nodeId: string, o: { force?: boolean } = {}): RevertResult {
+    const t = this.getTask(taskId);
+    const n = t.nodes.find((x) => x.id === nodeId);
+    if (!n) throw new Error('节点不存在');
+    if (n.status === 'running') throw new Error(`「${n.label}」正在执行，不能撤回它的改动`);
+    return this.revertChanges(t, t.changes.filter((c) => c.nodeId === nodeId), { force: !!o.force, scope: 'node', nodeId, label: n.label });
+  }
+
+  /** E3: revert every unreverted change of the edict, newest first (see revertChanges). */
+  revertTask(taskId: string, o: { force?: boolean } = {}): RevertResult {
+    const t = this.getTask(taskId);
+    const busy = t.nodes.find((n) => n.status === 'running');
+    if (busy) throw new Error(`「${busy.label}」正在执行，请先叫停或等它结束再整旨撤回`);
+    return this.revertChanges(t, t.changes, { force: !!o.force, scope: 'task', label: t.title });
+  }
+
+  /**
+   * Revert `list` newest first through the single-change logic. All-or-nothing on conflicts: a dry run first
+   * replays the reverts against the disk state, and when any file no longer matches what the agent (or its
+   * command) left there, nothing is touched and the conflicting files come back. `force` overwrites them.
+   * Oversize changes (no stored content) are skipped and reported.
+   */
+  private revertChanges(t: Task, list: FileChange[], o: { force: boolean; scope: 'node' | 'task'; nodeId?: string; label: string }): RevertResult {
+    const ws = this.revertWorkspace(t);
+    const todo = list.filter((c) => !c.reverted).reverse(); // records are appended in order: reversed = newest first
+    const uniq = (a: string[]) => [...new Set(a)];
+    const virt = new Map<string, string | null>(); // path → content hash after the reverts planned so far
+    const cur = (p: string) => (virt.has(p) ? virt.get(p)! : this.diskHash(ws, p));
+    const plan: FileChange[] = [];
+    const conflicts: string[] = [];
+    const skipped: string[] = [];
+    for (const ch of todo) {
+      if (!this.revertable(ch)) {
+        skipped.push(ch.path);
+        continue;
+      }
+      if (!o.force && cur(ch.path) !== ch.afterHash) {
+        conflicts.push(ch.path);
+        continue;
+      }
+      virt.set(ch.path, ch.beforeHash);
+      plan.push(ch);
+    }
+    const res: RevertResult = { reverted: [], conflicts: uniq(conflicts), skipped: uniq(skipped) };
+    if (!conflicts.length) {
+      for (const ch of plan) {
+        this.undoChange(ws, ch);
+        this.audit.record('emperor', 'revert_change', { path: ch.path, changeId: ch.id, via: ch.via ?? 'tool', scope: o.scope, force: o.force }, t.id);
+      }
+      res.reverted = uniq(plan.map((c) => c.path));
+    }
+    this.audit.record('emperor', o.scope === 'node' ? 'revert_node' : 'revert_task', { nodeId: o.nodeId ?? null, changes: plan.length, reverted: res.reverted, conflicts: res.conflicts, skipped: res.skipped, force: o.force }, t.id);
+    const what = o.scope === 'node' ? `「${o.label}」的改动` : '本旨意的全部改动';
+    if (res.conflicts.length) this.activity('human', `撤回${what}未执行：${res.conflicts.join('、')} 在之后又被修改（可强制撤回）`, { taskId: t.id, nodeId: o.nodeId });
+    else if (res.reverted.length) this.activity('human', `皇上撤回${what}：${res.reverted.length} 个文件${res.skipped.length ? `；${res.skipped.length} 个大文件无法撤回` : ''}`, { taskId: t.id, nodeId: o.nodeId });
+    if (res.reverted.length) {
+      this.touch(t);
+      this.changedOnDisk(ws, res.reverted);
+    }
+    return res;
+  }
+
+  /** The workspace a revert writes to: the edict's own (the open folder, or its active worktree). */
+  private revertWorkspace(t: Task): Workspace {
+    const ws = this.workspaceFor(t);
+    if (!ws) throw new Error(t.worktree && t.worktree.status !== 'active' ? '本旨意的工作树已结案处理（合并 / 保留 / 丢弃），不能在此撤回改动' : '本旨意的工作区当前不可用（已切换到别的文件夹，或独立工作树已不存在）');
+    return ws;
+  }
+
+  /** fs_changed only for the open workspace (an edict worktree is not on screen); LSP of whichever root changed. */
+  private changedOnDisk(ws: Workspace, paths: string[]) {
+    if (ws === this.workspace) this.emit({ type: 'fs_changed', paths });
+    void (ws === this.workspace ? this.lsp : this.lspByRoot.get(ws.root))?.notifyFilesChanged(paths).catch(() => {});
+  }
+
+  private revertable(ch: FileChange): boolean {
+    return !ch.oversize && (ch.beforeHash === null || this.blobs.has(ch.beforeHash));
+  }
+
+  private diskHash(ws: Workspace, rel: string): string | null {
+    const b = ws.readBuffer(rel);
+    return b ? sha256(b) : null;
+  }
+
+  /** Put back the content from before `ch` (binary-safe) and mark it reverted. */
+  private undoChange(ws: Workspace, ch: FileChange) {
+    if (ch.beforeHash === null) ws.remove(ch.path);
+    else ws.write(ch.path, this.blobs.get(ch.beforeHash)!);
+    ch.reverted = true;
   }
 
   requireWorkspace(): Workspace {
     if (!this.workspace) throw new Error('尚未打开工作区：请先选择项目文件夹');
     return this.workspace;
+  }
+
+  /**
+   * The folder an edict reads and writes: its active worktree, else the open workspace when it is the one the
+   * edict was submitted on, else null. Without a task (chat, the editor) it is the open workspace.
+   */
+  workspaceFor(task?: Task | null): Workspace | null {
+    if (!task) return this.workspace;
+    const w = task.worktree;
+    if (w?.status === 'active') {
+      const dir = edictDir(w);
+      return fs.existsSync(dir) ? this.wsAt(dir) : null;
+    }
+    return this.workspace && task.workspace === this.workspace.root ? this.workspace : null;
+  }
+
+  /** Cached Workspace for a folder (the open one is reused). */
+  wsAt(dir: string): Workspace {
+    const root = path.resolve(dir);
+    if (this.workspace?.root === root) return this.workspace;
+    let w = this.wsCache.get(root);
+    if (!w) {
+      w = new Workspace(root);
+      this.wsCache.set(root, w);
+    }
+    return w;
+  }
+
+  /** A folder went away (worktree removed): drop its Workspace and stop its language servers. */
+  forgetWorkspace(dir: string) {
+    const root = path.resolve(dir);
+    this.wsCache.delete(root);
+    const m = this.lspByRoot.get(root);
+    if (m) {
+      this.lspByRoot.delete(root);
+      void m.dispose();
+    }
+  }
+
+  /** Language servers for a workspace: the editor's manager for the open one, a separate one per worktree. */
+  lspFor(ws: Workspace): LspManager {
+    if (this.workspace && ws.root === this.workspace.root) return this.lsp;
+    let m = this.lspByRoot.get(ws.root);
+    if (!m) {
+      m = new LspManager({ workspace: ws, config: this.lsp.config, clientVersion: this.opts.version });
+      this.lspByRoot.set(ws.root, m);
+    }
+    return m;
+  }
+
+  /** Folder behind a preview:// host: `ws` = the open workspace, `wt-<task id>` = that edict's worktree. */
+  previewRoot(host: string): string | null {
+    const h = host.toLowerCase();
+    if (h === 'ws') return this.workspace?.root ?? null;
+    const t = taskIdFromPreviewHost(h) ? [...this.tasks.values()].find((x) => previewHostFor(x.id) === h) : undefined;
+    return t?.worktree?.status === 'active' ? (this.workspaceFor(t)?.root ?? null) : null;
   }
 
   setWorkspace(dir: string | null) {
@@ -768,13 +1097,21 @@ export class Runtime {
   onTerminal(task: Task) {
     this.controllers.delete(task.id);
     // verified artifacts: recompute hashes from disk (never trust the model's claim)
-    if (this.workspace && task.workspace === this.workspace.root) {
+    const ws = this.workspaceFor(task);
+    if (ws) {
       const seen = new Map<string, FileChange>();
       for (const c of task.changes) if (!c.reverted) seen.set(c.path, c);
       const arts = [];
       for (const [p, c] of seen) {
-        const buf = this.workspace.readBuffer(p);
-        if (buf) arts.push({ path: p, sha256: sha256(buf), bytes: buf.length, agentId: c.agentId, nodeId: c.nodeId, at: now() });
+        // oversize files (command side effects past the snapshot cap) are hashed in chunks, not loaded whole
+        let d: { sha256: string; bytes: number } | null = null;
+        try {
+          const buf = c.oversize ? null : ws.readBuffer(p);
+          d = c.oversize ? fileDigest(ws, p) : buf && { sha256: sha256(buf), bytes: buf.length };
+        } catch {
+          /* path no longer inside the workspace */
+        }
+        if (d) arts.push({ path: p, ...d, agentId: c.agentId, nodeId: c.nodeId, at: now() });
       }
       task.result = { summary: task.result?.summary ?? '', artifacts: arts };
     }
@@ -784,8 +1121,10 @@ export class Runtime {
     this.emit({ type: 'memorial', memorial: m });
     if (task.state === 'Done') {
       this.pushNews({ title: `捷报：「${task.title}」已完成`, source: '军机处', category: '朝廷', summary: task.result?.summary?.slice(0, 120) });
-      this.opts.notify?.('旨意完成', task.title);
+      this.notifyDesktop('info', '旨意完成', task.title);
     }
+    // 结案 dialog for an edict's own worktree (after the caller finished, e.g. cancel() closing its cards)
+    if (task.worktree?.status === 'active') setImmediate(() => raiseWorktreeCard(this, task));
     this.persist();
   }
 
@@ -994,23 +1333,39 @@ export class Runtime {
 
   // ───────────────────────── recovery ─────────────────────────
   private recoverInterrupted() {
+    // nodes that only read or talk can simply run again; anything that may have changed files waits for the emperor
+    const NO_TOOLS_KINDS = ['triage', 'debate', 'plan', 'review', 'dispatch', 'summary', 'result_review'];
+    const resumable = (n: RunNode) => this.settings.autoResumeSafe !== false && (n.sideEffects === false || (n.sideEffects === undefined && NO_TOOLS_KINDS.includes(n.kind)));
     for (const t of this.tasks.values()) {
       if (TERMINAL.includes(t.state)) continue;
       let interrupted = false;
+      const resumed: string[] = [];
       for (const n of t.nodes) {
-        if (n.status === 'running') {
-          n.status = 'failed';
-          n.exitStatus = 'interrupted';
-          n.error = '应用退出导致运行中断';
-          n.endedAt = now();
-          interrupted = true;
+        // an exec node waiting on its write-task dialog had not started: ask again after the restart
+        if (n.status === 'waiting' && n.kind === 'exec') n.status = 'pending';
+        if (n.status !== 'running') continue;
+        if (resumable(n)) {
+          n.status = 'pending';
+          n.endedAt = undefined;
+          resumed.push(n.label);
+          continue;
         }
+        n.status = 'failed';
+        n.exitStatus = 'interrupted';
+        n.error = '应用退出导致运行中断';
+        n.endedAt = now();
+        interrupted = true;
+      }
+      if (resumed.length || interrupted) this.store.markDirty('tasks', t.id);
+      if (resumed.length) {
+        this.audit.record('system', 'node_auto_resume', { nodes: resumed }, t.id);
+        this.activity('log', `应用重启：${resumed.join('、')} 中断时没有改动过文件，已自动续跑`, { taskId: t.id });
       }
       if (interrupted && t.state !== 'Blocked') {
         t.resumeState = t.state;
         const from = t.state;
         t.state = 'Blocked';
-        t.blockedReason = '应用重启：运行中的节点已中断，可「重试失败节点」局部恢复';
+        t.blockedReason = '应用重启：运行中的节点可能已改动文件，已中断；可「重试失败节点」局部恢复';
         t.flow.push({ at: now(), from: STATE_LABEL[from], to: STATE_LABEL.Blocked, remark: t.blockedReason, state: 'Blocked' });
         this.audit.record('system', 'transition', { from, to: 'Blocked', remark: t.blockedReason }, t.id);
       }
@@ -1020,11 +1375,34 @@ export class Runtime {
 
   dispose() {
     this.mcp.dispose();
+    void this.lsp.dispose();
+    for (const m of this.lspByRoot.values()) void m.dispose();
+    this.lspByRoot.clear();
     if (this.healthTimer) clearInterval(this.healthTimer);
     for (const c of this.controllers.values()) c.abort();
     this.flushAll();
+    this.store.close();
   }
 }
+
+function fileDigest(ws: Workspace, rel: string): { sha256: string; bytes: number } | null {
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(ws.resolve(rel), 'r');
+    const h = createHash('sha256');
+    const chunk = Buffer.alloc(1 << 20);
+    let bytes = 0;
+    for (let n; (n = fs.readSync(fd, chunk, 0, chunk.length, null)) > 0; bytes += n) h.update(chunk.subarray(0, n));
+    return { sha256: h.digest('hex'), bytes };
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/** NUL bytes near the start: treat as binary (no text diff). */
+export const looksBinary = (b: Buffer | null | undefined): boolean => !!b && b.subarray(0, 8000).includes(0);
 
 export function buildMemorial(task: Task): Memorial {
   const nodes = task.nodes;
@@ -1037,12 +1415,17 @@ export function buildMemorial(task: Task): Memorial {
     { key: 'ministries', label: '六部执行', at: firstAt([...byKind('exec'), ...byKind('solo')]), items: [...byKind('exec'), ...byKind('solo')].map((n) => `${agentName(n.agentId)}「${n.label}」：${n.status}${n.output ? ' — ' + n.output.slice(0, 200) : ''}`) },
     { key: 'report', label: '回奏', at: task.updatedAt, items: [task.result?.summary || '（无回奏正文）'] },
   ];
+  // E8: skills the officials actually loaded (with the text hash, so the exact version is on record)
+  if (task.skillsUsed?.length) stages.splice(stages.length - 1, 0, { key: 'skills', label: '所用技能', at: task.skillsUsed[0].at, items: task.skillsUsed.map((u) => `${agentName(u.agentId)} 加载 ${u.name}（sha256:${u.sha256.slice(0, 12)}）`) });
+  // E1: what the officials asked the emperor, and the answers they worked from
+  if (task.questions?.length) stages.splice(stages.length - 1, 0, { key: 'questions', label: '请旨记录', at: task.questions[0].at, items: task.questions.map((q) => `${agentName(q.agentId)} 问：${q.question} —— ${q.answer ? `答：${q.answer}` : '未答复'}`) });
   return {
     taskId: task.id, title: task.title, edict: task.edict, tier: task.tier, finalState: task.state, archivedAt: now(), stages,
     artifacts: task.result?.artifacts ?? [], usage: task.usage,
     models: [...new Set(nodes.map((n) => n.model).filter(Boolean) as string[])],
     runs: nodes.map((n) => ({ nodeId: n.id, label: n.label, runId: n.runId, model: n.model, exitStatus: n.exitStatus, startedAt: n.startedAt, endedAt: n.endedAt })),
     flow: task.flow,
+    skillsUsed: task.skillsUsed,
   };
 }
 

@@ -1,0 +1,12 @@
+/* 运行策略 — scoped under .runp (display: contents keeps the page's section gap) */
+.runp { display: contents; }
+.runp .sp-sec { padding: 12px 15px 13px; }
+.runp .sp-sec-h { margin-bottom: 10px; }
+.runp-tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin-bottom: 4px; }
+.runp-tier { border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px 9px; display: flex; flex-direction: column; gap: 6px; background: var(--bg); min-width: 0; }
+.runp-tier-h { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; }
+.runp-tier-h .muted { font-size: 11px; }
+.runp-tier-s { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.runp-usd { font-size: 12.5px; color: var(--muted); margin-right: -2px; }
+.runp-moved { font-size: 11.5px; color: var(--muted); padding: 0 2px; }
+.runp-moved .link { font-size: 11.5px; padding: 0 2px; }

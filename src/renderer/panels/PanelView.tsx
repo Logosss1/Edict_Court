@@ -12,6 +12,7 @@ import { CeremonyPanel } from './Ceremony';
 import { DebatePanel } from './Debate';
 import { AuditPanel } from './Audit';
 import { Help } from './Help';
+import { SettingsView } from '../settings/SettingsView';
 
 export function PanelView({ panel }: { panel: PanelId }) {
   switch (panel) {
@@ -43,6 +44,8 @@ export function PanelView({ panel }: { panel: PanelId }) {
       return <AuditPanel />;
     case 'help':
       return <Help />;
+    case 'settings':
+      return <SettingsView />;
     default:
       return null;
   }

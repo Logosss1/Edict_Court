@@ -1,4 +1,5 @@
-// Global high-risk confirmation dock — visible in BOTH modes so no approval is ever missed.
+// Approval dock for 朝堂 mode. In the workbench the same requests are decision cards in the agent pane
+// (ChoiceCard), with a one-line notice there for other edicts, so the dock stays out of the way.
 import { useState } from 'react';
 import { useStore } from '../store';
 import { call } from '../api';
@@ -9,7 +10,7 @@ export function ApprovalsDock() {
   const aps = useStore((s) => s.approvals.filter((a) => a.status === 'pending'));
   const mode = useStore((s) => s.ui.mode);
   const [open, setOpen] = useState<string | null>(null);
-  if (!aps.length) return null;
+  if (!aps.length || mode !== 'court') return null;
   return (
     <div className={`approvals-dock ${mode}`} data-testid="approvals-dock">
       {aps.slice(0, 4).map((a) => (

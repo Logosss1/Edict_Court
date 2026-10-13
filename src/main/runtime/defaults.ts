@@ -22,6 +22,17 @@ export function defaultSettings(): Settings {
     lastWorkspace: null,
     composerHidden: false,
     language: 'zh',
+    confirmWriteTasks: true,
+    autoResumeSafe: true,
+    nodeTimeoutMin: 30,
+    workspacePerms: {},
+    acpEnabled: false,
+    acpHighRiskInEdictOnly: true,
+    askTimeoutMin: 10,
+    canon: [],
+    commandSnapshots: true,
+    worktreePerEdict: true,
+    notify: 'all',
   };
 }
 

@@ -1,4 +1,4 @@
-// 技能与 MCP 中心（吏部）— add / edit / enable Skills; configure MCP servers (Cursor-compatible mcp.json),
+// 技能与 MCP 中心（吏部）— add / edit / enable Skills; configure MCP servers (standard mcp.json format),
 // trust local commands, per-tool risk & approval, per-official grants; see exactly what an official is given.
 import { useEffect, useMemo, useState } from 'react';
 import { useStore, toast } from '../store';
@@ -39,7 +39,7 @@ function parseBody(text: string) {
   return m ? m[1] : text;
 }
 
-function SkillsTab() {
+export function SkillsTab() {
   const skills = useStore((s) => s.skills);
   const [sel, setSel] = useState<string | null>(skills[0]?.name ?? null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -176,7 +176,7 @@ function RemoteSkillForm({ onDone }: { onDone: (name: string) => void }) {
 }
 
 // ───────────────────────── MCP ─────────────────────────
-const STATUS: Record<McpServerState['status'], string> = { ok: '已连接', starting: '连接中…', error: '连接失败', untrusted: '待信任', disabled: '已停用', stopped: '已停止' };
+const STATUS: Record<McpServerState['status'], string> = { ok: '已连接', starting: '连接中…', error: '连接失败', untrusted: '待信任', disabled: '已停用', stopped: '已停止', needs_auth: '需要登录' };
 const RISK: Record<McpRisk, string> = { read: '只读', write: '有副作用', high: '高风险' };
 
 const EXAMPLES: Record<string, { label: string; entry: Record<string, unknown> }> = {
@@ -185,7 +185,7 @@ const EXAMPLES: Record<string, { label: string; entry: Record<string, unknown> }
   python: { label: 'Python 服务（stdio · uvx）', entry: { command: 'uvx', args: ['your-mcp-server'], env: { API_KEY: '在此粘贴，保存时自动移入钥匙串' } } },
 };
 
-function McpTab() {
+export function McpTab() {
   const servers = useStore((s) => s.mcp);
   const [text, setText] = useState('');
   const [path, setPath] = useState('');
@@ -236,7 +236,7 @@ function McpTab() {
   };
   return (
     <div className="mcp-tab">
-      {servers.length === 0 && <div className="card muted pad">尚未配置 MCP 服务。在下方 mcp.json 中添加（格式与 Cursor 相同），或从工作区的 .cursor/mcp.json 导入。</div>}
+      {servers.length === 0 && <div className="card muted pad">尚未配置 MCP 服务。在下方 mcp.json 中添加（标准 mcp.json 格式），或从工作区的 mcp.json 文件导入。</div>}
       <div className="mcp-servers">
         {servers.map((s) => <McpServerCard key={s.name} s={s} />)}
       </div>
@@ -340,7 +340,7 @@ function McpServerCard({ s }: { s: McpServerState }) {
 }
 
 // ───────────────────────── 官员视角 ─────────────────────────
-function AgentView() {
+export function AgentView() {
   const [agent, setAgent] = useState<AgentId>('bingbu');
   const [view, setView] = useState<{ system: string; mcpTools: string[] } | null>(null);
   const skills = useStore((s) => s.skills);

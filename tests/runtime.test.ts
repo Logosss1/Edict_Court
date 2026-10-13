@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { startMockLlm } from './mockLlm';
 import { makeRuntime, tmpDir, waitFor, stateOf } from './helpers';
-import { submit, decideGate, retryNode } from '../src/main/runtime/orchestrator';
+import { submit, decideGate, retryNode, resumeAll } from '../src/main/runtime/orchestrator';
 import { assertTransition } from '../src/main/runtime/stateMachine';
 import { createDebate, interject, runDebate, concludeDebate } from '../src/main/runtime/debate';
 import type { Protocol } from '../src/shared/types';
@@ -195,14 +195,17 @@ test('Solo tier: direct execution, no court nodes', async () => {
   await mock.close();
 });
 
-test('restart recovery marks running nodes interrupted and blocks for local retry', async () => {
+test('restart recovery: a node that already changed files is interrupted and blocks for local retry', async () => {
   const mock = await startMockLlm({ delayMs: 30 });
   const dataDir = tmpDir('edict-data-');
   const rt = makeRuntime(mock.url, 'openai-chat', dataDir);
   const ws = tmpDir('edict-ws-');
   rt.setWorkspace(ws);
   const r = (await submit(rt, { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true })) as { taskId: string };
-  await waitFor(() => rt.tasks.get(r.taskId)!.nodes.some((n) => n.kind === 'exec' && n.status === 'running'), 20000, 'exec running');
+  await waitFor(() => {
+    const t = rt.tasks.get(r.taskId)!;
+    return t.nodes.some((n) => n.kind === 'exec' && n.status === 'running' && t.changes.some((c) => c.nodeId === n.id));
+  }, 20000, 'exec running after a write');
   rt.flushAll(); // simulate crash: state persisted mid-run
   for (const c of rt.controllers.values()) c.abort();
   const rt2 = makeRuntime(mock.url, 'openai-chat', dataDir);
@@ -215,6 +218,44 @@ test('restart recovery marks running nodes interrupted and blocks for local retr
   await waitFor(() => rt2.tasks.get(r.taskId)!.gate?.kind === 'final', 20000, 'recovered');
   rt.dispose();
   rt2.dispose();
+  await mock.close();
+});
+
+test('restart recovery: a node with no side effects is resumed automatically (and only when the setting is on)', async () => {
+  const mock = await startMockLlm({ delayMs: 40 });
+  const dataDir = tmpDir('edict-data-');
+  const rt = makeRuntime(mock.url, 'openai-chat', dataDir);
+  const ws = tmpDir('edict-ws-');
+  rt.setWorkspace(ws);
+  const r = (await submit(rt, { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true })) as { taskId: string };
+  await waitFor(() => rt.tasks.get(r.taskId)!.nodes.some((n) => n.kind === 'plan' && n.status === 'running'), 20000, 'plan running');
+  rt.flushAll();
+  for (const c of rt.controllers.values()) c.abort();
+  const rt2 = makeRuntime(mock.url, 'openai-chat', dataDir);
+  rt.dispose();
+  const t2 = rt2.tasks.get(r.taskId)!;
+  assert.notEqual(t2.state, 'Blocked');
+  assert.equal(t2.nodes.find((n) => n.kind === 'plan')!.status, 'pending');
+  assert.ok(rt2.activities(r.taskId, 200).some((a) => a.content.includes('已自动续跑')));
+  rt2.setWorkspace(ws);
+  resumeAll(rt2);
+  await waitFor(() => rt2.tasks.get(r.taskId)!.gate?.kind === 'final', 25000, 'resumed to the final gate');
+  rt2.cancel(r.taskId);
+  rt2.dispose();
+
+  // setting off → the same interruption blocks
+  const dataDir2 = tmpDir('edict-data-');
+  const rt3 = makeRuntime(mock.url, 'openai-chat', dataDir2);
+  rt3.updateSettings({ autoResumeSafe: false });
+  rt3.setWorkspace(ws);
+  const r3 = (await submit(rt3, { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true })) as { taskId: string };
+  await waitFor(() => rt3.tasks.get(r3.taskId)!.nodes.some((n) => n.kind === 'plan' && n.status === 'running'), 20000, 'plan running');
+  rt3.flushAll();
+  for (const c of rt3.controllers.values()) c.abort();
+  const rt4 = makeRuntime(mock.url, 'openai-chat', dataDir2);
+  rt3.dispose();
+  assert.equal(rt4.tasks.get(r3.taskId)!.state, 'Blocked');
+  rt4.dispose();
   await mock.close();
 });
 

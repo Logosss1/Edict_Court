@@ -10,11 +10,13 @@ import { makeRuntime, tmpDir, waitFor, stateOf } from './helpers';
 import { parseMcpConfig, interpolate, extractSecrets, exposedName } from '../src/main/mcp/manager';
 import { executeTool } from '../src/main/runtime/tools';
 import { submit } from '../src/main/runtime/orchestrator';
+import { executeMcpResourceTool, mcpResourceToolSpecsFor } from '../src/main/mcp/resourceTools';
 
 const FIXTURE = path.resolve('tests/fixtures/mcp-echo-server.mjs');
+const RES_FIXTURE = path.resolve('tests/fixtures/mcp-resources-server.mjs');
 const stdioCfg = (extra: Record<string, unknown> = {}) => JSON.stringify({ mcpServers: { demo: { command: process.execPath, args: [FIXTURE], env: { ECHO_PREFIX: 'P' }, ...extra } } });
 
-test('config: Cursor + VS Code shapes, validation, interpolation, secret extraction, exposed names', () => {
+test('config: mcpServers + servers shapes, validation, interpolation, secret extraction, exposed names', () => {
   assert.deepEqual(Object.keys(parseMcpConfig('{"servers":{"a":{"url":"https://x/mcp"}}}').mcpServers), ['a']);
   assert.throws(() => parseMcpConfig('{"mcpServers":{"bad name!":{"command":"x"}}}'), /服务名不合法/);
   assert.throws(() => parseMcpConfig('{"mcpServers":{"a":{}}}'), /command/);
@@ -212,6 +214,109 @@ test('agent (mock LLM) calls an MCP tool during a Solo task; result lands in the
   assert.equal(stateOf(rt, r.taskId), 'Done');
   const res = rt.activities(r.taskId, 200).find((a) => a.kind === 'tool_result' && a.data?.name === 'mcp__demo__echo');
   assert.equal(res?.content, 'P:朕知道了');
+  rt.dispose();
+  await mock.close();
+});
+
+test('resources & prompts over stdio: capabilities honoured, pagination, templates, text / blob / truncated reads, list_changed, prompts as composer text, agent tools + grants', async () => {
+  const mock = await startMockLlm();
+  const rt = makeRuntime(mock.url);
+  rt.mcp.load(false);
+  rt.mcp.saveConfig(JSON.stringify({ mcpServers: { res: { command: process.execPath, args: [RES_FIXTURE] }, demo: { command: process.execPath, args: [FIXTURE] } } }), ['res', 'demo']);
+  await waitFor(() => ['res', 'demo'].every((n) => ['ok', 'error'].includes(rt.mcp.states.get(n)?.status ?? '')), 15000, 'both connected');
+  const st = rt.mcp.states.get('res')!;
+  assert.equal(st.status, 'ok', st.error);
+  assert.deepEqual(st.capabilities, { tools: true, resources: true, prompts: true });
+  assert.deepEqual(st.resources!.map((r) => r.uri), ['fixture://readme', 'fixture://logo', 'fixture://big', 'fixture://multi'], 'both resource pages listed');
+  assert.equal(st.resourceCount, 4);
+  assert.equal(st.resources![0].title, '说明');
+  assert.deepEqual(st.resourceTemplates!.map((t) => t.uriTemplate), ['fixture://notes/{id}']);
+  assert.deepEqual(st.prompts!.map((p) => p.name), ['review', 'greet']);
+  assert.deepEqual(st.prompts![0].arguments.map((a) => [a.name, a.required]), [['file', true], ['focus', false]]);
+
+  // a server without the capabilities is never asked for them
+  const demo = rt.mcp.states.get('demo')!;
+  assert.deepEqual(demo.capabilities, { tools: true, resources: false, prompts: false });
+  assert.equal(demo.resources, undefined);
+  assert.deepEqual(await rt.mcp.listResources('demo'), []);
+  await assert.rejects(rt.mcp.readResource('demo', 'x://y'), /未提供资源/);
+  await assert.rejects(rt.mcp.getPrompt('demo', 'x'), /未提供提示词/);
+  assert.ok(!demo.logs.some((l) => /unsupported method (resources|prompts)\//.test(l.text)), 'no resources/prompts requests without the capability');
+
+  // listing across servers
+  const all = await rt.mcp.listResources();
+  assert.deepEqual(all.map((r) => `${r.server} ${r.uri}`), ['res fixture://readme', 'res fixture://logo', 'res fixture://big', 'res fixture://multi']);
+  // text
+  const readme = await rt.mcp.readResource('res', 'fixture://readme');
+  assert.equal(readme.contents[0].text, '# Hello\nfixture readme');
+  assert.equal(readme.contents[0].mimeType, 'text/markdown');
+  assert.match(readme.text, /^【fixture:\/\/readme】 text\/markdown\n# Hello/);
+  // binary → blob store, referenced by hash
+  const logo = await rt.mcp.readResource('res', 'fixture://logo');
+  assert.equal(logo.contents[0].bytes, 16);
+  assert.ok(rt.blobs.get(logo.contents[0].blob!)!.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])));
+  assert.match(logo.text, /二进制内容 16 B · 已保存 · [0-9a-f]{12}/);
+  assert.equal(logo.contents[0].text, undefined);
+  // oversized text truncated; the full text is kept
+  const big = await rt.mcp.readResource('res', 'fixture://big', { maxChars: 1000 });
+  assert.equal(big.contents[0].truncated, true);
+  assert.equal(big.contents[0].text!.length, 1000);
+  assert.ok(rt.blobs.get(big.contents[0].blob!)!.toString('utf8').endsWith('END'));
+  assert.match(big.text, /已截断：原文 30003 字符/);
+  // several contents, template URIs, unknown resource
+  const multi = await rt.mcp.readResource('res', 'fixture://multi');
+  assert.deepEqual(multi.contents.map((c) => c.uri), ['fixture://multi#a', 'fixture://multi#b']);
+  assert.equal(rt.blobs.get(multi.contents[1].blob!)!.toString('utf8'), 'BINARY');
+  assert.equal((await rt.mcp.readResource('res', 'fixture://notes/7')).contents[0].text, 'note 7');
+  await assert.rejects(rt.mcp.readResource('res', 'fixture://nope'), /Resource not found/);
+
+  // prompts → plain text for the composer
+  assert.deepEqual((await rt.mcp.listPrompts()).map((p) => `${p.server}/${p.name}`), ['res/review', 'res/greet']);
+  await assert.rejects(rt.mcp.getPrompt('res', 'review', {}), /缺少必填参数：file/);
+  const review = await rt.mcp.getPrompt('res', 'review', { file: 'src/a.ts', focus: 42 });
+  assert.deepEqual(review.messages.map((m) => m.role), ['user', 'assistant', 'user']);
+  assert.equal(review.text, '【用户】\n请审查 src/a.ts，重点：42\n\n【助手】\n好的，请提供文件。\n\n【用户】\n# Hello');
+  assert.equal(review.description, 'Review prompt');
+  const greet = await rt.mcp.getPrompt('res', 'greet');
+  assert.match(greet.text, /^你好\n\n\[图片 image\/png 已保存 · [0-9a-f]{12}\]$/);
+
+  // list_changed notifications refresh the state
+  assert.equal((await executeTool({ rt, agentId: 'solo' }, 'mcp__res__mutate', {})).output, 'mutated');
+  await waitFor(() => st.resourceCount === 5 && st.prompts?.some((p) => p.name === 'added_prompt'), 5000, 'list_changed handled');
+
+  // agent tools
+  assert.deepEqual(mcpResourceToolSpecsFor(rt, 'bingbu').map((s) => s.name), ['mcp_list_resources', 'mcp_read_resource']);
+  const listed = await executeMcpResourceTool({ rt, agentId: 'bingbu' }, 'mcp_list_resources', {});
+  assert.equal(listed.ok, true);
+  assert.match(listed.output, /共 5 项资源/);
+  assert.match(listed.output, /fixture:\/\/added/);
+  assert.match(listed.output, /模板 fixture:\/\/notes\/\{id\} — note/);
+  assert.ok(!listed.output.includes('## demo'), 'servers without resources are skipped');
+  const read = await executeMcpResourceTool({ rt, agentId: 'bingbu' }, 'mcp_read_resource', { server: 'res', uri: 'fixture://readme' });
+  assert.equal(read.ok, true);
+  assert.match(read.output, /外部数据/);
+  assert.match(read.output, /# Hello/);
+  assert.match((await executeMcpResourceTool({ rt, agentId: 'bingbu' }, 'mcp_read_resource', { server: 'demo', uri: 'x' })).output, /未提供资源/);
+  assert.match((await executeMcpResourceTool({ rt, agentId: 'bingbu' }, 'mcp_read_resource', { server: 'res' })).output, /server 与 uri/);
+  // reading is a read operation: allowed in read-only mode
+  rt.updateSettings({ permissionMode: 'readonly' });
+  assert.equal((await executeMcpResourceTool({ rt, agentId: 'bingbu' }, 'mcp_read_resource', { server: 'res', uri: 'fixture://notes/1' })).ok, true);
+  rt.updateSettings({ permissionMode: 'auto' });
+  // per-server agent grant
+  rt.mcp.setServerPolicy('res', { agents: ['xingbu'] });
+  assert.deepEqual(mcpResourceToolSpecsFor(rt, 'bingbu'), []);
+  assert.match((await executeMcpResourceTool({ rt, agentId: 'bingbu' }, 'mcp_read_resource', { server: 'res', uri: 'fixture://readme' })).output, /未获授权/);
+  assert.match((await executeMcpResourceTool({ rt, agentId: 'bingbu' }, 'mcp_list_resources', { server: 'res' })).output, /未获授权/);
+  assert.match((await executeMcpResourceTool({ rt, agentId: 'bingbu' }, 'mcp_list_resources', {})).output, /没有可用的 MCP 资源/);
+  assert.equal((await executeMcpResourceTool({ rt, agentId: 'xingbu' }, 'mcp_read_resource', { server: 'res', uri: 'fixture://readme' })).ok, true);
+
+  // audit: who read what (URI, sizes), never the contents
+  const audit = fs.readFileSync(path.join(rt.opts.dataDir, 'audit.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  const reads = audit.filter((a) => a.action === 'mcp_resource_read');
+  assert.ok(reads.some((a) => a.actor === 'xingbu' && a.detail.uri === 'fixture://readme' && a.detail.ok === true));
+  assert.ok(reads.some((a) => a.detail.ok === false && /Resource not found/.test(a.detail.error)));
+  assert.ok(!JSON.stringify(reads).includes('fixture readme'), 'resource contents never in audit');
+  assert.ok(audit.some((a) => a.action === 'mcp_prompt_get' && a.detail.prompt === 'review' && a.detail.argKeys.includes('file') && !JSON.stringify(a).includes('src/a.ts')));
   rt.dispose();
   await mock.close();
 });

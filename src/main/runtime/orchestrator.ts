@@ -2,7 +2,7 @@
 // RunNode, so an interrupted/failed node can be retried locally without replaying the
 // whole agent tree. 门下省 review is structural — there is no code path from Zhongshu to
 // Assigned that does not pass a Menxia verdict (or the emperor's explicit decision).
-import type { CollabDesign, DesignPin, MinistryId, ModelRef, Plan, Review, RunNode, Session, Subtask, Task, Tier } from '../../shared/types';
+import type { CollabDesign, DesignPin, MinistryId, ModelRef, Plan, RevertResult, Review, RunNode, Session, Subtask, Task, Tier } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL, agentName } from '../../shared/court';
 import { runAgent } from './agentLoop';
@@ -12,7 +12,12 @@ import { ALL_TOOLS, READ_TOOLS } from './tools';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { extractJson, now, sha256, truncate, uid } from './util';
 import { createDebate, runDebate, concludeDebate } from './debate';
+import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt, nodeConclusion, parseConclusion, scheduleExec, toolsForNode } from './execPolicy';
+export { parseConclusion, type ExecConclusion } from './execPolicy';
 import { flowDecideGate, flowStep } from './flow';
+import { canonBlock } from './canon';
+import { hasOwnTree, prepareWorkspace } from './worktrees';
+import { expandMcpRefs } from '../mcp/refs';
 import { BUILTIN_DESIGN_ID, PHASE_STATE } from '../../shared/design';
 
 const drivingByRt = new WeakMap<Runtime, Set<string>>();
@@ -46,24 +51,26 @@ export type SubmitResult = { kind: 'chat'; sessionId: string; reply: string } | 
 
 // ───────────────────────── submission (下旨) ─────────────────────────
 export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitResult> {
-  const text = input.text.trim();
-  if (!text) throw new Error('旨意内容为空');
+  const typed = input.text.trim();
+  if (!typed) throw new Error('旨意内容为空');
   // a custom 协同设计 is pinned now (version + hash + snapshot); later switches never affect this edict
   const pinned = input.designId && input.designId !== BUILTIN_DESIGN_ID ? rt.designs.pin(input.designId) : undefined;
   const tier: Tier = pinned?.spec ? pinned.spec.policies.tier : input.multiAgent ? input.tier : 'solo';
-  rt.audit.record('emperor', 'edict_submitted', { design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: text.length, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
+  // @mcp:<server>/<uri> references: the resource text is appended (【附带资源】) to what every official sees
+  const { text, refs } = await expandMcpRefs(rt, typed);
+  rt.audit.record('emperor', 'edict_submitted', { design: pinned ? `${pinned.pin.id}@${pinned.pin.version}` : null, tier, chars: typed.length, mcpRefs: refs.length || undefined, templateId: input.templateId, effort: input.effort ?? null, model: input.model ? `${input.model.providerId}/${input.model.model}` : null });
 
   if (tier === 'solo') {
     let session = input.sessionId ? rt.sessions.get(input.sessionId) : undefined;
     if (!session) {
-      session = { id: uid('ss'), title: text.slice(0, 30), source: 'solo', agentId: 'solo', messages: [], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
+      session = { id: uid('ss'), title: typed.slice(0, 30), source: 'solo', agentId: 'solo', messages: [], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
       rt.sessions.set(session.id, session);
       const a = rt.agents.get('solo');
       if (a) a.sessions++;
     }
     session.messages.push({ role: 'user', content: text, at: now() });
     session.updatedAt = now();
-    const task = createTask(rt, { text, tier, title: text.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort });
+    const task = createTask(rt, { text, tier, title: typed.replace(/\s+/g, ' ').slice(0, 28), model: input.model ?? null, sessionId: session.id, templateId: input.templateId, effort: input.effort });
     session.taskId = task.id;
     rt.emit({ type: 'session', session });
     void drive(rt, task.id);
@@ -71,9 +78,9 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
   }
 
   // 太子分拣
-  let title = text.replace(/\s+/g, ' ').slice(0, 20);
+  let title = typed.replace(/\s+/g, ' ').slice(0, 20);
   let triageOutput = '{"type":"edict","reason":"皇上直接下旨"}';
-  const session: Session = { id: uid('ss'), title: text.slice(0, 30), source: 'taizi-chat', agentId: 'taizi', messages: [{ role: 'user', content: text, at: now() }], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
+  const session: Session = { id: uid('ss'), title: typed.slice(0, 30), source: 'taizi-chat', agentId: 'taizi', messages: [{ role: 'user', content: text, at: now() }], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
   if (!input.forceEdict) {
     rt.sessions.set(session.id, session);
     rt.emit({ type: 'session', session });
@@ -141,6 +148,12 @@ export async function drive(rt: Runtime, taskId: string): Promise<void> {
       if (!t) return;
       ws = t.workspace;
       if (TERMINAL.includes(t.state) || t.state === 'Blocked' || t.paused || t.gate) return;
+      // its own worktree is made when the edict leaves triage, before anything reads or writes files
+      const missing = await prepareWorkspace(rt, t);
+      if (missing) {
+        block(rt, t, missing);
+        return;
+      }
       const progressed = await step(rt, t);
       if (!progressed) return;
     }
@@ -155,7 +168,8 @@ export async function drive(rt: Runtime, taskId: string): Promise<void> {
 }
 
 function kickQueued(rt: Runtime, ws: string | null) {
-  for (const t of rt.tasks.values()) if (t.state === 'Next' && t.workspace === ws && !drivingSet(rt).has(t.id)) void drive(rt, t.id);
+  // only once the folder is free: re-driving a still-queued edict would kick itself again forever (a microtask loop)
+  for (const t of rt.tasks.values()) if (t.state === 'Next' && t.workspace === ws && !drivingSet(rt).has(t.id) && !otherDoing(rt, t)) void drive(rt, t.id);
 }
 
 export function block(rt: Runtime, t: Task, reason: string) {
@@ -166,7 +180,7 @@ export function block(rt: Runtime, t: Task, reason: string) {
   } catch {
     /* already terminal */
   }
-  rt.opts.notify?.('旨意阻塞', `${t.title}：${truncate(reason, 80)}`);
+  rt.notifyDesktop('attention', '旨意阻塞', `${t.title}：${truncate(reason, 80)}`);
 }
 
 export class NodeFailedError extends Error {}
@@ -178,8 +192,26 @@ export async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Pro
   node.endedAt = undefined;
   node.error = undefined;
   node.errorInfo = undefined;
+  node.sideEffects = false;
   rt.touch(t);
   rt.activity('log', `▶ ${node.label}（${agentName(node.agentId)}）${node.attempts > 1 ? ` 第 ${node.attempts} 次` : ''}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
+  // wall-clock limit per node (time spent waiting on the emperor does not count)
+  const key = `${t.id}/${node.id}`;
+  const ctl = new AbortController();
+  rt.nodeControllers.set(key, ctl);
+  const limitMin = Math.max(0, rt.settings.nodeTimeoutMin ?? 30);
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = (ms: number) => {
+    timer = setTimeout(() => {
+      if (waitingOnEmperor(rt, t, node)) return arm(60_000);
+      timedOut = true;
+      rt.audit.record('system', 'node_timeout', { node: node.id, minutes: limitMin }, t.id);
+      ctl.abort();
+    }, ms);
+    timer.unref?.();
+  };
+  if (limitMin) arm(limitMin * 60_000);
   try {
     const out = await fn();
     node.output = out;
@@ -190,9 +222,12 @@ export async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Pro
     if (a) a.completed++;
     rt.touch(t);
     return out;
-  } catch (e) {
+  } catch (err) {
+    let e = err;
     node.endedAt = now();
-    if (e instanceof TaskAbortedError || rt.controllers.get(t.id)?.signal.aborted) {
+    const taskAborted = rt.controllers.get(t.id)?.signal.aborted;
+    if (timedOut && !taskAborted) e = new Error(`超过单节点时限 ${limitMin} 分钟，已终止。可局部重试，或在「设置」里调整时限`);
+    else if (e instanceof TaskAbortedError || taskAborted) {
       node.status = 'cancelled';
       node.exitStatus = 'cancelled';
       rt.touch(t);
@@ -206,8 +241,14 @@ export async function runNode(rt: Runtime, t: Task, node: RunNode, fn: () => Pro
     rt.audit.record(node.agentId, 'node_failed', { node: node.id, error: truncate(node.error, 300), kind: node.errorInfo?.kind ?? null, runId: node.runId }, t.id);
     rt.touch(t);
     throw new NodeFailedError(`${node.label} 失败：${node.error}`);
+  } finally {
+    if (timer) clearTimeout(timer);
+    rt.nodeControllers.delete(key);
+    rt.releaseWriteLock(t.id, node.id);
   }
 }
+
+const waitingOnEmperor = (rt: Runtime, t: Task, node: RunNode) => t.paused || !!t.gate || [...rt.approvals.values()].some((a) => a.status === 'pending' && a.taskId === t.id && (!a.nodeId || a.nodeId === node.id));
 
 export function ensureNode(t: Task, id: string, init: Omit<RunNode, 'id' | 'status' | 'attempts'>): RunNode {
   let n = t.nodes.find((x) => x.id === id);
@@ -253,20 +294,28 @@ async function step(rt: Runtime, t: Task): Promise<boolean> {
   }
 }
 
+/** Another edict is executing in the same folder (edicts with their own worktree never wait, nor make others wait). */
 export function otherDoing(rt: Runtime, t: Task) {
-  return [...rt.tasks.values()].some((x) => x.id !== t.id && x.state === 'Doing' && x.tier !== 'solo' && x.workspace && x.workspace === t.workspace);
+  if (hasOwnTree(t)) return false;
+  return [...rt.tasks.values()].some((x) => x.id !== t.id && x.state === 'Doing' && x.tier !== 'solo' && !hasOwnTree(x) && x.workspace && x.workspace === t.workspace);
 }
 
 // ───────────────────────── 中书省 ─────────────────────────
 export function repoContext(rt: Runtime, t: Task): string {
-  if (!rt.workspace || t.workspace !== rt.workspace.root) return '（未打开工作区：本旨意不涉及本地文件，或仅产出文本。）';
+  const ws = rt.workspaceFor(t);
+  if (!ws) return '（未打开工作区：本旨意不涉及本地文件，或仅产出文本。）';
   try {
-    const map = rt.workspace.repoMap(120);
-    const outline = rt.workspace.outlineMap(30, 10);
+    const map = ws.repoMap(120);
+    const outline = ws.outlineMap(30, 10);
     return `【仓库地图】\n${truncate(map, 6000)}\n\n【符号大纲（节选）】\n${truncate(outline || '（无）', 5000)}`;
   } catch (e) {
     return `（仓库地图生成失败：${(e as Error).message}）`;
   }
+}
+
+/** E2: the workspace's rule files plus the emperor's 典章, for every prompt that plans, reviews or does the work. */
+export function guidance(rt: Runtime, t: Task): string {
+  return canonBlock(rt, t, rt.workspaceFor(t));
 }
 
 /** `allowed` = executor roles of a 协同设计 (id → name); default = the six ministries. */
@@ -287,7 +336,7 @@ export function validatePlan(p: unknown, allowed?: Record<string, string>): { pl
       if (byName) dept = byName as MinistryId;
       else return { error: `子任务 ${id} 的${allowed ? '执行角色' : '部门'}无效：${s.dept}（应为 ${deptIds.join('/')}）` };
     }
-    subs.push({ id, title: String(s.title ?? '').trim() || `子任务 ${id}`, dept, detail: String(s.detail ?? ''), acceptance: String(s.acceptance ?? ''), dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn.map(String) : [] });
+    subs.push({ id, title: String(s.title ?? '').trim() || `子任务 ${id}`, dept, detail: String(s.detail ?? ''), acceptance: String(s.acceptance ?? ''), dependsOn: Array.isArray(s.dependsOn) ? s.dependsOn.map(String) : [], effect: effectOf(s) });
   }
   for (const s of subs) for (const d of s.dependsOn) if (!ids.has(d)) return { error: `子任务 ${s.id} 依赖不存在的 ${d}` };
   // cycle check
@@ -336,7 +385,7 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
   const node = ensureNode(t, `plan-${version}`, { kind: 'plan', agentId: 'zhongshu', label: version === 1 ? '中书规划' : `中书重拟 v${version}` });
   if (node.status === 'failed' || node.status === 'cancelled') return false;
   await runNode(rt, t, node, async () => {
-    const parts = [`【旨意】${t.title}\n${t.edict}`, repoContext(rt, t)];
+    const parts = [`【旨意】${t.title}\n${t.edict}`, repoContext(rt, t), guidance(rt, t)].filter(Boolean);
     const debate = t.debateId ? rt.debates.get(t.debateId) : undefined;
     if (debate?.conclusion) parts.push(`【朝堂议政结论】\n${truncate(debate.conclusion, 3000)}`);
     if (latest && lastRej) {
@@ -345,7 +394,7 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
     }
     parts.push(t.tier === 'lite' ? '档位：Court Lite —— 子任务控制在 1~3 个，避免仪式性步骤。' : '档位：Full Court —— 子任务 2~6 个，充分利用六部并行，写清依赖。');
     parts.push('请输出方案 JSON。');
-    const tools = rt.workspace && t.workspace === rt.workspace.root ? READ_TOOLS : undefined;
+    const tools = rt.workspaceFor(t) ? READ_TOOLS : undefined;
     const r = await runAgent({ rt, agentId: 'zhongshu', task: t, node, prompt: parts.join('\n\n'), tools, maxSteps: 6, maxTokens: 4000, temperature: 0.3, label: node.label });
     let v = validatePlan(extractJson(r.text));
     if (!v.plan) {
@@ -401,9 +450,10 @@ async function stepMenxia(rt: Runtime, t: Task): Promise<boolean> {
       `【旨意】${t.title}\n${t.edict}`,
       `【中书省方案 v${latest.version}${latest.author === 'emperor' ? '（皇上涂改版）' : ''}】\n${JSON.stringify(latest.plan, null, 1)}`,
       reviews.length ? `【此前审议】\n${reviews.map((r) => `第${r.round}轮 ${r.verdict === 'approve' ? '准奏' : '封驳'}：${r.comment}`).join('\n')}` : '',
+      guidance(rt, t),
       `这是第 ${round} 轮审议（封驳上限 ${t.budget.maxRejections} 次，超限将升级皇上裁决）。请从可行性、完整性、风险、资源四个维度审议，输出 JSON。`,
     ].filter(Boolean).join('\n\n');
-    const tools = rt.workspace && t.workspace === rt.workspace.root ? READ_TOOLS : undefined;
+    const tools = rt.workspaceFor(t) ? READ_TOOLS : undefined;
     const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt, tools, maxSteps: 4, maxTokens: 1500, temperature: 0.2, label: node.label });
     verdict = parseVerdict(r.text);
     if (!verdict) {
@@ -453,7 +503,7 @@ async function stepAssigned(rt: Runtime, t: Task): Promise<boolean> {
     if (node.status === 'failed' || node.status === 'cancelled') return false;
     if (node.status !== 'done') {
       await runNode(rt, t, node, async () => {
-        const r = await runAgent({ rt, agentId: 'shangshu', task: t, node, prompt: `【旨意】${t.title}\n${t.edict}\n\n【准奏方案】\n${JSON.stringify(plan, null, 1)}\n\n请为每个子任务写执行令，输出 JSON。`, maxTokens: 2500, temperature: 0.2, label: '尚书派发' });
+        const r = await runAgent({ rt, agentId: 'shangshu', task: t, node, prompt: `【旨意】${t.title}\n${t.edict}\n\n【准奏方案】\n${JSON.stringify(plan, null, 1)}\n\n请为每个子任务写执行令，输出 JSON。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2500, temperature: 0.2, label: '尚书派发' });
         const j = extractJson<{ orders?: { subtaskId: string; instruction: string }[]; note?: string }>(r.text);
         const orders = (j?.orders ?? []).filter((o) => plan.subtasks.some((s) => s.id === o.subtaskId));
         return JSON.stringify({ orders, note: j?.note ?? '' });
@@ -465,23 +515,6 @@ async function stepAssigned(rt: Runtime, t: Task): Promise<boolean> {
 }
 
 // ───────────────────────── 六部执行 ─────────────────────────
-export interface ExecConclusion {
-  status: 'done' | 'partial' | 'failed';
-  summary: string;
-  artifacts: string[];
-  verification: string;
-  issues: string[];
-}
-
-export function parseConclusion(text: string): ExecConclusion {
-  const j = extractJson<Partial<ExecConclusion>>(text);
-  if (j && typeof j === 'object' && 'summary' in j) {
-    const st = String(j.status ?? 'done');
-    return { status: (['done', 'partial', 'failed'].includes(st) ? st : 'done') as ExecConclusion['status'], summary: String(j.summary ?? ''), artifacts: Array.isArray(j.artifacts) ? j.artifacts.map(String) : [], verification: String(j.verification ?? '未说明'), issues: Array.isArray(j.issues) ? j.issues.map(String) : [] };
-  }
-  return { status: 'done', summary: truncate(text.trim(), 600), artifacts: [], verification: '未提供结构化结论', issues: ['未按格式输出结构化结论'] };
-}
-
 function latestExecNode(t: Task, subId: string): RunNode | undefined {
   return [...t.nodes].reverse().find((n) => n.kind === 'exec' && n.subtaskId === subId);
 }
@@ -499,34 +532,24 @@ async function stepDoing(rt: Runtime, t: Task): Promise<boolean> {
   }
   const nodes = targets.map((id) => {
     const sub = plan.subtasks.find((s) => s.id === id)!;
-    return ensureNode(t, `exec-${id}-r${round}`, { kind: 'exec', agentId: sub.dept, label: `${AGENT_MAP[sub.dept].name}·${sub.title}${round > 1 ? `（返工 ${round - 1}）` : ''}`, subtaskId: id });
+    const n = ensureNode(t, `exec-${id}-r${round}`, { kind: 'exec', agentId: sub.dept, label: `${AGENT_MAP[sub.dept].name}·${sub.title}${round > 1 ? `（返工 ${round - 1}）` : ''}`, subtaskId: id, effect: effectOf(sub) });
+    n.effect ??= effectOf(sub);
+    return n;
   });
   rt.touch(t);
   const isDone = (subId: string) => latestExecNode(t, subId)?.status === 'done';
-  const running = new Map<string, Promise<void>>();
-  const limit = Math.max(1, rt.settings.parallelism);
-  const failed: string[] = [];
-  while (true) {
-    const pending = nodes.filter((n) => n.status === 'pending');
-    const ready = pending.filter((n) => plan.subtasks.find((s) => s.id === n.subtaskId)!.dependsOn.every(isDone));
-    for (const n of ready) {
-      if (running.size >= limit) break;
-      if (running.has(n.id)) continue;
-      const p = runExec(rt, t, n, orders[n.subtaskId!])
-        .catch((e) => {
-          if (e instanceof TaskAbortedError) throw e;
-          failed.push(n.label);
-        })
-        .finally(() => running.delete(n.id));
-      running.set(n.id, p);
-    }
-    if (!running.size) break;
-    await Promise.race(running.values());
-  }
+  await scheduleExec(nodes, {
+    limit: Math.max(1, rt.settings.parallelism),
+    ready: (n) => plan.subtasks.find((s) => s.id === n.subtaskId)!.dependsOn.every(isDone),
+    run: (n) =>
+      runExec(rt, t, n, orders[n.subtaskId!]).catch((e) => {
+        if (e instanceof TaskAbortedError) throw e;
+      }),
+  });
   const stuck = nodes.filter((n) => n.status === 'pending');
   const bad = nodes.filter((n) => n.status === 'failed' || n.status === 'cancelled');
   if (bad.length || stuck.length) {
-    block(rt, t, `${bad.length ? `${bad.map((n) => n.label).join('、')} 执行失败` : ''}${stuck.length ? `；${stuck.length} 个子任务因依赖未完成而未启动` : ''}。可对失败节点「局部重试」`);
+    block(rt, t, execBlockReason(bad, stuck));
     return false;
   }
   rt.transition(t, 'Review', 'shangshu', round > 1 ? `返工完成（第 ${round - 1} 次），汇总回奏` : '六部执行完毕，汇总回奏');
@@ -536,6 +559,8 @@ async function stepDoing(rt: Runtime, t: Task): Promise<boolean> {
 async function runExec(rt: Runtime, t: Task, node: RunNode, order?: string): Promise<void> {
   const plan = t.plan!;
   const sub = plan.subtasks.find((s) => s.id === node.subtaskId)!;
+  const hasWs = !!rt.workspaceFor(t);
+  await confirmWriteTask(rt, t, node, sub, AGENT_MAP[sub.dept].name, hasWs);
   await runNode(rt, t, node, async () => {
     const deps = sub.dependsOn.map((d) => {
       const n = latestExecNode(t, d);
@@ -549,31 +574,34 @@ async function runExec(rt: Runtime, t: Task, node: RunNode, order?: string): Pro
       order ? `【尚书省执行令】${order}` : '',
       deps.length ? `【上游子任务结论】\n${deps.join('\n')}` : '',
       node.id.endsWith('-r1') ? '' : `【返工要求（${t.rework?.by === 'emperor' ? '皇上' : '门下省'}）】\n${t.rework?.feedback ?? ''}\n【你上一轮的结论】${truncate(prev?.output ?? '无', 1500)}`,
-      rt.workspace && t.workspace === rt.workspace.root ? repoContext(rt, t) : '（未打开工作区：无法读写文件，请直接在结论中给出成果文本）',
+      hasWs ? grantPrompt(node) : '',
+      hasWs ? repoContext(rt, t) : '（未打开工作区：无法读写文件，请直接在结论中给出成果文本）',
+      guidance(rt, t),
       EXEC_OUTPUT_RULE,
     ].filter(Boolean);
-    const tools = rt.workspace && t.workspace === rt.workspace.root ? ALL_TOOLS : undefined;
+    const tools = toolsForNode(node, hasWs ? ALL_TOOLS : undefined);
     const r = await runAgent({ rt, agentId: sub.dept, task: t, node, prompt: parts.join('\n\n'), tools, maxSteps: 30, maxTokens: 8000, temperature: 0.2, label: node.label });
-    const c = parseConclusion(r.text);
-    // system verification of claimed artifacts (never trust self-reports)
-    const checks: string[] = [];
-    if (rt.workspace && t.workspace === rt.workspace.root) {
-      for (const a of c.artifacts) {
-        try {
-          const buf = rt.workspace.readBuffer(a);
-          checks.push(buf ? `${a} ✓ sha256:${sha256(buf).slice(0, 12)}` : `${a} ✗ 不存在`);
-        } catch (e) {
-          checks.push(`${a} ✗ ${(e as Error).message}`);
-        }
-      }
-      const touched = t.changes.filter((ch) => ch.nodeId === node.id).map((ch) => `${ch.op}:${ch.path}`);
-      checks.push(`系统记录的改动：${touched.length ? touched.join(', ') : '无'}`);
+    let c = parseConclusion(r.text);
+    if (!c.structured) {
+      // one format-repair turn: same conversation, no tools, conclusion only
+      const r2 = await runAgent({ rt, agentId: sub.dept, task: t, node, history: r.messages, prompt: `请只输出结构化结论，不要再调用工具。\n${EXEC_OUTPUT_RULE}`, maxTokens: 1500, temperature: 0, label: `${node.label}（结论格式修正）` });
+      const c2 = parseConclusion(r2.text);
+      if (c2.structured) c = c2;
     }
-    const out = { ...c, systemCheck: checks };
-    if (c.status === 'failed') throw new Error(`${AGENT_MAP[sub.dept].name}自报失败：${c.summary}`);
-    return JSON.stringify(out);
+    const { conclusion, systemCheck } = checkEvidence(t, node, c, r.toolCounts, rt.workspaceFor(t) ?? undefined);
+    if (conclusion.status === 'failed') throw new Error(`${AGENT_MAP[sub.dept].name}自报失败：${conclusion.summary}`);
+    if (conclusion.status === 'partial') rt.activity('log', `⚠ ${node.label} 成果存疑：${conclusion.issues.join('；') || '自报部分完成'}`, { taskId: t.id, agentId: node.agentId, nodeId: node.id });
+    const { structured: _s, ...plain } = conclusion as typeof conclusion & { structured?: boolean };
+    return JSON.stringify({ ...plain, systemCheck });
   });
 }
+
+/** Latest exec nodes whose conclusion is partial (成果存疑). */
+function doubtfulNodes(t: Task): RunNode[] {
+  return (t.plan?.subtasks ?? []).map((s) => latestExecNode(t, s.id)).filter((n): n is RunNode => !!n && nodeConclusion(n)?.status === 'partial');
+}
+
+const doubtText = (nodes: RunNode[]) => nodes.map((n) => `${n.label}（${(nodeConclusion(n)?.issues ?? []).slice(0, 2).join('；') || '自报部分完成'}）`).join('；');
 
 // ───────────────────────── 回奏 & 成果审议 ─────────────────────────
 async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
@@ -585,7 +613,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
     await runNode(rt, t, sNode, async () => {
       const concl = plan.subtasks.map((s) => `- ${s.id}（${AGENT_MAP[s.dept].name}）${s.title}：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1500)}`);
       const changes = summarizeChanges(t);
-      const r = await runAgent({ rt, agentId: 'shangshu', task: t, node: sNode, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【各部结构化结论】\n${concl.join('\n')}\n\n【系统核验的文件改动】\n${changes || '无'}\n\n请撰写回奏折（Markdown）。`, maxTokens: 2000, temperature: 0.3, label: sNode.label });
+      const r = await runAgent({ rt, agentId: 'shangshu', task: t, node: sNode, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【各部结构化结论】\n${concl.join('\n')}\n\n【系统核验的文件改动】\n${changes || '无'}\n\n请撰写回奏折（Markdown）。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2000, temperature: 0.3, label: sNode.label });
       t.result = { summary: r.text.trim(), artifacts: t.result?.artifacts ?? [] };
       return truncate(r.text.trim(), 4000);
     });
@@ -599,8 +627,8 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       let verdict: ReturnType<typeof parseVerdict> = null;
       await runNode(rt, t, node, async () => {
         const concl = plan.subtasks.map((s) => `- ${s.id} ${s.title}（验收：${s.acceptance}）：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1200)}`);
-        const tools = rt.workspace && t.workspace === rt.workspace.root ? (['view_changes', 'read_file', 'list_dir', 'search'] as const) : (['view_changes'] as const);
-        const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
+        const tools = rt.workspaceFor(t) ? (['view_changes', 'read_file', 'list_dir', 'search', 'load_skill'] as const) : (['view_changes', 'load_skill'] as const);
+        const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}${(() => { const g = guidance(rt, t); return g ? `\n\n${g}` : ''; })()}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
         verdict = parseVerdict(r.text);
         if (!verdict) {
           const r2 = await runAgent({ rt, agentId: 'menxia', task: t, node, history: r.messages, prompt: '请只输出审议结论 JSON：{"verdict":"approve"|"reject","issues":[],"comment":"","rework":[]}', maxTokens: 800, temperature: 0, label: '门下省修正格式' });
@@ -630,9 +658,15 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       return false; // waiting for emperor (gate) — handled by decideGate
     }
   }
+  // Court Lite has no 门下 result review: doubtful conclusions must not close the edict unseen
+  const doubtful = t.tier === 'lite' ? doubtfulNodes(t) : [];
   if (rt.settings.finalGate) {
     rt.transition(t, 'PendingConfirm', 'shangshu', '回奏待皇上御批');
-    rt.setGate(t, { kind: 'final', message: '请御览回奏与改动：准奏则结案，封驳则发回返工' });
+    rt.setGate(t, { kind: 'final', message: doubtful.length ? `成果存疑：${doubtText(doubtful)}。请御览回奏与改动：准奏则结案，封驳则发回返工` : '请御览回奏与改动：准奏则结案，封驳则发回返工' });
+    return false;
+  }
+  if (doubtful.length && !t.reviews.some((r) => r.stage === 'result' && r.round === round && r.reviewer === 'emperor')) {
+    rt.setGate(t, { kind: 'reject_limit', message: `成果存疑：${doubtText(doubtful)}。请皇上裁决：准奏则结案，封驳则发回返工`, nodeId: doubtful[0].id });
     return false;
   }
   rt.transition(t, 'Done', 'shangshu', '回奏结案');
@@ -641,7 +675,7 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
 
 export function summarizeChanges(t: Task): string {
   const m = new Map<string, string>();
-  for (const c of t.changes) if (!c.reverted) m.set(c.path, `${c.op} ${c.path} (${c.afterHash ? c.afterHash.slice(0, 12) : '已删除'}) by ${AGENT_MAP[c.agentId]?.name ?? c.agentId}`);
+  for (const c of t.changes) if (!c.reverted) m.set(c.path, `${c.op} ${c.path} (${c.op === 'delete' ? '已删除' : c.oversize ? '大文件，未记录内容' : c.afterHash?.slice(0, 12) ?? '—'}) by ${AGENT_MAP[c.agentId]?.name ?? c.agentId}${c.via === 'command' ? ` · 命令 ${(c.command ?? '').slice(0, 80)}` : ''}`);
   return [...m.values()].join('\n');
 }
 
@@ -662,8 +696,8 @@ async function stepSolo(rt: Runtime, t: Task): Promise<boolean> {
     const session = t.sessionId ? rt.sessions.get(t.sessionId) : undefined;
     await runNode(rt, t, node, async () => {
       const hist = (session?.messages ?? []).slice(0, -1).slice(-16).map((m) => ({ role: m.role, content: m.content }));
-      const tools = rt.workspace && t.workspace === rt.workspace.root ? ALL_TOOLS : undefined;
-      const ctx = tools ? `\n\n${repoContext(rt, t)}` : '';
+      const tools = rt.workspaceFor(t) ? ALL_TOOLS : undefined;
+      const ctx = [tools ? repoContext(rt, t) : '', guidance(rt, t)].filter(Boolean).map((x) => `\n\n${x}`).join('');
       const r = await runAgent({ rt, agentId: 'solo', task: t, node, session, history: hist, prompt: `${t.edict}${hist.length ? '' : ctx}`, tools, maxSteps: 40, maxTokens: 8000, temperature: 0.2, label: 'Solo 执行', model: t.strongModel });
       if (session) {
         session.messages.push({ role: 'assistant', content: r.text, at: now() });
@@ -802,6 +836,32 @@ export function retryNodeWithModel(rt: Runtime, taskId: string, nodeId: string, 
   rt.audit.record('emperor', 'node_model_switch', { nodeId, agentId: n.agentId, providerId: ref.providerId, model: ref.model }, taskId);
   rt.activity('human', `皇上改用 ${ref.model} 重试：${n.label}`, { taskId, nodeId });
   retryNode(rt, taskId, nodeId);
+}
+
+/**
+ * E3 「撤回此部改动并重做」(门下封驳 / 奏折批阅): undo every file change of one node, then redo it. A failed or
+ * interrupted node is retried in place; a finished exec node at a 封驳 / 御批 gate is sent back as rework of its
+ * subtask (the gate is answered with a rejection). A conflict reverts nothing and redoes nothing.
+ */
+export function revertNodeAndRedo(rt: Runtime, taskId: string, nodeId: string, o: { comment?: string; force?: boolean } = {}): RevertResult & { redo: 'retry' | 'rework' | null } {
+  const t = rt.getTask(taskId);
+  if (TERMINAL.includes(t.state)) throw new Error('任务已终结，无法重做');
+  const n = t.nodes.find((x) => x.id === nodeId);
+  if (!n) throw new Error('节点不存在');
+  const atGate = !!t.gate && (t.gate.kind === 'final' || t.gate.kind === 'reject_limit') && (t.state === 'PendingConfirm' || t.state === 'Review');
+  const mode = n.status === 'failed' || n.status === 'cancelled' ? 'retry' : n.status === 'done' && n.kind === 'exec' && n.subtaskId && atGate ? 'rework' : null;
+  if (!mode) throw new Error('只能对失败或中断的节点，或在封驳 / 御批关卡处对六部执行节点「撤回并重做」');
+  const r = rt.revertNode(taskId, nodeId, { force: o.force });
+  rt.audit.record('emperor', 'revert_redo', { nodeId, mode, reverted: r.reverted.length, conflicts: r.conflicts, skipped: r.skipped }, taskId);
+  if (r.conflicts.length) return { ...r, redo: null };
+  const note = `皇上已撤回「${n.label}」此前的文件改动${r.skipped.length ? `（${r.skipped.join('、')} 为大文件，未能撤回）` : ''}，请在原状态上重做`;
+  try {
+    if (mode === 'retry') retryNode(rt, taskId, nodeId);
+    else decideGate(rt, taskId, { approve: false, comment: [o.comment?.trim(), note].filter(Boolean).join('\n'), reworkTargets: [n.subtaskId!] });
+  } catch (e) {
+    throw new Error(`已撤回 ${r.reverted.length} 个文件，但重做未能开始：${(e as Error).message}`);
+  }
+  return { ...r, redo: mode };
 }
 
 function inferState(n: RunNode, t?: Task) {

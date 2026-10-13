@@ -6,6 +6,7 @@ import { _electron as electron } from 'playwright';
 import electronBinary from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execSync } from 'node:child_process';
 import { startMockLlm, defaultBrain } from '../tests/mockLlm';
 
 const SHOTS = process.env.SHOTS ?? path.resolve('docs/screenshots');
@@ -26,7 +27,8 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     brain: (c) => {
       if (c.system.includes('独相') && c.lastUser.includes('PREVIEWTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'index.html', wait_ms: 300 } }] };
       if (c.system.includes('独相') && c.lastUser.includes('MCPTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'mcp__demo__echo', args: { text: '朕知道了' } }] };
-      if (c.system.includes('独相') && (c.lastUser.includes('PREVIEWTEST') || c.lastUser.includes('MCPTEST'))) return { text: '已验证。' };
+      if (c.system.includes('独相') && c.lastUser.includes('PREVIEWACT') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'click.html', actions: [{ fill: '#name', value: '魏征' }, { click: '#go' }, { assertText: '已点名：李靖', timeoutMs: 300 }] } }] };
+      if (c.system.includes('独相') && (c.lastUser.includes('PREVIEWTEST') || c.lastUser.includes('MCPTEST') || c.lastUser.includes('PREVIEWACT'))) return { text: '已验证。' };
       return base(c);
     },
   });
@@ -122,18 +124,20 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.click('[data-testid=reasoning-btn] >> nth=0');
     await win.waitForSelector('[data-testid=reasoning-editor]');
     await shot('32-models-reasoning-probe');
-    // per-official models: one row each, model dropdown wide enough to read "model · service"
-    const rows = win.locator('[data-testid=agent-model-list] [data-testid^=agent-model-]');
-    await rows.first().scrollIntoViewIfNeeded();
-    const boxes = await rows.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); const sel = e.querySelector('select')!.getBoundingClientRect(); return { y: r.y, w: sel.width }; }));
-    ok('官员模型竖排：每位官员一行，模型下拉足够宽', boxes.length >= 10 && boxes.every((b, i) => i === 0 || b.y > boxes[i - 1].y) && boxes.every((b) => b.w >= 230), JSON.stringify(boxes.slice(0, 3)));
-    await shot('33-models-agent-list');
     // 检测思考档位: the mock accepts any level, so the result is "unconfirmed" and the hand-set ladder is kept
     const before = mock.calls.length;
     await win.click('[data-testid=reasoning-detect]');
     await win.waitForSelector('.toast >> text=不校验思考档位', { timeout: 15000 });
     const summary = (await win.textContent('[data-testid=reasoning-btn] >> nth=0')) ?? '';
     ok('检测思考档位：服务不校验时标「未能确认」，保留原档位', summary.startsWith('未能确认') && summary.includes('Low→XHigh') && mock.calls.length - before === 2, `${summary} calls=${mock.calls.length - before}`);
+    // per-official models (设置 · 官员模型与路由): one row each, model dropdown wide enough to read "model · service"
+    await win.evaluate(() => (window as any).__openSettings('routing'));
+    const rows = win.locator('[data-testid=agent-model-list] [data-testid^=agent-model-]');
+    await rows.first().waitFor({ timeout: 5000 });
+    await rows.first().scrollIntoViewIfNeeded();
+    const boxes = await rows.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); const sel = e.querySelector('select')!.getBoundingClientRect(); return { y: r.y, w: sel.width }; }));
+    ok('官员模型竖排：每位官员一行，模型下拉足够宽', boxes.length >= 10 && boxes.every((b, i) => i === 0 || b.y > boxes[i - 1].y) && boxes.every((b) => b.w >= 230), JSON.stringify(boxes.slice(0, 3)));
+    await shot('33-models-agent-list');
   }
 
   // ── 3. HTML 预览
@@ -170,6 +174,46 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     // hidden-browser capture (the same host function the agent tool uses)
     const cap: any = await inv('previewCapture', 'preview://ws/index.html', 800, 600);
     ok('无头预览：标题 / 文本 / 截图', cap.title === '凌烟阁' && cap.text.includes('已修复') && /^[a-f0-9]{64}$/.test(cap.screenshot ?? ''), JSON.stringify({ title: cap.title, blocked: cap.blocked?.length }));
+    // interactive steps in the same hidden browser: fill / select / check / press / click change the page; assertions verify it
+    fs.writeFileSync(
+      path.join(ws, 'click.html'),
+      `<!doctype html><html><head><meta charset="utf-8"><title>点名册</title><style>body{font-family:sans-serif;margin:0;padding:16px}.wide{width:520px;height:30px;background:#b3322a}</style></head>
+<body><h1>点名册</h1><input id="name" placeholder="姓名"><select id="dept"><option value="li">吏部</option><option value="bing">兵部</option></select>
+<label><input type="checkbox" id="ok"> 已核</label><button type="button" id="go">点名</button><p id="out">尚未点名</p><div class="wide"></div>
+<script>
+var go = document.getElementById('go');
+go.addEventListener('click', function () {
+  var d = document.getElementById('dept');
+  document.getElementById('out').textContent = '已点名：' + document.getElementById('name').value + '（' + d.options[d.selectedIndex].text + (document.getElementById('ok').checked ? '，已核' : '') + '）';
+  fetch('https://cdn.example.com/track').catch(function () {});
+  alert('点名完成');
+});
+document.getElementById('name').addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
+</script></body></html>`,
+    );
+    const interact: any = await inv('previewCapture', 'preview://ws/click.html', 800, 600, {
+      actions: [
+        { fill: '#name', value: '魏征' },
+        { select: '#dept', value: '兵部' },
+        { check: '#ok' },
+        { press: 'Enter', selector: '#name' },
+        { assertText: '已点名：魏征（兵部，已核）' },
+        { fill: '#name', value: '房玄龄' },
+        { click: '#go', screenshot: true },
+        { assertText: '已点名：房玄龄（兵部，已核）', selector: '#out' },
+        { assertVisible: '#out' },
+      ],
+      viewports: [{ width: 375, height: 667 }],
+    });
+    const stepNotes = JSON.stringify((interact.steps ?? []).map((s: any) => `${s.ok ? '✓' : '✗'} ${s.action}: ${s.note}`));
+    ok('无头预览交互：填写 / 选择 / 勾选 / 回车 / 点击后文字改变，断言通过', interact.steps?.length === 9 && interact.steps.every((s: any) => s.ok) && interact.text.includes('已点名：房玄龄（兵部，已核）'), stepNotes);
+    ok('交互期间：alert 不阻塞（记入控制台）、外部请求仍被拦截、步骤截图存为 blob', interact.console.some((c: any) => c.message.includes('[alert] 点名完成') && c.step === 4) && interact.blocked.some((u: string) => u.includes('cdn.example.com/track')) && /^[a-f0-9]{64}$/.test(interact.steps?.[6]?.screenshot ?? ''), JSON.stringify({ console: interact.console?.slice(0, 3), blocked: interact.blocked }));
+    const vp = interact.viewports?.[0];
+    const vpUrl: string | null = vp?.screenshot ? await inv('blobImage', vp.screenshot) : null;
+    const vpWidth = vpUrl ? Buffer.from(vpUrl.split(',')[1], 'base64').readUInt32BE(16) : 0;
+    ok('交互后另截手机尺寸：375 宽截图，并发现横向溢出', vpWidth === 375 && vp?.overflowX === true && vp?.contentWidth > 375, JSON.stringify({ vpWidth, overflowX: vp?.overflowX, contentWidth: vp?.contentWidth }));
+    const failRun: any = await inv('previewCapture', 'preview://ws/click.html', 800, 600, { actions: [{ click: '#go' }, { assertText: '不存在的文字', timeoutMs: 300 }, { click: '#go' }] });
+    ok('交互断言失败：该步报错并给出当前文本，后续步骤不执行', failRun.steps?.[0]?.ok === true && failRun.steps?.[1]?.ok === false && /未找到文本 “不存在的文字”；当前文本：.*已点名/.test(failRun.steps?.[1]?.note ?? '') && failRun.steps?.[2]?.skipped === true, JSON.stringify(failRun.steps?.map((s: any) => s.note)));
     // agent uses preview_page
     fs.writeFileSync(path.join(ws, 'app.js'), "document.getElementById('n').textContent='共 24 人';\nbroken();\n");
     await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
@@ -182,6 +226,15 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const act = (await win.textContent('[data-testid=act-preview]').catch(() => '')) ?? '';
     ok('Agent 调用 preview_page：活动流展示截图与控制台错误', act.includes('凌烟阁') && act.includes('broken'), act.slice(0, 120));
     await shot('34-agent-preview');
+    // agent preview_page with actions: per-step results (and the failed assertion) are in the tool result
+    await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
+    await win.fill('#composer-input', 'PREVIEWACT 验证点名页');
+    await win.click('[data-testid=composer-send]');
+    const pt = await waitTask((x) => x.edict.includes('PREVIEWACT') && ['Done', 'Blocked'].includes(x.state), 30000);
+    const pacts: any[] = await inv('activities', pt.id);
+    const tr = pacts.find((a) => a.kind === 'tool_result' && a.data?.name === 'preview_page');
+    const pv = pacts.find((a) => a.kind === 'preview');
+    ok('Agent 调用 preview_page 带 actions：工具结果逐步列出，断言失败判为未通过', !!tr && tr.data.ok === false && /交互检查：未通过（2\/3 步成功；第 3 步「断言文本 “已点名：李靖”」失败）/.test(tr.content) && /✓ 2\. 点击 #go/.test(tr.content) && /交互 2\/3 步通过/.test(pv?.content ?? ''), (tr?.content ?? '').slice(0, 300));
   }
 
   // ── 4. 技能与 MCP 中心
@@ -199,7 +252,9 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await shot('35-skills-center');
     // MCP server (real stdio JSON-RPC child process)
     const server = path.resolve('tests/fixtures/mcp-echo-server.mjs');
-    await win.click('[data-testid=tab-mcp]');
+    await win.evaluate(() => (window as any).__openSettings('mcp'));
+    await win.waitForSelector('[data-testid=settings-mcp]');
+    await win.click('[data-testid=mcp-edit-json]');
     await win.waitForSelector('[data-testid=mcp-json]');
     const json = JSON.stringify({ mcpServers: { demo: { command: process.execPath.includes('electron') ? 'node' : process.execPath, args: [server], env: { ECHO_PREFIX: '${env:HOME}' } } } }, null, 2);
     await win.fill('[data-testid=mcp-json]', json);
@@ -217,10 +272,10 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     asked = await app.evaluate(() => (globalThis as any).__asked as string);
     ok('保存本地 MCP 命令前弹出原生确认框（测试替身代点「信任并运行」）', asked.includes('允许 Edict 在本机运行') && asked.includes('mcp-echo-server.mjs'), asked.split('\n')[0]);
     await win.waitForSelector('[data-testid=mcp-server-demo] .mcp-status.ok', { timeout: 15000 }).catch(() => null);
-    await win.click('[data-testid=mcp-server-demo] button.link:has-text("工具")').catch(() => {});
+    await win.click('[data-testid=mcp-server-demo] button:has-text("工具权限")').catch(() => {});
     await win.waitForTimeout(200);
     const row = (await win.textContent('[data-testid=mcp-server-demo]').catch(() => '')) ?? '';
-    ok('MCP：Cursor 格式 mcp.json 保存后连接 stdio 服务并列出工具', row.includes('echo') && row.includes('已连接'), row.slice(0, 160));
+    ok('MCP：标准格式 mcp.json 保存后连接 stdio 服务并列出工具', row.includes('echo') && row.includes('已连接'), row.slice(0, 160));
     await shot('36-mcp-center');
     await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
     await win.click('[data-testid=composer] .tier-seg button:has-text("Solo")');
@@ -474,21 +529,21 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
   }
 
   if (want('tips')) {
-    // hover descriptions on the activity bar and the 军机处 list
-    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: 'court' }));
+    // hover descriptions on the activity bar (screens, bottom group, shortcuts)
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: 'explorer' }));
     await win.mouse.move(700, 450);
     await win.hover('[data-testid=ab-designs]');
     await win.waitForSelector('[data-testid=tip]', { timeout: 3000 });
     const t1 = await win.textContent('[data-testid=tip]');
     ok('活动栏悬停显示名称与一行说明', !!t1 && t1.includes('协同设计') && t1.includes('分工协作') && !t1.includes('朝堂谁站哪'), t1 ?? '');
     await shot('48-tip-activitybar');
-    await win.hover('[data-testid=ab-court-mode]');
-    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('⌘J'), null, { timeout: 3000 });
+    await win.hover('[data-testid=ab-settings]');
+    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('⌘,'), null, { timeout: 3000 });
     ok('带快捷键的入口在提示里显示快捷键', true);
-    await win.hover('.court-nav-item >> text=奏折阁');
-    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('回奏存档'), null, { timeout: 3000 });
-    ok('军机处侧栏各项也有悬停说明', true);
-    await shot('49-tip-court-nav');
+    await win.hover('[data-testid=ab-permissions]');
+    await win.waitForFunction(() => document.querySelector('[data-testid=tip]')?.textContent?.includes('官员动手前'), null, { timeout: 3000 });
+    ok('活动栏底部的权限、MCP 等入口也有悬停说明（含当前权限模式）', true);
+    await shot('49-tip-permissions');
     // the composer's controls explain themselves too (cards open above, inside the window)
     await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false }));
     const sw = win.locator('[data-testid=composer] label.switch input');
@@ -508,13 +563,12 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
   }
 
   if (want('sidebar')) {
-    // left activity bar: 网页预览 / 协同设计 / 进入朝堂, and the grouped 军机处 list
+    // left activity bar: 待办 / 网页预览 side views, pinned screens, right-click customize, 进入朝堂
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: null }));
-    await win.click('[data-testid=ab-court]');
-    await win.waitForSelector('.court-nav-h');
-    const groups = await win.$$eval('.court-nav-h', (els) => els.map((e) => e.textContent));
-    ok('军机处侧栏按 政务 / 配置 / 记录 分组', groups.join(',') === '政务,配置,记录', groups.join(','));
-    await shot('42-sidebar-court-nav');
+    await win.click('[data-testid=ab-inbox]');
+    await win.waitForSelector('[data-testid=inbox]');
+    ok('活动栏「待办」打开等你处理的事', true);
+    await shot('42-sidebar-inbox');
     await win.click('[data-testid=ab-preview]');
     await win.waitForSelector('[data-testid=preview-side]');
     await win.waitForTimeout(400);
@@ -527,13 +581,64 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.click('[data-testid=ab-designs]');
     await win.waitForSelector('[data-testid=designs-panel]');
     ok('活动栏「协同设计」直达设计面板', true);
-    await win.click('[data-testid=ab-court-mode]');
+    // right-click → customize: unpin 朝堂议政, pin 旨库, then reset
+    await win.click('[data-testid=activitybar]', { button: 'right', position: { x: 24, y: 520 } });
+    await win.waitForSelector('[data-testid=ab-customize]');
+    await win.click('[data-testid=ab-pin-debate]');
+    await win.click('[data-testid=activitybar]', { button: 'right', position: { x: 24, y: 520 } });
+    await win.click('[data-testid=ab-pin-templates]');
+    await win.waitForTimeout(200);
+    const pinned = await win.evaluate(() => [!!document.querySelector('[data-testid=ab-debate]'), !!document.querySelector('[data-testid=ab-templates]') || !!document.querySelector('[data-testid=ab-more]')]);
+    ok('右键活动栏可增减常用页面', !pinned[0] && pinned[1], JSON.stringify(pinned));
+    await win.click('[data-testid=activitybar]', { button: 'right', position: { x: 24, y: 520 } });
+    await win.click('[data-testid=ab-reset]');
+    await win.mouse.click(700, 450);
+    await win.click('[data-testid=to-court]');
     await win.waitForTimeout(600);
-    ok('活动栏「进入朝堂」切换到朝堂', await win.locator('[data-testid=court]').isVisible());
+    ok('标题栏「朝堂」切换到朝堂', await win.locator('[data-testid=court]').isVisible());
+    // settings nav: a 新 tag goes away once that page has been opened, and stays away after reload
+    await win.evaluate(() => (window as any).__openSettings('lsp'));
+    await win.waitForSelector('[data-testid=sn-lsp]');
+    await win.waitForTimeout(200);
+    const tagsNow = await win.evaluate(() => [!!document.querySelector('[data-testid=sn-lsp] .sn-b.n'), !!document.querySelector('[data-testid=sn-acp] .sn-b.n')]);
+    await win.reload();
+    await win.waitForSelector('.titlebar');
+    await win.evaluate(() => (window as any).__openSettings('appearance'));
+    await win.waitForSelector('[data-testid=sn-lsp]');
+    const tagsAfter = await win.evaluate(() => [!!document.querySelector('[data-testid=sn-lsp] .sn-b.n'), !!document.querySelector('[data-testid=sn-acp] .sn-b.n')]);
+    ok('设置导航的「新」点开看过后消失，重开仍不显示；没看过的还在', !tagsNow[0] && tagsNow[1] && !tagsAfter[0] && tagsAfter[1], JSON.stringify({ tagsNow, tagsAfter }));
     await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
   }
 
-  const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));
+  if (want('worktree')) {
+    // 2.0 per-edict git worktree: the edict runs on its own branch, the open checkout stays untouched; the 结案 dialog merges it
+    const repo = fs.mkdtempSync('/tmp/edict-e2e2-git-');
+    fs.writeFileSync(path.join(repo, 'README.md'), '# demo\n');
+    execSync('git init -q -b main && git add -A && git -c user.name=e2e -c user.email=e2e@example.com commit -qm init', { cwd: repo });
+    await inv('setWorkspace', repo);
+    await win.waitForTimeout(400);
+    const r: any = await inv('submit', { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true, forceEdict: true });
+    const t = await waitTask((x) => x.id === r.taskId && x.state === 'Done', 60000);
+    ok('Git 仓库里每道旨意在自己的工作树分支上办', !!t.worktree?.branch && t.worktree.status === 'active' && !t.worktree.path.startsWith(repo), `${t.worktree?.branch} ${t.worktree?.path}`);
+    const dirty = execSync('git status --porcelain', { cwd: repo }).toString().trim();
+    ok('办理期间主工作区一个文件都没动', !dirty && !fs.existsSync(path.join(repo, 'greet.js')), dirty);
+    await win.evaluate(() => (window as any).__openPanel('kanban'));
+    await win.click('[data-testid=attn-wt-merge]');
+    await win.waitForSelector('[data-testid=worktree-dialog]');
+    const files = (await win.textContent('[data-testid=wt-files]')) ?? '';
+    ok('结案对话框列出改动的文件、行数和经手的部', files.includes('greet.js') && /\+\d/.test(files) && files.includes('兵部'), files.slice(0, 120));
+    ok('合并是默认选项', (await win.getAttribute('[data-testid=wt-opt-merge]', 'aria-checked')) === 'true');
+    await shot('60-worktree-merge');
+    await win.fill('[data-testid=wt-msg]', '实现 greet（e2e）');
+    await win.click('[data-testid=wt-confirm]');
+    const done = await waitTask((x) => x.id === r.taskId && x.worktree?.status === 'merged', 30000);
+    const log = execSync('git log --format=%s -3', { cwd: repo }).toString();
+    ok('合并后主工作区有旨意提交和合并提交，工作树目录已清理', log.includes('实现 greet（e2e）') && !!done.worktree.mergeCommit && fs.existsSync(path.join(repo, 'greet.js')) && !fs.existsSync(t.worktree.path), log.replace(/\n/g, ' | '));
+    await inv('setWorkspace', ws);
+    await win.waitForTimeout(400);
+  }
+
+  const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json', 'edict.db', 'edict.db-wal'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));
   ok('API Key 未出现在审计/状态/设置/mcp.json 中', !leak);
   ok('无前端运行时错误', errors.filter((e) => !/ResizeObserver|Autofocus|Electron Security|favicon|cdn\.example\.com|ERR_BLOCKED|undefinedFn|broken/.test(e)).length === 0, errors.slice(0, 3).join(' | '));
   await app.close();

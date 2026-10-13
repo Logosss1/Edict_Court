@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { openStateStore } from '../src/main/runtime/sqliteStore';
 import { startMockLlm, defaultBrain } from './mockLlm';
 import { makeRuntime, tmpDir, waitFor, stateOf } from './helpers';
 import { submit, decideGate, retryNode } from '../src/main/runtime/orchestrator';
@@ -109,13 +110,15 @@ test('pinning: switching / rolling back a design never changes a running edict; 
   rt.cancel(r.taskId, '测试结束');
   // legacy task (no design fields) loads and is treated as built-in
   rt.dispose();
-  const state = JSON.parse(fs.readFileSync(path.join(dataDir, 'state.json'), 'utf8'));
+  const store = openStateStore(dataDir, { log: () => {} });
+  const state = store.loadState();
   for (const x of state.tasks) {
     delete x.design;
     delete x.designSpec;
     delete x.flowRun;
   }
-  fs.writeFileSync(path.join(dataDir, 'state.json'), JSON.stringify(state));
+  store.upsertTasks(state.tasks);
+  store.close();
   const rt2 = makeRuntime(mock.url, 'openai-chat', dataDir);
   assert.equal(rt2.tasks.get(r.taskId)!.design, undefined);
   assert.ok(rt2.snapshot().tasks.length >= 1);
@@ -214,7 +217,10 @@ test('interpreter: restart mid-step → interrupted node → local retry resumes
   rt.updateSettings({ finalGate: false });
   const d = rt.designs.copy(BUILTIN_DESIGN_ID, { tier: 'lite' });
   const r = (await submit(rt, { text: '写一个 greet 函数并测试', tier: 'lite', multiAgent: true, designId: d.id })) as { taskId: string };
-  await waitFor(() => rt.tasks.get(r.taskId)!.nodes.some((n) => n.kind === 'exec' && n.status === 'running'), 20000, 'exec running');
+  await waitFor(() => {
+    const t = rt.tasks.get(r.taskId)!;
+    return t.nodes.some((n) => n.kind === 'exec' && n.status === 'running' && t.changes.some((c) => c.nodeId === n.id));
+  }, 20000, 'exec running after a write');
   const planCalls = mock.calls.filter((c) => c.system.includes('你是中书省')).length;
   rt.flushAll();
   for (const c of rt.controllers.values()) c.abort();

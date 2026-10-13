@@ -1,15 +1,16 @@
 // 旨意详情 — nodes (with local retry), plan versions, reviews, changes, flow chain, annotations.
 import { useState } from 'react';
-import { useStore, useTask, setUI, toast } from '../store';
+import { useStore, useTask, setUI, toast, openSettings } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
 import { AgentChip, StateChip, fmtCost, fmtDur, fmtTime, fmtTokens, usageTokens } from '../common/format';
 import { AGENTS, AGENT_MAP, TIER_LABEL } from '../../shared/court';
-import type { AgentId, Task } from '../../shared/types';
-import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode } from './TaskWidgets';
+import type { AgentId, RevertResult, RunNode, Task } from '../../shared/types';
+import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode, revertTaskChanges, runRevert } from './TaskWidgets';
 import { levelLabel } from '../../shared/reasoning';
 import { ActivityStream } from '../workbench/ActivityStream';
+import { openWorktreeDialog, worktreeLabel } from '../workbench/WorktreeDialog';
 
 type TabKey = 'nodes' | 'plan' | 'changes' | 'flow' | 'notes' | 'report' | 'live';
 
@@ -31,9 +32,11 @@ export function TaskDetail({ taskId }: { taskId: string }) {
         <UsageLine task={task} />
         <div className="row-gap">
           <TaskControls task={task} />
+          {task.changes.some((c) => !c.reverted) && <button className="btn sm" onClick={() => void revertTaskChanges(task)} data-testid="td-revert-task"><Icon name="undo" size={12} /> 撤回本旨改动</button>}
           <button className="btn sm" onClick={() => setUI({ mode: 'court', review: { taskId: task.id }, courtScene: 'taihe' })}><Icon name="crown" size={12} /> 朝堂批阅</button>
           {['Done', 'Cancelled'].includes(task.state) && <button className="btn sm" onClick={async () => { await navigator.clipboard.writeText(await call<string>('memorialMarkdown', task.id)); toast('奏折已复制为 Markdown', 'success'); }}><Icon name="copy" size={12} /> 复制奏折</button>}
         </div>
+        {task.worktree && <WorktreeBadge task={task} />}
         {task.state === 'Blocked' && (failedModelNode(task) ? <ModelErrorCard task={task} node={failedModelNode(task)!} /> : <div className="notice warn">⚠ 阻塞：{task.blockedReason}</div>)}
       </div>
       <div className="edict-text"><span className="muted small">原旨</span><div>{task.edict}</div></div>
@@ -71,13 +74,60 @@ function Nodes({ task }: { task: Task }) {
             <td className="small">{fmtDur(n.startedAt, n.endedAt)}</td>
             <td className="small">{fmtTokens(usageTokens(n.usage))} · {fmtCost(n.usage?.costUsd ?? 0)}</td>
             <td className="small node-out">{n.error ? <span style={{ color: '#d0453a' }} title={n.errorInfo?.raw}>{n.errorInfo ? `${n.errorInfo.hint}${n.errorInfo.status ? `（HTTP ${n.errorInfo.status}）` : ''}` : n.error}</span> : <NodeOutput text={n.output} />}</td>
-            <td>{(n.status === 'failed' || n.status === 'cancelled') && !['Done', 'Cancelled'].includes(task.state) && (
-              <button className="btn sm" onClick={() => call('retryNode', task.id, n.id).then(() => toast(`局部重试：${n.label}`, 'success')).catch((e) => toast(e.message, 'error'))} data-testid="retry-node"><Icon name="retry" size={12} /> 局部重试</button>
-            )}</td>
+            <td className="node-acts">
+              {(n.status === 'failed' || n.status === 'cancelled') && !['Done', 'Cancelled'].includes(task.state) && (
+                <button className="btn sm" onClick={() => call('retryNode', task.id, n.id).then(() => toast(`局部重试：${n.label}`, 'success')).catch((e) => toast(e.message, 'error'))} data-testid="retry-node"><Icon name="retry" size={12} /> 局部重试</button>
+              )}
+              <NodeRevert task={task} n={n} />
+            </td>
           </tr>
         ))}
       </tbody>
     </table>
+  );
+}
+
+/** The edict's git worktree: branch, status, path, last failure; 结案 choices once it is Done / Cancelled. */
+function WorktreeBadge({ task }: { task: Task }) {
+  const w = task.worktree!;
+  const l = worktreeLabel(task)!;
+  const terminal = ['Done', 'Cancelled'].includes(task.state);
+  return (
+    <div className="td-wt" data-testid="td-worktree">
+      <Icon name="branch" size={13} />
+      <code>{w.branch}</code>
+      <span className={`chip chip-sm ${l.tone === 'gold' ? 'warn' : ''}`}>{l.status}</span>
+      <span className="muted small ellipsis" title={w.path}>{w.status === 'active' ? w.path : w.status === 'merged' ? `合并提交 ${w.mergeCommit?.slice(0, 7) ?? '—'}` : w.status === 'kept' ? `最新提交 ${w.commit?.slice(0, 7) ?? '—'}` : ''}{w.conflicts?.length ? ` · 冲突：${w.conflicts.slice(0, 3).join('、')}` : w.error ? ` · ${w.error}` : ''}</span>
+      {((w.status === 'active' && terminal) || w.status === 'kept') && (
+        <>
+          {(w.status === 'kept' || task.state === 'Done') && <button className="btn sm primary" onClick={() => openWorktreeDialog(task.id, 'merge')} data-testid="td-wt-merge">合并…</button>}
+          {w.status === 'active' && <button className="btn sm" onClick={() => openWorktreeDialog(task.id, 'keep')}>保留分支…</button>}
+          <button className="btn sm" onClick={() => openWorktreeDialog(task.id, 'discard')}>{w.status === 'kept' ? '删除分支…' : '丢弃…'}</button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** E3: undo one node's file changes; 撤回并重做 when the node can be redone (failed, or a ministry node at the final gate). */
+function NodeRevert({ task, n }: { task: Task; n: RunNode }) {
+  const files = new Set(task.changes.filter((c) => c.nodeId === n.id && !c.reverted).map((c) => c.path)).size;
+  if (!files || n.status === 'running') return null;
+  const atGate = !!task.gate && (task.gate.kind === 'final' || task.gate.kind === 'reject_limit');
+  const redo = !['Done', 'Cancelled'].includes(task.state) && (n.status === 'failed' || n.status === 'cancelled' || (n.status === 'done' && n.kind === 'exec' && !!n.subtaskId && atGate));
+  return (
+    <>
+      <button className="btn sm" title={`撤回这个节点写过的 ${files} 个文件`} onClick={async () => {
+        if (await call<boolean>('confirm', `撤回「${n.label}」的改动？`, `${files} 个文件会恢复到这个节点动手之前。`)) await runRevert(`撤回「${n.label}」的改动`, (force) => call<RevertResult>('revertNode', task.id, n.id, force));
+      }} data-testid="revert-node"><Icon name="undo" size={12} /> 撤回改动</button>
+      {redo && (
+        <button className="btn sm" title="先撤回这个节点的改动，再让官员在原状态上重做" onClick={async () => {
+          if (!(await call<boolean>('confirm', `撤回「${n.label}」的改动并重做？`, `${files} 个文件先恢复原状，再由${AGENT_MAP[n.agentId]?.name ?? '官员'}重新办这个子任务。`))) return;
+          const r = await runRevert(`撤回「${n.label}」的改动`, (force) => call<RevertResult & { redo: string | null }>('revertNodeAndRedo', task.id, n.id, undefined, force));
+          if (r?.redo) toast(`已开始重做：${n.label}`, 'success');
+        }} data-testid="revert-redo"><Icon name="retry" size={12} /> 撤回并重做</button>
+      )}
+    </>
   );
 }
 
@@ -122,12 +172,36 @@ function PlanHistory({ task }: { task: Task }) {
             <b>{r.stage === 'plan' ? '方案' : '成果'}第 {r.round} 轮 · {r.reviewer === 'emperor' ? '👑 皇上' : '🔍 门下省'} · {r.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'}</b>
             <div>{r.comment}</div>
             {r.issues.length > 0 && <ul>{r.issues.map((x, k) => <li key={k}>{x}</li>)}</ul>}
-            <div className="muted small">{fmtTime(r.at)}</div>
+            <div className="row-gap">
+              <span className="muted small">{fmtTime(r.at)}</span>
+              {r.verdict === 'reject' && <CollectCanon task={task} index={i} />}
+            </div>
           </div>
         ))}
         {!task.reviews.length && <div className="muted small">暂无</div>}
       </div>
     </div>
+  );
+}
+
+/** 「收入典章」: keep a rejection as a 教训 for later edicts on this workspace. */
+function CollectCanon({ task, index }: { task: Task; index: number }) {
+  const r = task.reviews[index];
+  const label = `${r.stage === 'plan' ? '方案' : '成果'}第 ${r.round} 轮${r.reviewer === 'emperor' ? '皇上' : '门下'}封驳`;
+  const done = useStore((s) => (s.settings.canon ?? []).some((c) => c.source?.taskId === task.id && c.source.label.endsWith(label)));
+  const collect = async () => {
+    try {
+      await call('canonFromReview', task.id, index);
+      toast('已收入典章（教训）', 'success', { label: '查看典章', run: () => openSettings('canon') });
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  };
+  if (done) return <button className="link small" style={{ marginLeft: 'auto' }} onClick={() => openSettings('canon')}>已收入典章</button>;
+  return (
+    <button className="btn sm" style={{ marginLeft: 'auto' }} onClick={() => void collect()} title="把这条封驳意见收入典章（教训），之后本工作区的旨意会带上它" data-testid={`collect-canon-${index}`}>
+      <Icon name="rules" size={12} /> 收入典章
+    </button>
   );
 }
 

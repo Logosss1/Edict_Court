@@ -1,6 +1,6 @@
 # Edict for Mac · A Multi-Agent Collaborative Programming Workstation
 
-English | [中文](README.zh-CN.md)
+English | [Chinese (Simplified)](README.zh-CN.md)
 
 <p align="center">
   <a href="https://github.com/Logosss1/Edict_Court/releases/latest"><img src="https://img.shields.io/github/v/release/Logosss1/Edict_Court?display_name=tag&label=latest%20release" alt="Latest release"></a>
@@ -17,7 +17,7 @@ Emperor issues an edict → Crown Prince triages (small talk is answered directl
   → the Six Ministries execute in parallel → summary report → the Emperor approves and closes the case
 ```
 
-> **Versions.** 1.x is a new codebase. The 0.x releases (a macOS / Windows / Linux packaging of the upstream EDICT runtime) remain available under [Releases](https://github.com/Logosss1/Edict_Court/releases) and the `v0.3.2` and earlier tags.
+> **Versions.** 1.x and 2.x are a new codebase. The 0.x releases (a macOS / Windows / Linux packaging of the upstream EDICT runtime) remain available under [Releases](https://github.com/Logosss1/Edict_Court/releases) and the `v0.3.2` and earlier tags.
 
 ## Two modes, one runtime (⌘J)
 
@@ -49,7 +49,7 @@ Both modes show the same live state: approve in the court and the workbench clos
 - **Thinking-level slider.** Its steps are the selected model's own levels (since 1.2.7 detected from the service and shown by their API names). Translated per protocol (`reasoning_effort`, `reasoning.effort`, `output_config.effort`, `thinking.budget_tokens`, `enable_thinking`, …), configurable per model and per official, with custom levels such as `ultra`.
 - **Readable model errors.** Configuration errors such as a relay's "this group doesn't support the model or access method" are no longer retried blindly; an error card explains the cause and offers **retry with another model**. **Protocol probe** tests Chat / Responses / Messages with and without thinking parameters.
 - **HTML preview and self-testing.** A sandboxed built-in browser runs generated pages with a console, device sizes, auto-reload, and outbound-network blocking; agents verify their pages with the `preview_page` tool, which returns errors and a screenshot.
-- **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the  `mcp.json` format (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
+- **Skills & MCP center.** Create, edit, enable and assign Skills; configure MCP servers with the standard `mcp.json` format (stdio, Streamable HTTP, legacy SSE), with per-tool risk levels, approval and per-official grants. Local commands need your confirmation; secrets move into the macOS keychain.
 
 ### New in 1.2
 
@@ -64,6 +64,19 @@ Both modes show the same live state: approve in the court and the workbench clos
 |---|---|---|
 | ![Collaboration design canvas](docs/screenshots/37-designs-canvas.png) | ![Taihe Palace Square](docs/screenshots/38-court-guangchang.png) | ![Per-official models](docs/screenshots/39-models-agent-models.png) |
 
+### New in 2.0
+
+- **You stay in charge of execution.** Subtasks are tagged read / write / verify: read subtasks run in parallel, write subtasks one at a time. Subtasks start read-only, and each write subtask asks before it starts (allow, allow without further asks, keep it read-only, or reject). An approval can be remembered for the edict or permanently for the workspace; high-risk actions always ask, and release / deploy commands ask every time unless the workspace opts in. Results are checked against the changes Edict actually recorded, and changes made by shell commands can be reverted too.
+- **One git worktree per edict.** In a git repository each court edict works on its own branch in its own folder, so edicts on one repo run side by side and your checkout stays untouched. At the end you choose merge, keep the branch, or discard.
+- **MCP login, resources and prompts.** OAuth login for remote servers, a new MCP settings page, and `/` (prompts) and `@` (resources) pickers in the edict box.
+- **Language servers.** Edict uses the language servers already installed on your Mac and shows install commands for missing ones; officials get an `lsp` tool and the editor shows their diagnostics.
+- **Editors over ACP.** Editors that speak ACP can drive Edict through a local socket; each editor must be approved first.
+- **Built-in skill pack.** 37 skills for planning, review, investigation, QA, release, deploy and everyday work. Each official has a few duty skills; you switch extra ones on per official.
+- **SQLite storage.** Data lives in one `edict.db`; 1.x data is migrated on first launch and the original files are backed up.
+- **A new look.** A settings center with search, a richer activity bar with a to-do view, a redesigned Kanban board with a "needs you" lane, decision cards in the agent pane, and desktop notification settings.
+
+Details: [RELEASE_NOTES.md](RELEASE_NOTES.md). Not in 2.0: an Intel build, auto-update, notarization.
+
 ## Install (Apple Silicon)
 
 Download `Edict-<version>-arm64.dmg` from [Releases](https://github.com/Logosss1/Edict_Court/releases/latest) and see [docs/INSTALL_MAC.md](docs/INSTALL_MAC.md). **The app is not signed with a Developer ID or notarized (ad-hoc signature only).** On first launch, allow it in System Settings → Privacy & Security → "Open Anyway".
@@ -75,10 +88,11 @@ npm install
 npm run build            # bundle main / preload/renderer into dist/
 npx electron dist        # run
 npm test                 # unit + integration tests (mock LLM)
+npm run typecheck        # type-check src/ (main, preload, renderer)
 npm run package:mac      # assemble Edict.app (arm64), ad-hoc sign, create zip + DMG
 ```
 
-`package: mac` needs the official `electron-v44.4.5-darwin-arm64.zip` in `deps/` (or `ELECTRON_DARWIN_ZIP`). On macOS, it signs with `codesign` and builds the DMG with `hdiutil`; on Linux, it needs `rcodesign` and libdmg-hfsplus `dmg` on `PATH` (or `RCODESIGN` / `DMG_TOOL`). End-to-end tests: `npm run e2e` and `npm run e2e: features` (Playwright; on Linux, run under `xvfb-run`).
+`package:mac` needs the official `electron-v44.4.5-darwin-arm64.zip` in `deps/` (or `ELECTRON_DARWIN_ZIP`). On macOS, it signs with `codesign` and builds the DMG with `hdiutil`; on Linux, it needs `rcodesign` and libdmg-hfsplus `dmg` on `PATH` (or `RCODESIGN` / `DMG_TOOL`). End-to-end tests: `npm run e2e` and `npm run e2e:features` after `npm run build` (Playwright; on Linux, run under `xvfb-run`; see [docs/TESTING.md](docs/TESTING.md)).
 
 ## Documentation (Chinese)
 
@@ -86,4 +100,4 @@ npm run package:mac      # assemble Edict.app (arm64), ad-hoc sign, create zip +
 
 ## License
 
-MIT. Third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EDICT and Yan-Agent are MIT-licensed. This project does not use the Visual Studio Code name, icons, or Marketplace.
+MIT. Third-party components are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). EDICT and Yan-Agent are MIT-licensed.

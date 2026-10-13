@@ -1,0 +1,4 @@
+/* NumField (settings pages: 权限与审批 / 运行策略) */
+.numf { display: inline-flex; align-items: center; gap: 6px; }
+.numf .input.num { width: 76px; height: 28px; padding: 3px 8px; font-variant-numeric: tabular-nums; }
+.numf-u { font-size: 12px; color: var(--muted); white-space: nowrap; }

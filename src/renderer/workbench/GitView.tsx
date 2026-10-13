@@ -3,6 +3,7 @@ import { useStore, openTab, toast } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { useGitStatus } from './Explorer';
+import { WorktreeList } from './WorktreeList';
 
 export async function openGitDiff(path: string) {
   try {
@@ -72,6 +73,8 @@ export function GitView() {
         {unstaged.length > 0 && <button className="link" onClick={() => call('gitStage', unstaged.map((f) => f.path))}>全部暂存</button>}
       </div>
       {unstaged.map((f) => row(f, false))}
+      <div className="git-section" title="开了「每道旨意一个工作树」时，同一仓库的旨意各在自己的分支里办，互不干扰">工作树 · 每道旨意一个，互不干扰</div>
+      <WorktreeList compact />
       <div className="git-section">最近提交</div>
       {log.slice(0, 15).map((c) => (
         <div key={c.hash} className="git-log" title={`${c.author} · ${c.when}`}>

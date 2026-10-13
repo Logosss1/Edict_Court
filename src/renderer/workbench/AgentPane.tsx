@@ -1,4 +1,4 @@
-// Cursor-style agent pane: task switcher, live activity, gates, and the 下旨 composer.
+// Agent pane: task switcher, live activity, gates, and the 下旨 composer.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useStore, setUI, selectTask, openTaskTab, openPanel, toast, getState } from '../store';
 import { call } from '../api';
@@ -11,7 +11,11 @@ import type { ModelRef, Tier } from '../../shared/types';
 import { ActivityStream } from './ActivityStream';
 import { EffortSlider } from '../common/EffortSlider';
 import { tip } from '../common/Tip';
-import { GateCard, ModelErrorCard, Pipeline, TaskControls, UsageLine, failedModelNode, useSelectedTask } from '../panels/TaskWidgets';
+import { GateCard, ModelErrorCard, Pipeline, TaskControls, UsageLine, failedModelNode, revertTaskChanges, useSelectedTask } from '../panels/TaskWidgets';
+import { OtherPendingNotice, PendingChoices } from './ChoiceCard';
+import { PlanCard } from './PlanCard';
+import { openWorktreeDialog, worktreeLabel } from './WorktreeDialog';
+import { useMcpPicker } from './McpPicker';
 
 export function AgentPane() {
   const task = useSelectedTask();
@@ -60,13 +64,22 @@ export function AgentPane() {
             <div className="ap-title-row">
               <StateChip state={task.state} />
               {task.design && !task.design.native ? <span className="tier-tag design-tag" title={`协同设计 ${task.design.name} v${task.design.version} · ${task.design.hash.slice(0, 12)}`}>{task.design.name} v{task.design.version}</span> : <span className="tier-tag">{TIER_SHORT[task.tier]}</span>}
-              <code className="muted small">{task.id}</code>
+              {task.worktree && task.worktree.status !== 'discarded' ? (
+                <button className={`wt-chip ${task.worktree.status}`} {...tip(`分支 ${task.worktree.branch} · ${worktreeLabel(task)?.status}`, task.worktree.status === 'active' ? '这道旨意在自己的 git 工作树里办，你的工作区不受影响；结案时再决定合并、保留分支或丢弃' : task.worktree.status === 'kept' ? '分支已保留，点开可合并或删除' : '已合并进主工作区', undefined, 'below')} onClick={() => (task.worktree!.status === 'merged' ? undefined : TERMINAL.includes(task.state) ? openWorktreeDialog(task.id) : undefined)} data-testid="ap-branch">
+                  <Icon name="branch" size={11} /> {task.worktree.branch}
+                </button>
+              ) : <code className="muted small">{task.id}</code>}
               {task.paused && <span className="chip chip-sm warn">已叫停</span>}
             </div>
             <Pipeline task={task} />
             <UsageLine task={task} />
             <div className="ap-controls">
               <TaskControls task={task} />
+              {task.changes.some((c) => !c.reverted) && (
+                <button className="btn sm" {...tip('撤回本旨改动', '把这道旨意改过的文件全部恢复原状（命令产生的改动也算）；旨意本身不取消', undefined, 'below')} onClick={() => void revertTaskChanges(task)} data-testid="revert-task">
+                  <Icon name="undo" size={12} /> 撤回本旨改动
+                </button>
+              )}
               {task.state === 'Blocked' && !failedModelNode(task) && <span className="muted small ellipsis" title={task.blockedReason}>⚠ {task.blockedReason}</span>}
               {task.nodes.some((n) => n.status === 'failed') && !failedModelNode(task) && (
                 <button className="btn sm" onClick={() => openTaskTab(task.id)}>
@@ -77,10 +90,10 @@ export function AgentPane() {
           </div>
           {task.state === 'Blocked' && failedModelNode(task) && <ModelErrorCard task={task} node={failedModelNode(task)!} />}
           {task.gate && <GateCard key={task.gate.since} task={task} />}
-          <PendingApprovals taskId={task.id} />
           <div className="ap-stream">
-            <ActivityStream taskId={task.id} />
+            <ActivityStream taskId={task.id} header={<PlanCard task={task} />} footer={<PendingChoices taskId={task.id} />} />
           </div>
+          <OtherPendingNotice taskId={task.id} />
           {task.state === 'Done' && task.result?.summary && task.tier === 'solo' && null}
         </div>
       ) : (
@@ -94,6 +107,7 @@ export function AgentPane() {
           ) : (
             <Intro />
           )}
+          <OtherPendingNotice taskId={null} />
         </div>
       )}
       {composerHidden ? (
@@ -133,26 +147,6 @@ function Intro() {
   );
 }
 
-function PendingApprovals({ taskId }: { taskId: string }) {
-  const aps = useStore((s) => s.approvals.filter((a) => a.taskId === taskId && a.status === 'pending'));
-  if (!aps.length) return null;
-  return (
-    <div className="inline-approvals">
-      {aps.map((a) => (
-        <div key={a.id} className={`approval ${a.risk}`}>
-          <div>
-            <b>{a.risk === 'high' ? '⚠ 高风险' : '待批准'}</b> {a.summary} <span className="muted small">— {a.reason}</span>
-          </div>
-          <div className="gate-actions">
-            <button className="btn sm primary" onClick={() => call('decideApproval', a.id, true)}>准</button>
-            <button className="btn sm danger" onClick={() => call('decideApproval', a.id, false)}>驳</button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   const settings = useStore((s) => s.settings);
   const providers = useStore((s) => s.providers);
@@ -174,6 +168,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   const [busy, setBusy] = useState(false);
   const [est, setEst] = useState<{ tokens: number; costUsd: number; breakdown: string } | null>(null);
   const ta = useRef<HTMLTextAreaElement>(null);
+  const mcpPick = useMcpPicker(text, setText, ta); // `/` MCP prompts, `@` MCP resources
   const effTier: Tier = custom ? 'lite' : multi ? tier : 'solo';
   const canContinue = !!selected && selected.tier === 'solo' && !!selected.sessionId && effTier === 'solo';
 
@@ -234,13 +229,19 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
 
   return (
     <div className={`composer ${variant}`} data-testid="composer">
+      <div className="mcp-pick-anchor">
+      {mcpPick.popup}
       <textarea
         id={variant === 'pane' ? 'composer-input' : 'composer-input-court'}
         ref={ta}
         value={text}
-        onChange={(e) => setText(e.target.value)}
+        onChange={(e) => { setText(e.target.value); mcpPick.track(e.target); }}
+        onSelect={(e) => mcpPick.track(e.currentTarget)}
+        onFocus={(e) => mcpPick.track(e.currentTarget, true)}
+        onBlur={(e) => mcpPick.track(e.currentTarget, false)}
  placeholder={custom ? `按协同设计「${design!.name}」下旨…（⌘↵ 下旨）` : multi ? '皇上请下旨…（⌘↵ 下旨；闲聊由太子直接回复）' : 'Solo：直接吩咐独相…（⌘↵ 发送）'}
         onKeyDown={(e) => {
+          if (mcpPick.onKeyDown(e)) return;
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             void send();
@@ -248,6 +249,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
         }}
         rows={3}
       />
+      </div>
       <div className="composer-row">
         <select className="mini-select" value={model} onChange={(e) => setModel(e.target.value)} {...tip('主模型', 'Solo、中书省、门下省等要动脑的角色用它；太子、六部等粗活用「模型配置」里的经济模型', undefined, 'above')}>
           {!models.length && <option value="">未配置模型</option>}

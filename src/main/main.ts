@@ -11,6 +11,7 @@ import { buildApi } from './api';
 import { installPreview, hardenContents, previewPage } from './previewHost';
 import { TerminalManager } from './services/terminal';
 import type { RuntimeEvent } from '../shared/types';
+import { createAcpService, editorAgentServerConfig, type AcpService } from './acp';
 
 const APP_NAME = 'Edict';
 app.setName(APP_NAME);
@@ -31,6 +32,7 @@ protocol.registerSchemesAsPrivileged([
 let win: BrowserWindow | null = null;
 let rt: Runtime;
 let terminals: TerminalManager;
+let acp: AcpService | null = null;
 let fsWatcher: fs.FSWatcher | null = null;
 
 if (!smokeTest && !app.requestSingleInstanceLock()) app.quit();
@@ -67,7 +69,9 @@ function watchWorkspace(dir: string | null) {
       pending.add(f);
       if (!timer)
         timer = setTimeout(() => {
-          send({ type: 'fs_changed', paths: [...pending] });
+          const paths = [...pending];
+          send({ type: 'fs_changed', paths });
+          void rt?.lsp.notifyFilesChanged(paths).catch(() => {});
           pending = new Set();
           timer = null;
         }, 300);
@@ -84,7 +88,7 @@ function buildMenu() {
       ? [{ label: APP_NAME, submenu: [
           { role: 'about' as const, label: '关于 Edict' },
           { type: 'separator' as const },
-          { label: '设置…', accelerator: 'Cmd+,', click: cmd('open-panel', 'models') },
+          { label: '设置…', accelerator: 'Cmd+,', click: cmd('open-settings') },
           { type: 'separator' as const },
           { role: 'services' as const, label: '服务' },
           { type: 'separator' as const },
@@ -129,12 +133,21 @@ function buildMenu() {
       { label: '旨库', click: cmd('open-panel', 'templates') },
       { label: '官员总览', click: cmd('open-panel', 'officials') },
       { label: '天下要闻', click: cmd('open-panel', 'news') },
-      { label: '模型配置', click: cmd('open-panel', 'models') },
       { label: '协同设计', click: cmd('open-panel', 'designs') },
-      { label: '技能与 MCP', click: cmd('open-panel', 'skills') },
       { label: '小任务 Sessions', click: cmd('open-panel', 'sessions') },
       { label: '朝堂议政', click: cmd('open-panel', 'debate') },
       { label: '审计日志', click: cmd('open-panel', 'audit') },
+    ] },
+    { label: '设置', submenu: [
+      { label: '模型服务', click: cmd('open-settings', 'providers') },
+      { label: '官员模型与路由', click: cmd('open-settings', 'routing') },
+      { label: '权限与审批', click: cmd('open-settings', 'permissions') },
+      { label: '典章', click: cmd('open-settings', 'canon') },
+      { label: '连接服务（MCP）', click: cmd('open-settings', 'mcp') },
+      { label: '技能', click: cmd('open-settings', 'skills') },
+      { label: '语言服务（LSP）', click: cmd('open-settings', 'lsp') },
+      { type: 'separator' },
+      { label: '全部设置…', click: cmd('open-settings') },
     ] },
     { label: '朝堂', submenu: [
       { label: '上朝仪式', accelerator: 'CmdOrCtrl+Shift+U', click: cmd('ceremony') },
@@ -232,6 +245,10 @@ app.whenReady().then(async () => {
     resourcesDir: DIST,
     notify,
     previewPage,
+    // MCP OAuth login opens the system browser (http/https only)
+    openExternal: (url) => {
+      if (/^https?:\/\//.test(url)) return shell.openExternal(url);
+    },
   });
   installPreview(rt, (url) => send({ type: 'preview_blocked', url }));
   installOrchestrator(rt);
@@ -239,6 +256,10 @@ app.whenReady().then(async () => {
   rt.mcp.load();
   nativeTheme.themeSource = rt.settings.theme;
   terminals = new TerminalManager((id, kind, payload) => win?.webContents.send('term:event', { id, kind, payload }));
+  // ACP: external editors drive Edict over a 0600 local socket; off until the emperor turns it on
+  acp = createAcpService(rt, { confirmClient: confirmAcpClient, confirmWorkspace: confirmAcpWorkspace, highRiskInEdictOnly: rt.settings.acpHighRiskInEdictOnly !== false, log: (l) => console.log(l) });
+  const followAcp = (on: boolean) => void acp?.setEnabled(on).catch((err) => send({ type: 'toast', level: 'error', message: `编辑器接入（ACP）无法启动：${(err as Error).message}` }));
+  followAcp(!!rt.settings.acpEnabled);
   rt.on((e) => {
     send(e);
     if (e.type === 'workspace') {
@@ -246,9 +267,27 @@ app.whenReady().then(async () => {
       // servers whose config depends on the workspace are restarted for the new folder
       for (const [n, entry] of Object.entries(rt.mcp.config.mcpServers)) if (JSON.stringify(entry).includes('workspaceFolder') || entry.command) rt.mcp.restart(n);
     }
-    if (e.type === 'settings') nativeTheme.themeSource = e.settings.theme;
+    if (e.type === 'settings') {
+      nativeTheme.themeSource = e.settings.theme;
+      // the settings page toggles this live; open ACP sessions read it on their next approval
+      if (acp) acp.host.opts.highRiskInEdictOnly = e.settings.acpHighRiskInEdictOnly !== false;
+      followAcp(!!e.settings.acpEnabled);
+    }
   });
-  const api = buildApi(rt, terminals, { openFolderDialog, getWindow: () => win });
+  const api = buildApi(rt, terminals, {
+    openFolderDialog,
+    getWindow: () => win,
+    acpStatus: () => {
+      const running = new Set(acp?.host.activeSessions() ?? []);
+      // the settings page polls this every few seconds: one summary per session, not every turn's full text
+      const sessions = (acp?.host.listSessions() ?? []).map((s) => ({
+        id: s.id, cwd: s.cwd, modeId: s.modeId, client: s.client, createdAt: s.createdAt, updatedAt: s.updatedAt, turns: s.turns.length,
+        lastUser: s.turns[s.turns.length - 1]?.user.slice(0, 300), taskIds: s.turns.flatMap((t) => (t.taskId ? [t.taskId] : [])).reverse().slice(0, 10), running: running.has(s.id),
+      }));
+      return { enabled: !!rt.settings.acpEnabled, listening: !!acp?.server.listening, socketPath: acp?.socketPath ?? '', connections: acp?.server.connections ?? 0, approvedClients: acp?.server.approvedClients() ?? [], sessions };
+    },
+    acpEditorConfig: () => editorAgentServerConfig({ appExecutable: process.execPath, bridgeScript: path.join(DIST, 'acp-bridge.js') }),
+  });
   ipcMain.handle('rt:invoke', async (_e, method: string, args: unknown[]) => {
     const fn = (api as Record<string, (...a: unknown[]) => unknown>)[method];
     if (typeof fn !== 'function') throw new Error(`未知 API：${method}`);
@@ -270,6 +309,31 @@ app.whenReady().then(async () => {
   });
 });
 
+async function confirmAcpClient(info: { name?: string; title?: string; version?: string }): Promise<boolean> {
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  }
+  const name = info.title || info.name || '未知编辑器';
+  const opts = {
+    type: 'warning' as const,
+    buttons: ['允许', '拒绝'],
+    defaultId: 1,
+    cancelId: 1,
+    message: `编辑器「${name}」请求接入 Edict（ACP）`,
+    detail: `${info.name ?? ''} ${info.version ?? ''}\n允许后，该编辑器可以在当前工作区下达旨意、驱动各部执行并回应权限请求（高风险操作仍须在 Edict 里确认）。仅本次运行期间有效。`,
+  };
+  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  return r.response === 0;
+}
+
+async function confirmAcpWorkspace({ cwd, current }: { cwd: string; current: string | null }): Promise<boolean> {
+  const opts = { type: 'question' as const, buttons: ['切换', '不切换'], defaultId: 1, cancelId: 1, message: '编辑器要在另一个文件夹工作', detail: `编辑器要求的工作区：${cwd}\n当前打开的：${current ?? '（无）'}\n切换后 Edict 的工作区也会随之改变。` };
+  const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
+  return r.response === 0;
+}
+
 app.on('web-contents-created', (_e, contents) => {
   hardenContents(contents);
   contents.session.setPermissionRequestHandler((_wc, permission, cb) => cb(permission === 'clipboard-sanitized-write' || permission === 'notifications'));
@@ -277,6 +341,7 @@ app.on('web-contents-created', (_e, contents) => {
 
 app.on('before-quit', () => {
   try {
+    void acp?.dispose();
     terminals?.killAll();
     rt?.dispose();
   } catch (e) {

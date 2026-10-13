@@ -38,7 +38,7 @@
 - **全程可审计**：SHA-256 哈希链审计日志（可一键校验）；奏折阁五阶段时间线（圣旨 → 中书 → 门下 → 六部 → 回奏）；记录模型、协议、run ID、退出状态、产物路径与**系统核验的哈希**（不采信模型自述）。
 - **局部恢复**：每一步都是持久化节点；失败 / 应用重启中断后只**重放失败节点**，不重放整棵 Agent 树。
 - **Editor**：文件树、多标签、Monaco 语法高亮与诊断、全局搜索替换（正则/大小写/全字/包含）、集成终端（无原生模块的 PTY）、问题面板、Git 状态 / diff / 暂存 / 提交；Agent 改动实时刷新到打开的文件。
-- **军机处全部面板**：旨意看板、省部调度、奏折阁、旨库（9 模板）、官员总览（Token 排行）、天下要闻、模型配置（每 Agent 独立热切换）、技能与 MCP、小任务 Sessions、上朝仪式、朝堂议政，另有审计日志与使用说明。
+- **军机处全部面板**：旨意看板、省部调度、奏折阁、旨库（9 模板）、官员总览（Token 排行）、天下要闻、小任务 Sessions、上朝仪式、朝堂议政，另有审计日志与使用说明；模型、技能、MCP 等配置自 2.0 起集中在「设置」（每 Agent 可独立热切换模型）。
 - **思考程度滑块**（v1.1）：刻度就是所选模型自己的档位，按服务检测结果显示，用 API 原名（None / Low / Medium / High / XHigh / Max / Ultra 等，自定义可加 ultra）；按协议自动翻译为 `reasoning_effort`、`output_config.effort`、`thinking.budget_tokens`、`enable_thinking` 等；每位官员可单独设置。
 - **可读的模型错误**（v1.1）：中转站「分组不支持该模型或接入方式」等配置错误不再盲目重试，直接给出原因、做法和「换模型重试」；「协议探测」一键找出哪种协议可用。
 - **HTML 预览与自测**（v1.1）：内置浏览器运行 Agent 生成的网页（控制台、视口尺寸、自动刷新、外网拦截）；Agent 用 `preview_page` 截图自验。
@@ -49,6 +49,14 @@
 - **经济模型自动回退**（v1.2）：服务说不支持经济模型时，该官员自动改用主模型继续，并提示去「模型配置」修改。
 - **更精细的唐风朝堂，按宫殿布局走**（v1.2）：四个场景两倍精度重绘，官员 29 种动作跟随实际工作；新增**太和殿广场**，太和殿 → 广场 → 承天门 → 六部值房 可方向键或点击行走；悬停 / 点击官员与物件、奏折回放、昼夜与天气；每个设计可单独设置朝堂站位。
 - **悬停说明**（v1.2）：活动栏、军机处列表、朝堂工具栏和下旨框的每个控件，鼠标停一下就显示名称和一句话说明。
+- **执行由你掌控**（v2.0）：子任务标注 只读 / 写入 / 验证，只读的并行、写入的逐个执行；子任务默认只读开工，每个写任务开工前单独弹卡（准许开工 / 本子任务内免询问 / 改为只读执行 / 驳回）。审批可选「本旨意内不再询问」或「本工作区永久允许」；高风险操作每次都问，发版 / 部署逐次确认，工作区可单独开启永久允许。成果按系统实际记录的改动核验，命令造成的改动也能撤回；官员可以「请旨」，「典章」里的规矩和项目的 `AGENTS.md` 等规约文件会交给官员。
+- **每道旨意一个 git 工作树**（v2.0）：git 仓库里的协同旨意各在自己的分支和目录里办，同一仓库的旨意并行，你打开的工作区在结案前一个文件都不动；结案时选择合并、保留分支或丢弃。也可以手动新建工作树并打开为工作区。
+- **MCP 登录、资源与提示词**（v2.0）：远程服务 OAuth 登录；新的「连接服务（MCP）」设置页；下旨框里 `/` 选提示词、`@` 引用资源。
+- **语言服务（LSP）**（v2.0）：自动找到本机已安装的语言服务器，缺的给出安装命令（不替你安装）；官员有 `lsp` 工具，编辑器显示其诊断。
+- **编辑器接入（ACP）**（v2.0）：支持 ACP 的编辑器经本机套接字直接给 Edict 下旨；每个编辑器首次接入须你批准。
+- **内置技能包**（v2.0）：37 个规划、评审、排查、测试、发布、部署与日常技能；每位官员有几个职责技能，其余技能按官员单独开关另配。
+- **SQLite 存储**（v2.0）：数据集中在 `edict.db`；首次启动自动迁移 1.x 数据并保留原文件备份。
+- **新界面**（v2.0）：带搜索的设置中心；活动栏加入待办、网页预览和可固定的常用页面；看板有统计卡、「需要你处理」栏与筛选；Agent 栏的决策卡与方案卡；桌面通知设置。2.0 不包含 Intel 版本、自动更新与公证，详见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
 - **多协议 / 多供应商**：OpenAI Chat Completions、Anthropic Messages、OpenAI Responses；DeepSeek / GLM / Qwen / Kimi / OpenAI / Anthropic / 本地 Ollama 预设（只预填 base_url，模型 id 由你填写或从服务拉取；**没有任何硬编码 Key**）。
 - **Token 经济性**：强 / 经济模型分级路由；仓库地图 + 符号大纲代替全量源码；文件按需读取；子 Agent 只回传结构化结论；稳定系统前缀（Anthropic `cache_control`，OpenAI/DeepSeek 前缀缓存）；长对话滚动压缩；封驳次数与预算上限（超限升级御批）；下旨前预估、每任务 / 每官员实时统计。
 
@@ -68,10 +76,11 @@ npm run assets           # 生成像素占位美术（已提交，可跳过）
 npm run build            # esbuild 打包 main / preload / renderer 到 dist/
 npx electron dist        # 运行
 npm test                 # 单元 + 集成测试（mock LLM）
+npm run typecheck        # 类型检查 src/（主进程、preload、渲染进程）
 npm run package:mac      # 组装 Edict.app（arm64）、ad-hoc 签名、生成 zip + DMG
 ```
 
-`package:mac` 需要官方的 `electron-v44.4.5-darwin-arm64.zip`（放在 `deps/`，或设置 `ELECTRON_DARWIN_ZIP`）。在 macOS 上使用 `codesign` 与 `hdiutil`；在 Linux 上需要 `PATH` 中有 rcodesign 与 libdmg-hfsplus 的 `dmg`（或设置 `RCODESIGN` / `DMG_TOOL`），生成 ISO9660+RockRidge → UDIF。端到端测试：`npm run e2e` 与 `npm run e2e:features`（Playwright；Linux 下用 `xvfb-run`）。
+`package:mac` 需要官方的 `electron-v44.4.5-darwin-arm64.zip`（放在 `deps/`，或设置 `ELECTRON_DARWIN_ZIP`）。在 macOS 上使用 `codesign` 与 `hdiutil`；在 Linux 上需要 `PATH` 中有 rcodesign 与 libdmg-hfsplus 的 `dmg`（或设置 `RCODESIGN` / `DMG_TOOL`），生成 ISO9660+RockRidge → UDIF。端到端测试：先 `npm run build`，再 `npm run e2e` 与 `npm run e2e:features`（Playwright；Linux 下用 `xvfb-run`；见 [docs/TESTING.md](docs/TESTING.md)）。
 
 
 ## 文档

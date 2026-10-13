@@ -1,18 +1,74 @@
-// MCP 管理：Cursor-compatible mcp.json (data dir), per-tool policy, trust for local commands,
-// secret extraction into the keychain-backed SecretStore, connection lifecycle and agent tool exposure.
+// MCP 管理：standard mcp.json (data dir), per-tool policy, trust for local commands,
+// secret extraction into the keychain-backed SecretStore, connection lifecycle, OAuth login for remote
+// servers (tokens in the SecretStore under `mcp-oauth:<server>`), resources / prompts and agent tool exposure.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AgentId, McpConfig, McpPolicy, McpRisk, McpServerEntry, McpServerPolicy, McpServerState, McpToolInfo, McpToolPolicy } from '../../shared/types';
+import type {
+  AgentId, McpAuthConfig, McpAuthState, McpConfig, McpPolicy, McpPromptInfo, McpPromptListItem, McpPromptResult, McpReadResult, McpResourceContent, McpResourceInfo,
+  McpResourceListItem, McpResourceTemplateInfo, McpResourceTemplateListItem, McpRisk, McpServerEntry, McpServerPolicy, McpServerState, McpToolInfo, McpToolPolicy,
+} from '../../shared/types';
 import type { ToolSpec } from '../llm/types';
 import type { Runtime } from '../runtime/runtime';
-import { sha256, truncate } from '../runtime/util';
+import { redactSecrets, sha256, truncate } from '../runtime/util';
 import { safeEnv, userShell } from '../services/exec';
-import { McpClient, McpHttpError, SseTransport, StdioTransport, StreamableHttpTransport, type McpTool, type Transport } from './client';
-
-const SECRET_NAME = /(key|token|secret|password|passwd|auth|credential|cookie|bearer)/i;
-const SECRET_VALUE = /^(sk-|sk_|ghp_|gho_|github_pat_|xox[abpr]-|glpat-|AKIA|AIza|Bearer\s+\S{12,}|Basic\s+\S{8,})/;
+import { McpClient, McpHttpError, SseTransport, StdioTransport, StreamableHttpTransport, type McpContentBlock, type McpPrompt, type McpResource, type McpResourceTemplate, type McpTool, type Transport } from './client';
+import { McpOAuth, OAUTH_LOGIN_TIMEOUT_MS } from './oauth';
+import { SECRET_NAME, SECRET_VALUE } from '../../shared/mcpSecrets';
 const MAX_LOGS = 300;
+const STATE_RESOURCES = 200; // kept on McpServerState (broadcast to the renderer)
+const LIST_RESOURCES = 1000; // returned by listResources()
+const MAX_BLOB_BYTES = 20 * 1024 * 1024;
+const NEEDS_AUTH_HINT = '需要登录授权：点击「登录」，在浏览器中完成授权后会自动连接';
+
+/** SecretStore id of a server's OAuth record (tokens, expiry, client registration). */
+export const oauthSecretId = (server: string) => `mcp-oauth:${server}`;
+
+/** OAuth applies to remote servers unless `auth.type` is none, or a static Authorization header is configured without `auth`. */
+export function oauthApplies(e: McpServerEntry): boolean {
+  if (!e.url || e.auth?.type === 'none') return false;
+  return e.auth?.type === 'oauth' || !Object.keys(e.headers ?? {}).some((k) => k.toLowerCase() === 'authorization');
+}
+
+function parseAuth(name: string, a: unknown): McpAuthConfig {
+  if (!a || typeof a !== 'object' || Array.isArray(a)) throw new Error(`${name}：auth 必须是对象，如 {"type":"oauth"}`);
+  const x = a as Record<string, unknown>;
+  if (x.type === 'none') return { type: 'none' };
+  if (x.type !== 'oauth') throw new Error(`${name}：auth.type 只能是 "oauth" 或 "none"`);
+  const out: McpAuthConfig = { type: 'oauth' };
+  for (const k of ['clientId', 'clientSecret'] as const) {
+    if (x[k] === undefined) continue;
+    const v = x[k];
+    if (typeof v !== 'string' || !v.trim() || v.length > 2048) throw new Error(`${name}：auth.${k} 必须是非空字符串`);
+    out[k] = v.trim();
+  }
+  if (x.scopes !== undefined) {
+    // RFC 6749 §3.3 scope-token
+    if (!Array.isArray(x.scopes) || x.scopes.some((s) => typeof s !== 'string' || !/^[\x21\x23-\x5B\x5D-\x7E]{1,200}$/.test(s))) throw new Error(`${name}：auth.scopes 必须是字符串数组（每项不含空格与引号）`);
+    out.scopes = [...new Set(x.scopes as string[])].slice(0, 50);
+  }
+  if (out.clientSecret && !out.clientId) throw new Error(`${name}：设置 auth.clientSecret 时必须同时设置 auth.clientId`);
+  return out;
+}
+
+const str = (v: unknown, max: number) => (typeof v === 'string' && v ? v.slice(0, max) : undefined);
+const fmtBytes = (n: number) => (n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+
+function cleanResource(r: McpResource): McpResourceInfo {
+  return { uri: String(r.uri).slice(0, 4096), name: str(r.name, 200) ?? String(r.uri).slice(0, 200), title: str(r.title, 200), description: str(r.description, 500), mimeType: str(r.mimeType, 100), size: Number.isFinite(r.size) ? Number(r.size) : undefined };
+}
+function cleanTemplate(t: McpResourceTemplate): McpResourceTemplateInfo {
+  return { uriTemplate: String(t.uriTemplate).slice(0, 1024), name: str(t.name, 200) ?? String(t.uriTemplate).slice(0, 200), title: str(t.title, 200), description: str(t.description, 500), mimeType: str(t.mimeType, 100) };
+}
+function cleanPrompt(p: McpPrompt): McpPromptInfo {
+  const args = (Array.isArray(p.arguments) ? p.arguments : []).filter((a) => a && typeof a.name === 'string').slice(0, 30);
+  return { name: p.name.slice(0, 200), title: str(p.title, 200), description: str(p.description, 1000), arguments: args.map((a) => ({ name: a.name.slice(0, 100), title: str(a.title, 200), description: str(a.description, 300), required: !!a.required })) };
+}
+
+/** Audit form of a resource URI: no userinfo, query or fragment. */
+export function auditUri(uri: string) {
+  return uri.replace(/^([a-z][\w+.-]*:\/\/)[^/@]*@/i, '$1').replace(/[?#].*$/, '').slice(0, 200);
+}
 
 export function sanitizeName(s: string) {
   return s.replace(/[^a-zA-Z0-9_-]/g, '_').replace(/_+/g, '_').replace(/^_|_$/g, '') || 'x';
@@ -26,7 +82,7 @@ export function exposedName(server: string, tool: string): string {
   return n;
 }
 
-/** Accepts Cursor `{mcpServers}` and VS Code `{servers}` shapes; validates entries. */
+/** Accepts `{mcpServers}` and `{servers}` shapes; validates entries. */
 export function parseMcpConfig(text: string): McpConfig {
   let j: unknown;
   try {
@@ -55,6 +111,10 @@ export function parseMcpConfig(text: string): McpConfig {
       clean.url = String(e.url);
       if (e.headers) clean.headers = Object.fromEntries(Object.entries(e.headers).map(([k, x]) => [k, String(x)]));
     }
+    if (e.auth !== undefined) {
+      if (e.command) throw new Error(`${name}：auth 仅适用于远程（url）服务`);
+      clean.auth = parseAuth(name, e.auth);
+    }
     if (e.disabled) clean.disabled = true;
     out.mcpServers[name] = clean;
   }
@@ -63,7 +123,7 @@ export function parseMcpConfig(text: string): McpConfig {
 
 export interface InterpCtx { workspace: string | null; secret: (id: string) => string | null }
 
-/** Cursor-style variables: ${env:NAME} ${userHome} ${workspaceFolder} ${workspaceFolderBasename} ${pathSeparator} ${/} + ${secret:ID}. */
+/** Config variables: ${env:NAME} ${userHome} ${workspaceFolder} ${workspaceFolderBasename} ${pathSeparator} ${/} + ${secret:ID}. */
 export function interpolate(s: string, ctx: InterpCtx): string {
   return s.replace(/\$\{([^}]+)\}/g, (m, key: string) => {
     if (key.startsWith('env:')) return process.env[key.slice(4)] ?? '';
@@ -84,10 +144,16 @@ export function interpolate(s: string, ctx: InterpCtx): string {
   });
 }
 
-/** Move literal secrets (env / headers) into the SecretStore; the config keeps `${secret:server/KEY}`. */
+/** Move literal secrets (env / headers / auth.clientSecret) into the SecretStore; the config keeps `${secret:server/KEY}`. */
 export function extractSecrets(cfg: McpConfig, put: (id: string, v: string) => void): string[] {
   const moved: string[] = [];
   for (const [name, e] of Object.entries(cfg.mcpServers)) {
+    if (e.auth?.type === 'oauth' && e.auth.clientSecret && !e.auth.clientSecret.includes('${')) {
+      const id = `${name}/auth/clientSecret`;
+      put(id, e.auth.clientSecret);
+      e.auth.clientSecret = `\${secret:${id}}`;
+      moved.push(`${name}.auth.clientSecret`);
+    }
     for (const field of ['env', 'headers'] as const) {
       const obj = e[field];
       if (!obj) continue;
@@ -144,7 +210,11 @@ export class McpManager {
   states = new Map<string, McpServerState>();
   private clients = new Map<string, McpClient>();
   private exposed = new Map<string, { server: string; tool: string }>();
+  private oauth = new Map<string, McpOAuth>(); // the instance used by the live transport (keeps the last 401 challenge)
+  private logins = new Map<string, AbortController>();
   private disposed = false;
+  /** How long a browser login may take before the loopback callback server gives up. */
+  loginTimeoutMs = OAUTH_LOGIN_TIMEOUT_MS;
 
   constructor(private rt: Runtime) {}
 
@@ -190,8 +260,14 @@ export class McpManager {
       const e = cfg.mcpServers[n];
       if (e?.command) this.policy.trusted = [...new Set([...this.policy.trusted, trustKey(n, e)])];
     }
-    // drop secrets of removed servers
-    for (const n of Object.keys(this.config.mcpServers)) if (!cfg.mcpServers[n]) delete this.policy.servers[n];
+    // drop policy and OAuth tokens of removed servers
+    for (const n of Object.keys(this.config.mcpServers)) {
+      if (cfg.mcpServers[n]) continue;
+      delete this.policy.servers[n];
+      this.logins.get(n)?.abort();
+      this.oauth.delete(n);
+      this.rt.opts.secrets.delete(oauthSecretId(n));
+    }
     const before = this.config;
     this.config = cfg;
     fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
@@ -263,8 +339,19 @@ export class McpManager {
     st.startedAt = Date.now();
     this.emit();
     const log = (level: 'info' | 'error' | 'stderr', text: string) => this.log(name, level, text);
-    const ctx: InterpCtx = { workspace: this.rt.workspace?.root ?? null, secret: (id) => this.rt.opts.secrets.get(`mcp:${id}`) };
+    const ctx = this.ctx();
     const roots = () => (this.rt.workspace ? [{ uri: `file://${this.rt.workspace.root}`, name: path.basename(this.rt.workspace.root) }] : []);
+    let oauth: McpOAuth | null = null;
+    if (oauthApplies(e)) {
+      try {
+        oauth = this.makeOAuth(name, e, ctx);
+        this.oauth.set(name, oauth);
+      } catch (err) {
+        st.status = 'error';
+        st.error = `url 无效：${(err as Error).message}`;
+        return this.emit();
+      }
+    }
     const mk = (kind: 'stdio' | 'http' | 'sse'): Transport => {
       if (kind === 'stdio') {
         let env: Record<string, string> = {};
@@ -280,15 +367,20 @@ export class McpManager {
       }
       const headers = Object.fromEntries(Object.entries(e.headers ?? {}).map(([k, v]) => [k, interpolate(v, ctx)]));
       const url = interpolate(e.url!, ctx);
-      return kind === 'sse' ? new SseTransport({ url, headers, fetch: this.rt.opts.fetchImpl, log }) : new StreamableHttpTransport({ url, headers, fetch: this.rt.opts.fetchImpl, log });
+      const auth = oauth ?? undefined;
+      return kind === 'sse' ? new SseTransport({ url, headers, fetch: this.rt.opts.fetchImpl, log, auth }) : new StreamableHttpTransport({ url, headers, fetch: this.rt.opts.fetchImpl, log, auth });
     };
     const order: ('stdio' | 'http' | 'sse')[] = e.command ? ['stdio'] : e.type === 'sse' ? ['sse'] : e.type === 'http' || e.type === 'streamable-http' ? ['http'] : ['http', 'sse'];
     let lastErr: unknown;
+    let needsAuth = false;
     for (const kind of order) {
       const client = new McpClient(mk(kind), { roots, version: this.rt.opts.version, log });
       try {
         await client.connect();
         const tools = await client.listTools();
+        st.capabilities = { tools: !!client.capabilities.tools, resources: client.hasResources, prompts: client.hasPrompts };
+        await this.refreshResources(name, client).catch((err) => log('error', `resources/list 失败：${(err as Error).message}`));
+        await this.refreshPrompts(name, client).catch((err) => log('error', `prompts/list 失败：${(err as Error).message}`));
         if (this.disposed) return client.close();
         this.clients.set(name, client);
         st.transport = kind;
@@ -297,8 +389,12 @@ export class McpManager {
         st.instructions = client.instructions;
         this.applyTools(name, tools);
         st.status = 'ok';
-        log('info', `已连接（${kind}）：${client.serverInfo?.name ?? name} ${client.serverInfo?.version ?? ''} · 协议 ${client.protocolVersion} · ${tools.length} 个工具`);
+        st.auth = this.authStateOf(name, e, oauth);
+        const extra = `${st.capabilities.resources ? ` · ${st.resourceCount ?? 0} 项资源` : ''}${st.capabilities.prompts ? ` · ${st.prompts?.length ?? 0} 个提示词` : ''}`;
+        log('info', `已连接（${kind}）：${client.serverInfo?.name ?? name} ${client.serverInfo?.version ?? ''} · 协议 ${client.protocolVersion} · ${tools.length} 个工具${extra}`);
         client.onToolsChanged = () => void client.listTools().then((t) => { this.applyTools(name, t); this.emit(); }).catch(() => undefined);
+        client.onResourcesChanged = () => void this.refreshResources(name, client).then(() => this.emit()).catch(() => undefined);
+        client.onPromptsChanged = () => void this.refreshPrompts(name, client).then(() => this.emit()).catch(() => undefined);
         client.onClose = (why) => {
           if (this.clients.get(name) !== client) return;
           this.clients.delete(name);
@@ -307,19 +403,88 @@ export class McpManager {
           log('error', why);
           this.emit();
         };
-        this.rt.audit.record('system', 'mcp_connected', { server: name, transport: kind, tools: tools.length, serverInfo: client.serverInfo?.name ?? null });
+        if (oauth) oauth.onAuthRequired = () => this.authLost(name, client, e, oauth!);
+        this.rt.audit.record('system', 'mcp_connected', { server: name, transport: kind, tools: tools.length, resources: st.resourceCount ?? 0, prompts: st.prompts?.length ?? 0, oauth: !!st.auth?.loggedIn, serverInfo: client.serverInfo?.name ?? null });
         return this.emit();
       } catch (err) {
         client.close();
         lastErr = err;
+        if (oauth && err instanceof McpHttpError && err.status === 401) {
+          needsAuth = true;
+          break;
+        }
         const fallback = kind === 'http' && order.includes('sse') && err instanceof McpHttpError && [400, 404, 405].includes(err.status);
         log('error', `${kind} 连接失败：${(err as Error).message}${fallback ? '（改试旧版 SSE）' : ''}`);
         if (!fallback) break;
       }
     }
+    if (needsAuth) {
+      st.status = 'needs_auth';
+      st.error = NEEDS_AUTH_HINT;
+      st.auth = this.authStateOf(name, e, oauth, true);
+      log('info', `服务要求登录授权（HTTP 401）${st.auth?.loggedIn ? '：已保存的令牌无效且无法刷新' : ''}`);
+      return this.emit();
+    }
     st.status = 'error';
-    st.error = (lastErr as Error)?.message ?? '连接失败';
+    st.error = this.scrub(name, (lastErr as Error)?.message ?? '连接失败');
     this.emit();
+  }
+
+  /** Interactive OAuth login for a remote server: opens the system browser, waits for the loopback callback, then reconnects. */
+  async login(name: string): Promise<void> {
+    const e = this.config.mcpServers[name];
+    const st = this.states.get(name);
+    if (!e || !st) throw new Error(`MCP 服务不存在：${name}`);
+    if (!oauthApplies(e)) throw new Error(e.url ? `MCP 服务 ${name} 未启用 OAuth（auth.type 为 none，或已配置 Authorization 请求头）` : 'OAuth 登录仅适用于远程（url）服务');
+    if (!this.rt.opts.openExternal) throw new Error('当前环境无法打开浏览器，不能完成 OAuth 登录');
+    this.logins.get(name)?.abort();
+    const ac = new AbortController();
+    this.logins.set(name, ac);
+    let oauth: McpOAuth;
+    try {
+      oauth = this.makeOAuth(name, e, this.ctx());
+    } catch (err) {
+      this.logins.delete(name);
+      throw new Error(`url 无效：${(err as Error).message}`);
+    }
+    st.auth = { ...oauth.status(), loggingIn: true };
+    this.emit();
+    try {
+      const r = await oauth.login({ signal: ac.signal, timeoutMs: this.loginTimeoutMs });
+      this.rt.audit.record('emperor', 'mcp_oauth_login', { server: name, ok: true, issuer: r.issuer, scopes: r.scopes, dynamicClient: r.dynamicClient });
+      this.log(name, 'info', `OAuth 登录成功（${new URL(r.issuer).host}${r.scopes.length ? ` · ${r.scopes.join(' ')}` : ''}）`);
+    } catch (err) {
+      const msg = this.scrub(name, (err as Error).message);
+      this.rt.audit.record('emperor', 'mcp_oauth_login', { server: name, ok: false, error: truncate(msg, 300) });
+      this.log(name, 'error', `OAuth 登录失败：${msg}`);
+      throw new Error(msg);
+    } finally {
+      if (this.logins.get(name) === ac) this.logins.delete(name);
+      st.auth = { ...oauth.status(), loggingIn: this.logins.has(name) || undefined };
+      this.emit();
+    }
+    await this.start(name);
+  }
+
+  /** Forget the server's OAuth tokens and client registration (best-effort revocation), then reconnect without them. */
+  async logout(name: string): Promise<void> {
+    const e = this.config.mcpServers[name];
+    if (!e) throw new Error(`MCP 服务不存在：${name}`);
+    this.logins.get(name)?.abort();
+    let oauth: McpOAuth | null = null;
+    try {
+      oauth = oauthApplies(e) ? this.makeOAuth(name, e, this.ctx()) : null;
+    } catch {
+      oauth = null;
+    }
+    const revoked = oauth ? (await oauth.logout()).revoked : false;
+    this.rt.opts.secrets.delete(oauthSecretId(name));
+    this.rt.audit.record('emperor', 'mcp_oauth_logout', { server: name, revoked });
+    this.log(name, 'info', `已退出 OAuth 登录${revoked ? '（授权服务器已吊销令牌）' : ''}`);
+    this.stop(name, true);
+    const st = this.states.get(name);
+    if (st) st.auth = oauth ? oauth.status() : undefined;
+    await this.start(name);
   }
 
   stop(name: string, silent = false) {
@@ -362,8 +527,14 @@ export class McpManager {
 
   async call(server: string, tool: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<{ ok: boolean; output: string; images: string[] }> {
     const c = this.clients.get(server);
-    if (!c) throw new Error(`MCP 服务 ${server} 未连接`);
-    const r = await c.callTool(tool, args, 180000, signal);
+    if (!c) throw new Error(this.states.get(server)?.status === 'needs_auth' ? `MCP 服务 ${server} 需要登录授权` : `MCP 服务 ${server} 未连接`);
+    let r;
+    try {
+      r = await c.callTool(tool, args, 180000, signal);
+    } catch (err) {
+      if (this.states.get(server)?.status === 'needs_auth') throw new Error(`MCP 服务 ${server} 的登录已失效，需要皇上重新登录授权`);
+      throw new Error(this.scrub(server, (err as Error).message));
+    }
     const parts: string[] = [];
     const images: string[] = [];
     for (const b of r.content ?? []) {
@@ -379,12 +550,236 @@ export class McpManager {
     return { ok: !r.isError, output: truncate(parts.join('\n') || '（无输出）', 12000), images };
   }
 
+  // ── resources & prompts
+  /** Live resources/list of one (or every) connected server that declares resources; refreshes the state too. */
+  async listResources(server?: string): Promise<McpResourceListItem[]> {
+    const out: McpResourceListItem[] = [];
+    for (const [n, c] of this.connected(server)) {
+      try {
+        out.push(...(await this.refreshResources(n, c)).map((r) => ({ server: n, ...r })));
+      } catch (err) {
+        if (server) throw new Error(this.scrub(n, (err as Error).message));
+        this.log(n, 'error', `resources/list 失败：${(err as Error).message}`);
+      }
+    }
+    this.emit();
+    return out;
+  }
+
+  /** Resource templates as last listed (on connect, list_changed or listResources). */
+  listResourceTemplates(server?: string): McpResourceTemplateListItem[] {
+    return [...this.states.values()].filter((s) => s.status === 'ok' && (!server || s.name === server)).flatMap((s) => (s.resourceTemplates ?? []).map((t) => ({ server: s.name, ...t })));
+  }
+
+  /** resources/read: text inline (truncated to `maxChars`, full text kept in the blob store), binary saved as a blob and referenced. */
+  async readResource(server: string, uri: string, o: { maxChars?: number; actor?: string; taskId?: string; signal?: AbortSignal } = {}): Promise<McpReadResult> {
+    const [[, c]] = this.connected(server);
+    if (!c.hasResources) throw new Error(`MCP 服务 ${server} 未提供资源（resources）`);
+    if (typeof uri !== 'string' || !uri.trim() || uri.length > 4096) throw new Error('资源 URI 无效');
+    const started = Date.now();
+    const audit = (detail: Record<string, unknown>) => this.rt.audit.record(o.actor ?? 'emperor', 'mcp_resource_read', { server, uri: auditUri(uri), ...detail, durationMs: Date.now() - started }, o.taskId);
+    let r;
+    try {
+      r = await c.readResource(uri, 60000, o.signal);
+    } catch (err) {
+      const msg = this.scrub(server, (err as Error).message);
+      audit({ ok: false, error: truncate(msg, 200) });
+      throw new Error(msg);
+    }
+    let budget = Math.max(500, o.maxChars ?? 20000);
+    let bytes = 0;
+    const contents: McpResourceContent[] = [];
+    const parts: string[] = [];
+    for (const x of r.contents.slice(0, 50)) {
+      if (!x || typeof x !== 'object') continue;
+      const item: McpResourceContent = { uri: typeof x.uri === 'string' ? x.uri : uri, mimeType: str(x.mimeType, 100) };
+      const head = `【${item.uri}】${item.mimeType ? ` ${item.mimeType}` : ''}`;
+      if (typeof x.text === 'string') {
+        item.bytes = Buffer.byteLength(x.text);
+        bytes += item.bytes;
+        if (x.text.length <= budget) {
+          item.text = x.text;
+          parts.push(`${head}\n${x.text}`);
+          budget -= x.text.length;
+        } else {
+          item.text = x.text.slice(0, budget);
+          item.truncated = true;
+          item.blob = this.rt.blobs.put(x.text);
+          parts.push(`${head}\n${item.text}\n…[已截断：原文 ${x.text.length} 字符，全文已保存 · ${item.blob.slice(0, 12)}]`);
+          budget = 0;
+        }
+      } else if (typeof x.blob === 'string') {
+        const saved = this.saveBlob(x.blob);
+        item.bytes = saved?.bytes ?? Math.floor((x.blob.length * 3) / 4);
+        bytes += item.bytes;
+        if (saved) item.blob = saved.hash;
+        parts.push(`${head}\n[二进制内容 ${fmtBytes(item.bytes)}${saved ? ` · 已保存 · ${saved.hash.slice(0, 12)}` : ' · 过大，未保存'}]`);
+      } else continue;
+      contents.push(item);
+    }
+    audit({ ok: true, contents: contents.length, bytes });
+    return { server, uri, contents, text: parts.join('\n\n') || '（资源为空）' };
+  }
+
+  /** Live prompts/list of every connected server that declares prompts (state refreshed too). */
+  async listPrompts(): Promise<McpPromptListItem[]> {
+    const out: McpPromptListItem[] = [];
+    for (const [n, c] of this.clients) {
+      if (!c.hasPrompts) continue;
+      try {
+        out.push(...(await this.refreshPrompts(n, c)).map((p) => ({ server: n, ...p })));
+      } catch (err) {
+        this.log(n, 'error', `prompts/list 失败：${(err as Error).message}`);
+      }
+    }
+    this.emit();
+    return out;
+  }
+
+  /** prompts/get rendered as plain text for the composer (images / embedded binaries saved as blobs and referenced). */
+  async getPrompt(server: string, name: string, args: Record<string, unknown> = {}): Promise<McpPromptResult> {
+    const [[, c]] = this.connected(server);
+    if (!c.hasPrompts) throw new Error(`MCP 服务 ${server} 未提供提示词（prompts）`);
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(args ?? {})) if (v !== undefined && v !== null && String(v) !== '') clean[k] = String(v).slice(0, 20000);
+    const known = this.states.get(server)?.prompts?.find((p) => p.name === name);
+    const missing = (known?.arguments ?? []).filter((a) => a.required && !clean[a.name]).map((a) => a.name);
+    if (missing.length) throw new Error(`提示词 ${name} 缺少必填参数：${missing.join('、')}`);
+    let r;
+    try {
+      r = await c.getPrompt(name, clean);
+    } catch (err) {
+      const msg = this.scrub(server, (err as Error).message);
+      this.rt.audit.record('emperor', 'mcp_prompt_get', { server, prompt: name, argKeys: Object.keys(clean), ok: false, error: truncate(msg, 200) });
+      throw new Error(msg);
+    }
+    const messages = r.messages.slice(0, 100).map((m) => ({
+      role: (m?.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
+      text: (Array.isArray(m?.content) ? m.content : [m?.content]).map((b) => this.blockText(b)).filter(Boolean).join('\n'),
+    }));
+    const labelled = messages.some((m) => m.role === 'assistant');
+    const text = truncate(messages.map((m) => (labelled ? `【${m.role === 'user' ? '用户' : '助手'}】\n${m.text}` : m.text)).join('\n\n'), 40000);
+    this.rt.audit.record('emperor', 'mcp_prompt_get', { server, prompt: name, argKeys: Object.keys(clean), ok: true, messages: messages.length });
+    return { server, name, description: str(r.description, 1000), messages, text };
+  }
+
   dispose() {
     this.disposed = true;
+    for (const ac of this.logins.values()) ac.abort();
+    this.logins.clear();
     for (const n of [...this.clients.keys()]) this.stop(n, true);
   }
 
   // ── internals
+  private ctx(): InterpCtx {
+    return { workspace: this.rt.workspace?.root ?? null, secret: (id) => this.rt.opts.secrets.get(`mcp:${id}`) };
+  }
+
+  private connected(server?: string): [string, McpClient][] {
+    if (!server) return [...this.clients];
+    const c = this.clients.get(server);
+    if (!c) throw new Error(this.states.get(server)?.status === 'needs_auth' ? `MCP 服务 ${server} 需要登录授权` : `MCP 服务 ${server} 未连接`);
+    return [[server, c]];
+  }
+
+  private makeOAuth(name: string, e: McpServerEntry, ctx: InterpCtx): McpOAuth {
+    const a = e.auth?.type === 'oauth' ? e.auth : undefined;
+    const id = oauthSecretId(name);
+    const secrets = this.rt.opts.secrets;
+    const open = this.rt.opts.openExternal;
+    const o = new McpOAuth({
+      serverUrl: interpolate(e.url!, ctx),
+      clientId: a?.clientId ? interpolate(a.clientId, ctx) || undefined : undefined,
+      clientSecret: a?.clientSecret ? interpolate(a.clientSecret, ctx) || undefined : undefined,
+      scopes: a?.scopes,
+      fetch: this.rt.opts.fetchImpl,
+      store: { get: () => secrets.get(id), set: (v) => secrets.set(id, v), delete: () => secrets.delete(id) },
+      openExternal: open ? (url) => open(url) : undefined,
+      log: (level, text) => this.log(name, level, text),
+      version: this.rt.opts.version,
+    });
+    o.challenge = this.oauth.get(name)?.challenge ?? null;
+    return o;
+  }
+
+  /** Shown only for servers that use OAuth: configured, logged in, or asked for it. */
+  private authStateOf(name: string, e: McpServerEntry, oauth: McpOAuth | null, needsAuth = false): McpAuthState | undefined {
+    if (!oauth) return undefined;
+    const s = oauth.status();
+    if (!(e.auth?.type === 'oauth' || s.loggedIn || needsAuth)) return undefined;
+    return this.logins.has(name) ? { ...s, loggingIn: true } : s;
+  }
+
+  /** Mid-session 401 that no refresh could fix: drop the connection and wait for the user to log in. */
+  private authLost(name: string, client: McpClient, e: McpServerEntry, oauth: McpOAuth) {
+    if (this.clients.get(name) !== client) return;
+    this.clients.delete(name);
+    client.close();
+    const st = this.states.get(name);
+    if (st) {
+      st.status = 'needs_auth';
+      st.error = NEEDS_AUTH_HINT;
+      st.auth = this.authStateOf(name, e, oauth, true);
+    }
+    this.log(name, 'error', '访问令牌已失效且无法刷新，需要重新登录');
+    this.emit();
+  }
+
+  private async refreshResources(name: string, client: McpClient): Promise<McpResourceInfo[]> {
+    const st = this.states.get(name);
+    if (!client.hasResources) {
+      if (st) st.resources = st.resourceCount = st.resourceTemplates = undefined;
+      return [];
+    }
+    const [list, templates] = await Promise.all([client.listResources(), client.listResourceTemplates().catch(() => [] as McpResourceTemplate[])]);
+    const clean = list.slice(0, LIST_RESOURCES).map(cleanResource);
+    if (st) {
+      st.resources = clean.slice(0, STATE_RESOURCES);
+      st.resourceCount = list.length;
+      st.resourceTemplates = templates.slice(0, 100).map(cleanTemplate);
+    }
+    return clean;
+  }
+
+  private async refreshPrompts(name: string, client: McpClient): Promise<McpPromptInfo[]> {
+    const st = this.states.get(name);
+    if (!client.hasPrompts) {
+      if (st) st.prompts = undefined;
+      return [];
+    }
+    const list = (await client.listPrompts()).slice(0, 200).map(cleanPrompt);
+    if (st) st.prompts = list;
+    return list;
+  }
+
+  private saveBlob(b64: string): { hash: string; bytes: number } | null {
+    if ((b64.length * 3) / 4 > MAX_BLOB_BYTES) return null;
+    const buf = Buffer.from(b64, 'base64');
+    return { hash: this.rt.blobs.put(buf), bytes: buf.length };
+  }
+
+  private blockText(b: McpContentBlock | undefined): string {
+    if (!b || typeof b !== 'object') return '';
+    if (b.type === 'text') return typeof b.text === 'string' ? b.text : '';
+    if ((b.type === 'image' || b.type === 'audio') && typeof b.data === 'string') {
+      const saved = this.saveBlob(b.data);
+      return `[${b.type === 'image' ? '图片' : '音频'} ${b.mimeType ?? ''}${saved ? ` 已保存 · ${saved.hash.slice(0, 12)}` : ' 过大，未保存'}]`;
+    }
+    if (b.type === 'resource' && b.resource) {
+      if (typeof b.resource.text === 'string') return b.resource.text;
+      const saved = typeof b.resource.blob === 'string' ? this.saveBlob(b.resource.blob) : null;
+      return `[资源 ${b.resource.uri ?? ''}${b.resource.mimeType ? ` ${b.resource.mimeType}` : ''}${saved ? ` 已保存 · ${saved.hash.slice(0, 12)}` : ''}]`;
+    }
+    if (b.type === 'resource_link') return `[资源链接 ${b.uri ?? ''}${b.name ? ` ${b.name}` : ''}]`;
+    return '';
+  }
+
+  /** Remove anything token-like (and this server's known OAuth values) from text bound for logs / state. */
+  private scrub(name: string, text: string): string {
+    let t = redactSecrets(text).replace(/(sk-|ghp_|xox[abpr]-)[\w-]{6,}/g, '$1***');
+    for (const s of this.oauth.get(name)?.secrets() ?? []) t = t.split(s).join('***');
+    return t;
+  }
   private serverPolicy(name: string): McpServerPolicy {
     const p = this.policy.servers[name];
     return p ? { enabled: p.enabled !== false, agents: p.agents ?? 'all', tools: p.tools ?? {} } : { enabled: true, agents: 'all', tools: {} };
@@ -404,6 +799,11 @@ export class McpManager {
       const st: McpServerState = prev ?? { name: n, transport: e.command ? 'stdio' : e.type === 'sse' ? 'sse' : 'http', target, status: 'stopped', tools: [], policy, logs: [] };
       st.target = target;
       st.policy = policy;
+      try {
+        st.auth = oauthApplies(e) ? this.authStateOf(n, e, this.makeOAuth(n, e, this.ctx()), st.status === 'needs_auth') : undefined;
+      } catch {
+        st.auth = undefined;
+      }
       this.states.set(n, st);
       if (autoStart && (!prev || !this.clients.has(n))) void this.start(n);
     }
@@ -424,7 +824,7 @@ export class McpManager {
   private log(name: string, level: 'info' | 'error' | 'stderr', text: string) {
     const st = this.states.get(name);
     if (!st) return;
-    st.logs.push({ at: Date.now(), level, text: text.replace(/(sk-|ghp_|xox[abpr]-)[\w-]{6,}/g, '$1***') });
+    st.logs.push({ at: Date.now(), level, text: this.scrub(name, text) });
     if (st.logs.length > MAX_LOGS) st.logs.splice(0, st.logs.length - MAX_LOGS);
     this.emitSoon();
   }
