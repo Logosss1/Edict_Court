@@ -111,7 +111,7 @@ const ok = (step: string, cond: boolean, note?: string) => {
   // 4. kanban + editor + live refresh
   await win.click('.tab:has-text("旨意看板")');
   await win.waitForTimeout(300);
-  await shot('04-kanban');
+  await shot('04-board');
   await win.click('.tree-row:has-text("greet.js")');
   await win.waitForSelector('.monaco-editor', { timeout: 15000 });
   await win.waitForTimeout(800);

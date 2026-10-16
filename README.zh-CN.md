@@ -46,7 +46,7 @@ Edict for Mac 是一款 **Apple Silicon Mac** 上的桌面 AI 编程工作站。
 
 | 看板 | 编辑器 | 网页预览 |
 |---|---|---|
-| ![看板](docs/screenshots/04-kanban.png) | ![编辑器](docs/screenshots/05-editor-problems.png) | ![网页预览](docs/screenshots/33-html-preview.png) |
+| ![看板](docs/screenshots/04-board.png) | ![编辑器](docs/screenshots/05-editor-problems.png) | ![网页预览](docs/screenshots/33-html-preview.png) |
 
 ### 每道旨意一个 git worktree
 
