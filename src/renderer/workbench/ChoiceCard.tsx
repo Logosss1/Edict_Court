@@ -9,6 +9,7 @@ import { openWorktreeDialog } from './WorktreeDialog';
 import { openAttempts } from '../panels/Lanes';
 import { SearchSetupDialog } from '../settings/pages/Web';
 import type { ApprovalChoice, ApprovalRequest } from '../../shared/types';
+import { GrillCard } from './GrillCard';
 
 const KIND_HEAD: Record<string, { icon: string; label: string }> = {
   write_task: { icon: 'edit', label: '写任务开工 · 请皇上定夺' },
@@ -22,7 +23,7 @@ const KIND_HEAD: Record<string, { icon: string; label: string }> = {
   guest: { icon: 'users', label: '客卿改了文件 · 请皇上定夺' },
   attempt: { icon: 'layers', label: '排班办完 · 请选一路' },
 };
-/** 太子追问: the prince's one question at triage (he is not an official) */
+/** an older edict's 太子追问 (the prince no longer asks; 细问 by the planning official replaced it) */
 const PRINCE_HEAD = { icon: 'help', label: '太子请旨' };
 
 /** Choices to show: the request's own, or 准许 / 驳回 for plain approvals. */
@@ -199,7 +200,7 @@ export function PendingChoices({ taskId }: { taskId: string }) {
   if (!mine.length) return null;
   return (
     <div className="cc-list">
-      {mine.map((a, i) => <ChoiceCard key={a.id} a={a} active={i === 0} />)}
+      {mine.map((a, i) => (a.kind === 'grill' && a.grill ? <GrillCard key={a.id} a={a} /> : <ChoiceCard key={a.id} a={a} active={i === 0} />))}
     </div>
   );
 }

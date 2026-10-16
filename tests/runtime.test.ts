@@ -69,6 +69,8 @@ for (const protocol of ['openai-chat', 'anthropic-messages', 'openai-responses']
 test('Full Court: plan gate with emperor plan edit (L2) executes the edited plan', async () => {
   const mock = await startMockLlm();
   const rt = makeRuntime(mock.url);
+  // 方案御览 on (off by default since 细问) and 对照检查 off, so 门下审议成果 is the review of the result
+  rt.updateSettings({ planGate: { lite: false, full: true }, requirementCheck: { ...rt.settings.requirementCheck, full: false } });
   const ws = tmpDir('edict-ws-');
   rt.setWorkspace(ws);
   const r = (await submit(rt, { text: '写一个 greet 函数并测试', tier: 'full', multiAgent: true })) as { taskId: string };
@@ -82,7 +84,8 @@ test('Full Court: plan gate with emperor plan edit (L2) executes the edited plan
   assert.equal(t.planHistory.at(-1)!.author, 'emperor');
   assert.equal(t.nodes.filter((n) => n.kind === 'exec').length, 1, 'only the edited plan subtasks ran');
   assert.ok(t.nodes.some((n) => n.kind === 'dispatch' && n.status === 'done'), 'shangshu dispatched in full court');
-  assert.ok(t.nodes.some((n) => n.kind === 'result_review' && n.status === 'done'), 'menxia reviewed results');
+  assert.ok(t.nodes.some((n) => n.kind === 'result_review' && n.status === 'done'), 'menxia reviewed results (对照检查 is off)');
+  assert.ok(!t.nodes.some((n) => n.kind === 'check'));
   assert.ok(!fs.existsSync(path.join(ws, 'greet.test.js')));
   const auditActions = rt.audit.list({ taskId: r.taskId }).map((e) => e.action);
   assert.ok(auditActions.includes('plan_edited'));

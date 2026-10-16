@@ -67,8 +67,116 @@ export function fallbackLadder(protocol: Protocol): ReasoningConfig {
     : { style: 'openai', levels: ['none', 'low', 'medium', 'high', 'xhigh'], default: 'medium' };
 }
 
-/** Clamp any requested level onto the model's own ladder (by rank), so the slider's top is always the model's top. */
+// ───────────── 固定六档 ─────────────
+// The UI always shows the same six levels. Each model maps them onto its own API level names (auto from the
+// detected / guessed ladder, or set by hand in cfg.tierMap); a level the model has no counterpart for is greyed out.
+export const TIERS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type Tier = (typeof TIERS)[number];
+export const TIER_LABEL: Record<Tier, string> = { none: '无思考', low: '轻度', medium: '中度', high: 'High', xhigh: 'XHigh', max: 'Max' };
+const isTier = (v: string | undefined): v is Tier => !!v && (TIERS as readonly string[]).includes(v);
+
+/** which of the six a stored value means (tier ids, plus older saved API names) */
+export function tierOf(v: string | undefined): Tier | undefined {
+  if (!v) return undefined;
+  if (isTier(v)) return v;
+  return ({ off: 'none', minimal: 'low', on: 'medium', ultra: 'max' } as Record<string, Tier>)[v];
+}
+
+/** user-facing name for a stored level value ('top' = the model's highest) */
+export function tierLabel(v: string | undefined): string {
+  if (!v) return '';
+  if (v === 'top') return '最高一档';
+  const t = tierOf(v);
+  return t ? TIER_LABEL[t] : levelLabel(v);
+}
+
+// API level names that can stand for each of the six, best first. 'minimal' stands in for 无思考 only when the
+// model has nothing lower (it is the lowest level, not "off"); otherwise it is not used.
+const TIER_CANDIDATES: Record<Tier, string[]> = { none: ['none', 'off', 'minimal'], low: ['low', 'minimal'], medium: ['medium', 'on'], high: ['high'], xhigh: ['xhigh'], max: ['max', 'ultra'] };
+
+/** six levels → this model's API level (undefined = the model has none) */
+export function tierMap(cfg: ReasoningConfig | null | undefined): Partial<Record<Tier, string>> {
+  const out: Partial<Record<Tier, string>> = {};
+  if (!cfg || cfg.style === 'none' || !cfg.levels.length) return out;
+  if (cfg.tierMap) {
+    for (const t of TIERS) {
+      const l = cfg.tierMap[t];
+      if (l && cfg.levels.includes(l)) out[t] = l;
+    }
+    if (Object.keys(out).length) return out;
+  }
+  const used = new Set<string>();
+  for (const t of TIERS) {
+    const l = TIER_CANDIDATES[t].find((c) => cfg.levels.includes(c) && !used.has(c));
+    if (l) {
+      out[t] = l;
+      used.add(l);
+    }
+  }
+  // custom ladders with their own names: put what's left on the free slots, in order
+  const rest = cfg.levels.filter((l) => !used.has(l));
+  if (rest.length) {
+    const free = TIERS.filter((t) => !out[t]);
+    const start = Object.keys(out).length ? 0 : Math.max(0, Math.floor((free.length - rest.length) / 2));
+    rest.slice(0, free.length).forEach((l, i) => (out[free[Math.min(free.length - 1, start + i)]] = l));
+  }
+  return out;
+}
+
+export const availableTiers = (cfg: ReasoningConfig | null | undefined): Tier[] => {
+  const m = tierMap(cfg);
+  return TIERS.filter((t) => m[t]);
+};
+
+/** which of the six the model's default level is */
+export function defaultTier(cfg: ReasoningConfig | null | undefined): Tier | undefined {
+  const m = tierMap(cfg);
+  return TIERS.find((t) => m[t] === cfg?.default) ?? availableTiers(cfg)[Math.floor((availableTiers(cfg).length - 1) / 2)];
+}
+
+/** nearest of the model's tiers to the wanted one (lower first, then higher) */
+export function nearestTier(cfg: ReasoningConfig | null | undefined, want: Tier): Tier | undefined {
+  const av = availableTiers(cfg);
+  if (av.includes(want)) return want;
+  const i = TIERS.indexOf(want);
+  for (let d = 1; d < TIERS.length; d++) {
+    if (i - d >= 0 && av.includes(TIERS[i - d])) return TIERS[i - d];
+    if (i + d < TIERS.length && av.includes(TIERS[i + d])) return TIERS[i + d];
+  }
+  return undefined;
+}
+
+/** stored value ('default' / 'top' / tier / old API name) → which of the six it lands on for this model */
+export function resolveTier(cfg: ReasoningConfig | null | undefined, value: string | undefined): Tier | undefined {
+  const av = availableTiers(cfg);
+  if (!av.length) return undefined;
+  if (!value || value === 'default') return defaultTier(cfg);
+  if (value === 'top') return av[av.length - 1];
+  const m = tierMap(cfg);
+  if (!isTier(value) && cfg!.levels.includes(value)) return TIERS.find((t) => m[t] === value) ?? defaultTier(cfg);
+  const t = tierOf(value);
+  return t ? nearestTier(cfg, t) : defaultTier(cfg);
+}
+
+/** one line saying which API level each of the six sends, and which ones this model lacks */
+export function tierHint(cfg: ReasoningConfig | null | undefined): string {
+  const m = tierMap(cfg);
+  const av = TIERS.filter((t) => m[t]);
+  if (!av.length) return '这个模型不发送思考参数，六档都不可用。';
+  const parts = av.map((t) => `${TIER_LABEL[t]} → ${m[t]}${t === 'none' && m[t] === 'minimal' ? '（最低一档，不是完全关闭）' : ''}`);
+  const missing = TIERS.filter((t) => !m[t]).map((t) => TIER_LABEL[t]);
+  return `${parts.join(' · ')}${missing.length ? `；此模型没有：${missing.join('、')}` : ''}`;
+}
+
+/** Clamp any requested level onto the model's own ladder, via the six fixed levels; returns the API level name to send. */
 export function clampLevel(cfg: ReasoningConfig, level: string | undefined): string | undefined {
+  if (!cfg.levels.length) return undefined;
+  const t = resolveTier(cfg, level);
+  if (t) return tierMap(cfg)[t];
+  return clampNative(cfg, level);
+}
+
+function clampNative(cfg: ReasoningConfig, level: string | undefined): string | undefined {
   if (!cfg.levels.length) return undefined;
   if (!level || level === 'default') return cfg.default || cfg.levels[Math.floor(cfg.levels.length / 2)];
   if (level === 'top') return cfg.levels[cfg.levels.length - 1];

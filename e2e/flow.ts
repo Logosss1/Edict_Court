@@ -74,11 +74,21 @@ const ok = (step: string, cond: boolean, note?: string) => {
   const startAt = Date.now();
   let t1: any = null;
   while (!t1 && Date.now() - startAt < 40000) {
+    // 细问 is on by default: 中书省 hands in 问答纪要 before planning (the mock has nothing to ask)
+    const minutes = await win.$('[data-testid=grill-minutes]');
+    if (minutes) {
+      seen.push(((await minutes.textContent()) ?? '').slice(0, 40));
+      await shot('02a-workbench-grill-minutes');
+      await win.click('[data-testid=grill-minutes] [data-testid=grill-ok]');
+      await win.waitForTimeout(300);
+      continue;
+    }
     const card = await win.$('[data-testid=choice-card]');
     if (card) {
       seen.push(((await card.textContent()) ?? '').slice(0, 40));
-      if (seen.length === 1) await shot('02-workbench-approval');
-      if (seen.length === 1) await win.keyboard.press('Enter');
+      const first = seen.filter((x) => !x.includes('问答纪要')).length === 1;
+      if (first) await shot('02-workbench-approval');
+      if (first) await win.keyboard.press('Enter');
       else await win.click('[data-testid=choice-card] [data-testid=ap-confirm]');
       await win.waitForTimeout(300);
       continue;
@@ -89,6 +99,7 @@ const ok = (step: string, cond: boolean, note?: string) => {
   }
   if (!t1) t1 = await waitTask((t) => t.gate?.kind === 'final');
   ok('写任务开工与命令执行在代理面板以选项卡片请皇上批准（数字键 / ⏎）', seen.length >= 2 && seen.some((x) => x.includes('写任务开工')), seen.join(' | '));
+  ok('Court Lite 默认先细问：中书省呈上问答纪要，皇上「就这样办」后才规划', seen[0]?.includes('问答纪要') && t1.grill?.ended === 'confirmed' && t1.nodes.some((n: any) => n.kind === 'grill' && n.status === 'done'), seen.join(' | '));
   ok('Court Lite：门下封驳 1 次后重拟并准奏', t1.reviews.filter((r: any) => r.verdict === 'reject').length === 1 && t1.planHistory.length === 2);
   await win.waitForTimeout(400);
   await shot('03-workbench-final-gate');
@@ -139,7 +150,8 @@ const ok = (step: string, cond: boolean, note?: string) => {
   await shot('07-search');
 
   // 6. Full Court: plan gate → emperor edits the plan in the COURT review overlay (L2)
-  await inv('updateSettings', { permissionMode: 'auto' });
+  // 方案御览 is off by default since 细问; switch it on (and 细问 off) for this walk through the plan edit
+  await inv('updateSettings', { permissionMode: 'auto', grillAsk: false, planGate: { lite: false, full: true } });
   await win.click('.ab-item[data-tip="资源管理器"]');
   await win.click('[title="新旨意"]').catch(() => {});
   await win.fill('#composer-input', '写一个 greet 函数并测试（完整流程）');
@@ -168,7 +180,7 @@ const ok = (step: string, cond: boolean, note?: string) => {
   await win.waitForTimeout(1500);
   await shot('11-court-junjichu');
   const t2c = await waitTask((t) => t.id === t2.id && t.gate?.kind === 'final', 40000);
-  ok('Full Court：尚书派发 + 门下审议成果', t2c.nodes.some((n: any) => n.kind === 'dispatch' && n.status === 'done') && t2c.nodes.some((n: any) => n.kind === 'result_review' && n.status === 'done'));
+  ok('Full Court：尚书派发 + 对照检查，成果只审一遍（不再另走门下审议成果）', t2c.nodes.some((n: any) => n.kind === 'dispatch' && n.status === 'done') && t2c.nodes.some((n: any) => n.kind === 'check' && n.status === 'done') && !t2c.nodes.some((n: any) => n.kind === 'result_review'));
   await win.click('[data-testid=court-scene-taihe]');
   await win.waitForTimeout(1500);
   await win.click('[data-testid=court-gates]');

@@ -42,13 +42,15 @@ export function builtinDeclarative(tier: 'lite' | 'full', s: Runtime['settings']
       instruction: '逐条对照需求说明的验收标准，判定满足、未满足或无法判断；满足的要写出证据，没做到的写清还缺什么。' });
   }
   steps.push({ id: 'summary', label: '尚书汇总回奏', type: 'summary', phase: 'report', role: 'shangshu', output: 'text', instruction: '请撰写回奏折（Markdown）。' });
-  if (full) steps.push({ id: 'result-review', label: '门下审议成果', type: 'review', phase: 'report', role: 'menxia', output: 'verdict', onReject: { goto: 'execute', max: s.maxRejections.full },
+  // With 对照检查 on, the result has already been checked against the edict, so Full Court skips the second
+  // 门下 pass over the same result (Rowan 2026-10-15: no duplicate reviews).
+  if (full && !withCheck) steps.push({ id: 'result-review', label: '门下审议成果', type: 'review', phase: 'report', role: 'menxia', output: 'verdict', onReject: { goto: 'execute', max: s.maxRejections.full },
     instruction: '请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。' });
   const roles: RoleSpec[] = [role('zhongshu', 'read'), role('menxia', 'read'), role('shangshu', 'none'), ...MINISTRIES.map((m) => role(m, 'write'))];
   return {
     schema: DESIGN_SCHEMA, id: BUILTIN_DESIGN_ID, name: full ? '三省六部 · Full Court' : '三省六部 · Court Lite', version: 1,
     description: full
-      ? `太子分拣 → 中书规划${withCheck ? '（含需求说明）' : ''} → 门下审议（封驳返工）→ 尚书派发 → 六部并行执行${withCheck ? ' → 对照检查' : ''} → 尚书回奏 → 门下审议成果 → 皇上御批`
+      ? `太子分拣 → 中书规划${withCheck ? '（含需求说明）' : ''} → 门下审议（封驳返工）→ 尚书派发 → 六部并行执行${withCheck ? ' → 对照检查 → 尚书回奏' : ' → 尚书回奏 → 门下审议成果'} → 皇上御批`
       : `太子分拣 → 中书规划${withCheck ? '（含需求说明）' : ''} → 门下审议 → 六部执行${withCheck ? ' → 对照检查' : ''} → 尚书回奏 → 皇上御批`,
     origin: { kind: 'builtin' }, roles, steps,
     policies: { tier, maxRejections: full ? s.maxRejections.full : s.maxRejections.lite, tokenBudget: 0, parallelism: 0, finalGate: s.finalGate, resilience: { ...DEFAULT_RESILIENCE } },

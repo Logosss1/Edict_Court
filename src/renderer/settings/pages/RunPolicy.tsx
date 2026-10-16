@@ -22,7 +22,7 @@ export function RunPolicyPage() {
   return (
     <Page icon="zap" title="运行策略" lead="每道旨意花多少、走几道审批、几位官员同时开工。预算和封驳上限在下旨时定下，其余改动立即生效。" testid="settings-runtime">
       <div className="runp">
-        <Sec title="预算" note="· 用到上限时旨意会停下，等你决定是否追加">
+        <Sec title="预算" note="· 用到上限时旨意会停下，等你决定是否追加；填 0 = 不限，跑完为止">
           <div className="runp-tiers">
             {TIERS.map((t) => (
               <div key={t.id} className="runp-tier">
@@ -42,13 +42,13 @@ export function RunPolicyPage() {
           <Row label="Court Lite 封驳上限" desc="简化三省：门下只审方案（默认 1 次）">
             <NumField value={s.maxRejections?.lite} min={0} max={10} unit="次" label="Court Lite 封驳上限" testid="max-rej-lite" onCommit={(v) => void up({ maxRejections: { ...s.maxRejections, lite: v } })} />
           </Row>
-          <Row label="Full Court 封驳上限" desc="完整三省六部：方案与成果都要过门下（默认 3 次）">
+          <Row label="Full Court 封驳上限" desc="完整三省六部：方案要过门下；关了需求对照时，成果也要再过门下（默认 3 次）">
             <NumField value={s.maxRejections?.full} min={0} max={10} unit="次" label="Full Court 封驳上限" testid="max-rej-full" onCommit={(v) => void up({ maxRejections: { ...s.maxRejections, full: v } })} />
           </Row>
         </Sec>
 
         <Sec title="审批门" note="· 旨意在哪些关口停下来等你御批">
-          <Row label="Full Court：方案御览" desc="中书省方案过了门下后先呈给你，可以朱笔涂改再准奏">
+          <Row label="Full Court：方案御览" desc="中书省方案过了门下后先呈给你，可以朱笔涂改再准奏。默认关：问答纪要你已经准过，门下也审过，不必再过一道">
             <Toggle on={!!s.planGate?.full} onChange={(v) => void up({ planGate: { ...s.planGate, full: v } })} label="Full Court 方案御览" testid="plan-gate-full" />
           </Row>
           <Row label="Court Lite：方案御览" desc="简化三省也先给你过目方案；关掉则门下准奏后直接开工">

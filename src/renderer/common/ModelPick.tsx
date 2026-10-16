@@ -1,7 +1,7 @@
 // Model and thinking-level pickers shared by 模型配置 and the 协同设计 role form.
 import { useStore } from '../store';
 import type { ModelRef } from '../../shared/types';
-import { levelLabel } from '../../shared/reasoning';
+import { TIERS, TIER_LABEL, availableTiers, resolveTier, tierHint, tierLabel, tierMap, tierOf } from '../../shared/reasoning';
 import { reasoningFor } from './EffortSlider';
 
 
@@ -48,22 +48,25 @@ export function ModelSelect({ value, onChange, allowDefault, testid, className =
   );
 }
 
-/** thinking level for one model: only the levels that model has (detected or guessed), by their API names */
+/** thinking level for one model: always the six fixed levels; the ones this model has no level for are disabled */
 export function EffortSelect({ model, value, onChange, defaultLabel = '跟随旨意 / 模型默认', testid, className = 'input sm' }: { model: ModelRef | null | undefined; value: string | undefined; onChange: (v: string | undefined) => void; defaultLabel?: string; testid?: string; className?: string }) {
   const providers = useStore((s) => s.providers);
   const cfg = model ? reasoningFor(providers, model) : null;
-  const levels = cfg?.levels ?? [];
-  const stale = value && !levels.includes(value);
+  const av = availableTiers(cfg);
+  const m = tierMap(cfg);
+  const want = tierOf(value);
+  const stale = !!value && (value === 'top' || !want || !av.includes(want));
+  const lands = stale ? resolveTier(cfg, value) : undefined;
   return (
-    <select className={className} value={value ?? ''} data-testid={testid} disabled={!levels.length && !value} title={levels.length ? `这个模型的档位：${levels.map(levelLabel).join(' · ')}` : '这个模型没有思考档位'} onChange={(e) => onChange(e.target.value || undefined)}>
-      <option value="">{levels.length ? defaultLabel : '无思考档位'}</option>
-      {levels.map((l) => <option key={l} value={l}>{levelLabel(l)}</option>)}
-      {stale && <option value={value}>{value === 'top' ? '最高一档' : levelLabel(value!)}（按最接近的档）</option>}
+    <select className={className} value={stale ? '__stale' : value ?? ''} data-testid={testid} disabled={!av.length && !value} title={av.length ? tierHint(cfg) : '这个模型没有思考档位'} onChange={(e) => e.target.value !== '__stale' && onChange(e.target.value || undefined)}>
+      <option value="">{av.length ? defaultLabel : '无思考档位'}</option>
+      {TIERS.map((t) => <option key={t} value={t} disabled={!m[t]}>{TIER_LABEL[t]}{m[t] ? '' : '（此模型没有）'}</option>)}
+      {stale && <option value="__stale">{tierLabel(value)}{lands ? `（此模型按 ${TIER_LABEL[lands]}）` : ''}</option>}
     </select>
   );
 }
 
-export const effortText = (e?: string) => (!e ? '' : e === 'top' ? '最高一档' : levelLabel(e));
+export const effortText = (e?: string) => tierLabel(e);
 
 /** how a design role's model reads in lists: short (chip) and full (table / tooltip) */
 export function useRoleModelText() {

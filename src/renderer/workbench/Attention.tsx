@@ -8,6 +8,7 @@ import { useAttention, type AttentionItem } from '../common/attention';
 import { openWorktreeDialog } from './WorktreeDialog';
 import { openAttempts } from '../panels/Lanes';
 import { SearchSetupDialog } from '../settings/pages/Web';
+import { BlockedReasonDialog } from './BlockedReason';
 
 const KIND_ICON: Record<AttentionItem['kind'], string> = {
   write_task: 'edit', question: 'help', approval: 'shield', risk: 'alert', plan: 'scroll', final: 'scroll', decide: 'gate', blocked: 'alert', merge: 'merge', schedule: 'clock', attempt: 'layers',
@@ -39,6 +40,7 @@ async function run(p: Promise<unknown>, ok?: string) {
 export function AttnActions({ it }: { it: AttentionItem }) {
   const [busy, setBusy] = useState(false);
   const [setup, setSetup] = useState(false);
+  const [why, setWhy] = useState(false);
   const go = (p: () => Promise<unknown>, ok?: string) => async () => {
     setBusy(true);
     await run(p(), ok);
@@ -48,8 +50,18 @@ export function AttnActions({ it }: { it: AttentionItem }) {
   const more = (label = '更多…') => <button className="btn sm" onClick={() => focusItem(it)} data-testid="attn-more">{label}</button>;
   if (a) {
     const choices = a.choices ?? [];
-    if (it.kind === 'question' || !choices.length) {
-      if (it.kind === 'question') return <div className="a-act"><button className="btn sm primary" onClick={() => focusItem(it)} data-testid="attn-answer">回答</button></div>;
+    if (a.kind === 'grill') {
+      // a 细问 round: answer on the card; the one-click 都按推荐 / 就这样办 here
+      const quick = a.grill?.phase === 'minutes' ? { id: 'ok', label: '就这样办', ok: '照纪要规划' } : { id: 'recommend', label: '都按推荐', ok: '都按推荐答案' };
+      return (
+        <div className="a-act">
+          <button className="btn sm primary" onClick={() => focusItem(it)} data-testid="attn-answer">{a.grill?.phase === 'minutes' ? '看纪要' : '回答'}</button>
+          <button className="btn sm" disabled={busy} onClick={go(() => call('decideApproval', a.id, true, quick.id), quick.ok)} data-testid={`attn-grill-${quick.id}`}>{quick.label}</button>
+        </div>
+      );
+    }
+    if (it.kind === 'question') return <div className="a-act"><button className="btn sm primary" onClick={() => focusItem(it)} data-testid="attn-answer">回答</button></div>;
+    if (!choices.length) {
       return (
         <div className="a-act">
           <button className={`btn sm ${a.risk === 'high' ? 'danger' : 'primary'}`} disabled={busy} onClick={go(() => call('decideApproval', a.id, true), '已准许')} data-testid="attn-approve">准许</button>
@@ -127,7 +139,8 @@ export function AttnActions({ it }: { it: AttentionItem }) {
       <div className="a-act">
         {failed && <button className="btn sm primary" disabled={busy} onClick={go(() => call('retryNode', t.id, failed.id), `局部重试：${failed.label}`)} data-testid="attn-retry">局部重试</button>}
         {!failed && <button className="btn sm primary" disabled={busy} onClick={go(() => call('unblock', t.id), '已解除阻塞')} data-testid="attn-unblock">继续</button>}
-        {more('查看原因')}
+        <button className="btn sm" onClick={() => setWhy(true)} data-testid="attn-why">查看原因</button>
+        {why && <BlockedReasonDialog task={t} onClose={() => setWhy(false)} onOpenTask={() => focusItem(it)} />}
       </div>
     );
   }

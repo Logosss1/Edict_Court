@@ -16,6 +16,7 @@ import { LANE_KEYS, LANE_LABELS, attemptsOfLane, dropLaneTree, laneTreeRecord } 
 import { guestName } from '../guests/registry';
 import fs from 'node:fs';
 import path from 'node:path';
+import { edictBlock } from './oral';
 
 /** What the orchestrator lends (kept as callbacks so this file does not import it). */
 export interface LaneHooks {
@@ -207,7 +208,7 @@ async function judge(rt: Runtime, t: Task, rec: SubtaskAttempts, node: RunNode, 
         rt, agentId: 'menxia', task: t, node: jn, maxTokens: 2000, temperature: 0.1, label: jn.label,
         prompt: [
           `【比试】子任务「${sub.title}」由 ${ok.length} 路分别完成，请你评比。`,
-          `【旨意】${t.title}\n${truncate(t.edict, 2000)}`,
+          edictBlock(t, 2000),
           `【子任务 ${sub.id}】${sub.title}\n做法：${sub.detail}\n验收标准：${sub.acceptance}`,
           t.plan ? ownedRequirementsText(t.plan, sub) : '',
           `【各路成果】\n${lanesText.join('\n\n')}`,

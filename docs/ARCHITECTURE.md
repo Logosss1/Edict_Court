@@ -92,9 +92,19 @@
 
 Phaser 3.90：`pixelArt: true`、`roundPixels`、640×360 世界、**整数倍缩放**（窗口变化时取 `floor(min(W/640, H/360))`）；官员精灵开启 `pixelPerfect` 命中检测；气泡防重叠布局；文字使用 12px 像素中文字体（Fusion Pixel，OFL）。
 
-## 思考程度（v1.1，v1.2.7 起按检测）
+## 思考程度（v1.1，v1.2.7 起按检测，v2.1.1 起固定六档）
 
-`src/shared/reasoning.ts` 把一个滑块翻译成各家参数。每个模型有自己的档位阶梯（`ModelInfo.reasoning`），UI 滑块的刻度就是这条阶梯，档位用 API 原名显示。阶梯来源：`Runtime.detectReasoning` 先发一个乱写的档位（被接受说明服务不校验，结果标为未能确认），再对 none / minimal / low / medium / high / xhigh / max / ultra 各发一个极小请求，只保留服务接受的档位，结果连同 `detected` 存进模型配置；没检测过时按模型 id 推测，名字也认不出且服务不校验时用通用五档。请求时按「官员单独设置 › 旨意滑块（强模型 / Solo）› 模型默认」取值，再按档位名的等级就近落到该模型的阶梯上（例如 max 落到 o3 的 high）。`agentLoop.effortRequest` 生成 `extraBody`（合并进请求体）、必要时提高 `max_tokens`（不超过模型上限）并去掉 temperature；OpenAI Chat 推理模型自动改用 `max_completion_tokens`。服务报参数不支持时，本会话内对该模型自动停止发送思考参数。
+`src/shared/reasoning.ts` 把一个滑块翻译成各家参数。UI 固定六档（`TIERS`：无思考、轻度、中度、High、XHigh、Max）；每个模型有自己的档位阶梯（`ModelInfo.reasoning`），`tierMap` 把六档对应到阶梯上的 API 档位名（按候选名自动对应，或用模型配置里手动设的 `tierMap`），对应不上的档位在滑块上变灰、拖动时跳过；`nearestTier` 把存下的档位就近落到模型有的档上。阶梯来源：`Runtime.detectReasoning` 先发一个乱写的档位（被接受说明服务不校验，结果标为未能确认），再对 none / minimal / low / medium / high / xhigh / max / ultra 各发一个极小请求，只保留服务接受的档位，结果连同 `detected` 存进模型配置；没检测过时按模型 id 推测，名字也认不出且服务不校验时用通用五档。请求时按「官员单独设置 › 旨意滑块（强模型 / Solo）› 模型默认」取值，再按档位名的等级就近落到该模型的阶梯上（例如 max 落到 o3 的 high）。`agentLoop.effortRequest` 生成 `extraBody`（合并进请求体）、必要时提高 `max_tokens`（不超过模型上限）并去掉 temperature；OpenAI Chat 推理模型自动改用 `max_completion_tokens`。服务报参数不支持时，本会话内对该模型自动停止发送思考参数。
+
+## 2.1.1 新增模块
+
+- **细问**（`runtime/grill.ts`）：第一次规划前，规划官员一轮轮提问（每题带推荐答案，有前置条件的等前面答完），自查到的事实单列、皇上确认后才用，最后出问答纪要，确认后注入后面每一步的提示词。全自动模式下超时先按推荐答案办，问题保留；之后的补答作为口谕下发并在回奏前返工。
+- **口谕**（`runtime/oral.ts`）：旨意执行中从输入框追加指示，交给正在干活的官员下一步读到，并进入后续审议与对照检查。
+- **忠于旨意**（`runtime/faithful.ts`）：字数按约数（±15%）、不许改动旨意重点、对照检查只比成品与旨意。
+- **审议**（`orchestrator.ts`、`flow.ts`、`souls.ts`）：门下意见分必改 / 建议，只有必改能封驳，第二轮只核对上一轮的必改。
+- **回答参数**（`shared/sampling.ts`）：Temperature、Top P、Frequency / Presence Penalty，按「官员 › 模型 › 流程内置温度」取值；协议不支持的参数不发，服务拒绝时去掉重试一次。
+- **阻塞原因**（`shared/blocked.ts`、`workbench/BlockedReason.tsx`）：把阻塞旨意的失败节点、错误分类和超时归纳成原因、做法和可点的操作。
+- **预算**：预算 0 = 不限；预算关卡可「不限预算，跑完为止」（把这道旨意的 `budget.maxTokens` / `maxCostUsd` 设为 0）；关卡决定后由 `decideGate` 重新 `drive`，重启后批准的关卡也会接着跑。
 
 ## 模型错误分类（v1.1）
 

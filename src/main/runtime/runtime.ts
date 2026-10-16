@@ -1,11 +1,12 @@
 // Edict runtime: owns every task, agent, debate, approval and audit record. Both the
 // workbench and the pixel court are projections of this single state (bidirectional sync
 // = both send commands here and both render the same events).
+import { cleanSampling } from '../../shared/sampling';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
-  AttemptLane, Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, Memorial, ModelRef, NewsItem, PermissionMode, Plan,
+  AttemptLane, Activity, ActivityKind, AgentId, AgentRuntime, Annotation, ApprovalRequest, AllowRule, Debate, Gate, GrillFact, GrillQuestion, Memorial, ModelRef, NewsItem, PermissionMode, Plan,
   ProviderConfig, RuntimeEvent, Session, Settings, SkillInfo, Snapshot, Task, TaskState, Tier, Usage, FileChange, RunNode, Protocol, ReasoningConfig, ProbeRow, ProbeCell, ModelClass, ReasoningStyle, ReasoningDetectResult, ErrorInfo, RevertResult,
 } from '../../shared/types';
 import { emptyUsage } from '../../shared/types';
@@ -15,7 +16,7 @@ import { openStateStore, type DocKind, type PersistedSettingsLike, type Persiste
 import { assertTransition, IllegalTransitionError } from './stateMachine';
 import { addUsage, estimateTokens, now, sha256, uid, ymd, redactSecrets, truncate } from './util';
 import { defaultSettings, TEMPLATES } from './defaults';
-import { DETECT_CANDIDATES, LEVEL_RANK, STYLE_LABEL, clampLevel, effectiveConfig, fallbackLadder, levelLabel, presetFor, reasoningParams } from '../../shared/reasoning';
+import { DETECT_CANDIDATES, LEVEL_RANK, STYLE_LABEL, clampLevel, effectiveConfig, fallbackLadder, levelLabel, presetFor, reasoningParams, resolveTier, tierHint, TIERS } from '../../shared/reasoning';
 import { classifyLlmError } from '../llm/types';
 import { Workspace } from '../services/workspace';
 import { ShadowSnapshots } from '../services/shadowSnapshot';
@@ -80,6 +81,10 @@ function sanitizeReasoning(r: unknown): ReasoningConfig | undefined {
   const out: ReasoningConfig = { style: x.style, levels, default: levels.includes(x.default) ? x.default : levels[Math.floor(levels.length / 2)] ?? '' };
   if (x.budgets && typeof x.budgets === 'object') out.budgets = Object.fromEntries(Object.entries(x.budgets).filter(([k, v]) => levels.includes(k) && Number.isFinite(+v) && +v > 0).map(([k, v]) => [k, Math.round(+v)]));
   if (x.style === 'custom' && x.custom && typeof x.custom === 'object') out.custom = JSON.parse(JSON.stringify(x.custom));
+  if (x.tierMap && typeof x.tierMap === 'object') {
+    const tm = Object.fromEntries(Object.entries(x.tierMap).filter(([k, v]) => (TIERS as readonly string[]).includes(k) && typeof v === 'string' && levels.includes(v)));
+    if (Object.keys(tm).length) out.tierMap = tm;
+  }
   const d = x.detected;
   if (d && typeof d === 'object' && Number.isFinite(+d.at)) {
     const names = (a: unknown) => (Array.isArray(a) ? a.filter((l) => typeof l === 'string' && /^[a-z0-9_-]{1,24}$/i.test(l)).slice(0, 12) : []);
@@ -172,6 +177,12 @@ export class Runtime {
     this.store = openStateStore(opts.dataDir);
     const s: PersistedSettings = this.store.loadSettings() ?? { settings: defaultSettings(), providers: [] };
     this.settings = { ...defaultSettings(), ...s.settings };
+    // 审查减负 (2026-10): the 细问 纪要 the emperor confirms replaces his separate look at the Full Court plan
+    const done = new Set(this.settings.migrations ?? []);
+    if (!done.has('plan-gate-full-off')) {
+      this.settings.planGate = { ...this.settings.planGate, full: false };
+      this.settings.migrations = [...done, 'plan-gate-full-off'];
+    }
     this.providers = (s.providers ?? []).map((p) => ({ ...p, hasKey: !!opts.secrets.get(`provider:${p.id}`) }));
     const st = this.store.loadState();
     for (const t of st.tasks ?? []) this.tasks.set(t.id, t);
@@ -484,16 +495,18 @@ export class Runtime {
 
   /** Models whose service rejected reasoning params during this session (param error → auto fallback). */
   noReasoning = new Set<string>();
+  /** Models whose service rejected the 回答参数 set for them during this session (cleared when they are changed). */
+  noSampling = new Set<string>();
 
   /** 思考程度 for one call: per-agent override › task slider (strong-class / solo) › model default, clamped to the model's ladder. */
-  resolveEffort(agentId: AgentId, model: ModelRef, task?: Task, roleClass?: ModelClass, roleEffort?: string): { level?: string; cfg: ReasoningConfig; protocol: Protocol } {
+  resolveEffort(agentId: AgentId, model: ModelRef, task?: Task, roleClass?: ModelClass, roleEffort?: string): { level?: string; tier?: string; cfg: ReasoningConfig; protocol: Protocol } {
     const p = this.providers.find((x) => x.id === model.providerId);
     const protocol = (p?.protocol ?? 'openai-chat') as Protocol;
     const cfg = effectiveConfig(this.modelInfo(model)?.reasoning, model.model, protocol);
     if (this.noReasoning.has(`${model.providerId}/${model.model}`)) return { cfg, protocol };
     const cls = roleClass ?? AGENT_MAP[agentId]?.modelClass ?? 'economy';
     const want = (roleClass ? roleEffort : this.settings.agentEffort?.[agentId]) || ((cls === 'strong' || (!roleClass && agentId === 'solo')) ? task?.effort : undefined) || 'default';
-    return { level: clampLevel(cfg, want), cfg, protocol };
+    return { level: clampLevel(cfg, want), tier: resolveTier(cfg, want), cfg, protocol };
   }
 
   modelInfo(ref: ModelRef) {
@@ -717,7 +730,7 @@ export class Runtime {
     this.approvals.set(ap.id, ap);
     this.audit.record(req.agentId, 'approval_requested', { tool: req.tool, summary: req.summary, risk: req.risk, reason: req.reason, kind: req.kind ?? 'action' }, req.taskId);
     this.emit({ type: 'approval', approval: ap });
-    this.notifyDesktop('attention', req.risk === 'high' ? '高风险操作待确认' : req.kind === 'write_task' ? '写任务待批准' : req.kind === 'question' ? (req.agentId === 'taizi' ? '太子请旨' : '官员请旨') : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
+    this.notifyDesktop('attention', req.risk === 'high' ? '高风险操作待确认' : req.kind === 'write_task' ? '写任务待批准' : req.kind === 'question' ? (req.agentId === 'taizi' ? '太子请旨' : '官员请旨') : req.kind === 'grill' ? '规划前细问' : '操作待批准', `${agentName(req.agentId)}：${req.summary}`);
     if (req.taskId) this.setAgent(req.agentId, { status: 'waiting', activity: `等待批准：${req.summary}` });
     const signal = req.taskId ? this.controllers.get(req.taskId)?.signal : undefined;
     return new Promise<ApprovalDecision>((resolve) => {
@@ -870,18 +883,18 @@ export class Runtime {
   }
 
   // ───────────────────────── annotations (朱批) ─────────────────────────
-  annotate(agentId: AgentId, text: string, taskId?: string): Annotation {
-    const a: Annotation = { id: uid('an'), agentId, text, taskId, at: now() };
+  annotate(agentId: AgentId, text: string, taskId?: string, opts: { oral?: boolean; anyAgent?: boolean } = {}): Annotation {
+    const a: Annotation = { id: uid('an'), agentId, text, taskId, at: now(), ...(opts.oral ? { oral: true } : {}), ...(opts.anyAgent ? { anyAgent: true } : {}) };
     this.annotations.push(a);
-    this.audit.record('emperor', 'annotation', { agentId, text }, taskId);
-    this.activity('annotation', `皇上朱批 → ${agentName(agentId)}：${text}`, { taskId, agentId });
+    this.audit.record('emperor', 'annotation', { agentId, text, oral: !!opts.oral }, taskId);
+    this.activity('annotation', opts.oral ? `皇上口谕${opts.anyAgent ? '（下一位开工的官员先读）' : ` → ${agentName(agentId)}`}：${text}` : `皇上朱批 → ${agentName(agentId)}：${text}`, { taskId, agentId: opts.anyAgent ? undefined : agentId });
     this.emit({ type: 'annotation', annotation: a });
     this.persist();
     return a;
   }
 
   pendingAnnotations(agentId: AgentId, taskId?: string): Annotation[] {
-    return this.annotations.filter((a) => a.agentId === agentId && !a.consumedAt && (!a.taskId || a.taskId === taskId));
+    return this.annotations.filter((a) => !a.consumedAt && (a.anyAgent ? !!taskId && a.taskId === taskId : a.agentId === agentId && (!a.taskId || a.taskId === taskId)));
   }
 
   markAnnotationsConsumed(list: Annotation[]) {
@@ -1195,6 +1208,15 @@ export class Runtime {
 
   // ───────────────────────── providers & settings ─────────────────────────
   updateSettings(patch: Partial<Settings>) {
+    if (patch.agentSampling) {
+      const clean: NonNullable<Settings['agentSampling']> = {};
+      for (const [id, v] of Object.entries(patch.agentSampling)) {
+        const c = cleanSampling(v);
+        if (c) clean[id as AgentId] = c;
+      }
+      patch = { ...patch, agentSampling: clean };
+      this.noSampling.clear();
+    }
     this.settings = { ...this.settings, ...patch };
     this.audit.record('emperor', 'settings_update', { keys: Object.keys(patch) });
     this.saveSettings();
@@ -1216,8 +1238,9 @@ export class Runtime {
     const id = cfg.id || uid('pv');
     const clean: ProviderConfig = {
       id, name: cfg.name || '未命名服务', preset: cfg.preset || 'custom', protocol: cfg.protocol, baseUrl: (cfg.baseUrl || '').trim(),
-      models: (cfg.models || []).filter((m) => m.id?.trim()).map((m) => ({ id: m.id.trim(), label: m.label, inputPrice: +m.inputPrice || 0, outputPrice: +m.outputPrice || 0, cachedInputPrice: m.cachedInputPrice === undefined || m.cachedInputPrice === null || (m.cachedInputPrice as unknown) === '' ? undefined : +m.cachedInputPrice, contextWindow: +m.contextWindow || 128000, maxOutputTokens: m.maxOutputTokens ? Math.max(256, +m.maxOutputTokens) : undefined, reasoning: sanitizeReasoning(m.reasoning) })),
+      models: (cfg.models || []).filter((m) => m.id?.trim()).map((m) => ({ id: m.id.trim(), label: m.label, inputPrice: +m.inputPrice || 0, outputPrice: +m.outputPrice || 0, cachedInputPrice: m.cachedInputPrice === undefined || m.cachedInputPrice === null || (m.cachedInputPrice as unknown) === '' ? undefined : +m.cachedInputPrice, contextWindow: +m.contextWindow || 128000, maxOutputTokens: m.maxOutputTokens ? Math.max(256, +m.maxOutputTokens) : undefined, reasoning: sanitizeReasoning(m.reasoning), ...(cleanSampling(m.sampling) ? { sampling: cleanSampling(m.sampling) } : {}) })),
       hasKey: false, extraHeaders: cfg.extraHeaders, replayReasoning: !!cfg.replayReasoning, enabled: cfg.enabled !== false,
+      ...(typeof cfg.showPrices === 'boolean' ? { showPrices: cfg.showPrices } : {}),
     };
     if (apiKey !== undefined && apiKey !== null) {
       if (apiKey === '') this.opts.secrets.delete(`provider:${id}`);
@@ -1227,6 +1250,7 @@ export class Runtime {
     const i = this.providers.findIndex((p) => p.id === id);
     if (i >= 0) this.providers[i] = clean;
     else this.providers.push(clean);
+    for (const m of clean.models) this.noSampling.delete(`${id}/${m.id}`);
     // first provider → default routing
     if (!this.settings.routing.strong && clean.models[0]) this.settings.routing.strong = { providerId: id, model: clean.models[0].id };
     if (!this.settings.routing.economy && clean.models[0]) this.settings.routing.economy = { providerId: id, model: clean.models[clean.models.length > 1 ? 1 : 0].id };
@@ -1360,7 +1384,7 @@ export class Runtime {
     const names = (a: string[]) => a.map(levelLabel).join(' · ');
     const message = !reliable
       ? `这个服务不校验思考档位（乱写的档位也被接受），无法确认；${info.reasoning ? '保留现有设置' : preset.style !== 'none' ? '暂按模型名推测' : '暂按通用五档'}：${names(saved?.levels ?? []) || '不发送'}`
-      : accepted.length ? `检测到 ${accepted.length} 档：${names(saved?.levels ?? [])}` : '这个模型不接受思考档位参数，将不发送思考参数';
+      : accepted.length ? `检测到 ${accepted.length} 档：${names(saved?.levels ?? [])}。对应：${tierHint(saved)}` : '这个模型不接受思考档位参数，将不发送思考参数';
     return { ok: true, reasoning: saved, message };
   }
 
@@ -1446,12 +1470,27 @@ function fileDigest(ws: Workspace, rel: string): { sha256: string; bytes: number
 /** NUL bytes near the start: treat as binary (no text diff). */
 export const looksBinary = (b: Buffer | null | undefined): boolean => !!b && b.subarray(0, 8000).includes(0);
 
+/** 细问 for the memorial: each question with its answer, each fact with the emperor's word, then the 纪要. */
+function grillItems(task: Task): string[] {
+  const g = task.grill!;
+  const how = (q: GrillQuestion) => (q.lateAt ? '皇上补答' : q.how === 'timeout' ? '未答，按推荐' : q.how === 'recommend' ? '按推荐' : '皇上答复');
+  const fact = (f: GrillFact) => (f.status === 'confirmed' ? '皇上确认' : f.status === 'corrected' ? `皇上更正：${f.correction}` : f.status === 'wrong' ? '皇上说不对' : '未经确认');
+  const end = g.ended === 'stopped' ? '皇上说不必再问' : g.ended === 'timeout' ? '全自动未答复，按推荐答案' : '皇上准了纪要';
+  return [
+    `${g.name}问了 ${g.rounds} 轮，${end}`,
+    ...g.questions.map((q) => `${q.id} ${q.title} —— ${q.answer ?? '未答'}（${how(q)}）`),
+    ...g.facts.map((f) => `${f.id} ${f.text} —— ${fact(f)}`),
+    ...(g.minutes ? [`问答纪要：${g.minutes.slice(0, 1500)}`] : []),
+  ];
+}
+
 export function buildMemorial(task: Task): Memorial {
   const nodes = task.nodes;
   const byKind = (k: string) => nodes.filter((n) => n.kind === k);
   const firstAt = (arr: RunNode[]) => arr.map((n) => n.startedAt).filter(Boolean).sort()[0];
   const stages: Memorial['stages'] = [
     { key: 'edict', label: '圣旨', at: task.createdAt, items: [task.edict.slice(0, 500), `档位：${task.tier}`] },
+    ...(task.grill?.status === 'done' && task.grill.ended !== 'skipped' ? [{ key: 'grill' as const, label: '细问纪要', at: firstAt(byKind('grill')), items: grillItems(task) }] : []),
     { key: 'zhongshu', label: '中书规划', at: firstAt(byKind('plan')), items: task.planHistory.map((p) => `v${p.version}（${p.author === 'emperor' ? '皇上涂改' : '中书省'}）：${p.plan.summary}；子任务 ${p.plan.subtasks.map((s) => `${s.id}[${s.dept}]${s.title}`).join('、')}`) },
     { key: 'menxia', label: '门下审议', at: firstAt(byKind('review')), items: task.reviews.map((r) => `${r.stage === 'plan' ? '方案' : '成果'}第 ${r.round} 轮 · ${r.reviewer === 'emperor' ? '皇上' : '门下省'}：${r.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'} ${r.comment}${r.issues.length ? ' — ' + r.issues.join('；') : ''}`) },
     { key: 'ministries', label: '六部执行', at: firstAt([...byKind('exec'), ...byKind('solo')]), items: [...byKind('exec'), ...byKind('solo')].map((n) => `${agentName(n.agentId)}「${n.label}」：${n.status}${n.output ? ' — ' + n.output.slice(0, 200) : ''}`) },

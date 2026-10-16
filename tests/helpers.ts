@@ -28,7 +28,8 @@ export function makeRuntime(mockUrl: string, protocol: Protocol = 'openai-chat',
   const rt = new Runtime({ dataDir, fetchImpl: (u, i) => fetch(u, i), secrets: new MemorySecrets(), version: 'test', platform: process.platform, resourcesDir: process.cwd() });
   installOrchestrator(rt);
   loadSkills(rt);
-  rt.updateSettings({ permissionMode: 'auto' });
+  // 细问 is on by default in the app; tests about other stages switch it off (tests/grill.test.ts switches it on)
+  rt.updateSettings({ permissionMode: 'auto', grillAsk: false });
   const base = protocol === 'anthropic-messages' ? mockUrl.replace(/\/v1$/, '') : mockUrl;
   rt.upsertProvider({ id: 'mock', name: 'Mock', preset: 'custom', protocol, baseUrl: base, enabled: true, models: [ { id: 'mock-strong', inputPrice: 3, outputPrice: 15, contextWindow: 128000 }, { id: 'mock-economy', inputPrice: 0.2, outputPrice: 0.8, contextWindow: 128000 } ] }, 'sk-test-SECRET-123456789');
   return rt;

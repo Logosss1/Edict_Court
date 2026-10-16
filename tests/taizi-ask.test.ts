@@ -1,10 +1,11 @@
-// 太子追问: at triage the prince may put ONE short question to the emperor before the edict goes to 中书省;
-// 请旨 phrasing (courtAddress) for the prince and the officials. mock/integration.
+// The prince no longer asks at triage (细问 by the planning official replaced 太子追问, tests/grill.test.ts); an
+// older edict still waiting on his question is asked again and goes on. 请旨 phrasing (courtAddress) for the
+// prince and the officials. mock/integration.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { startMockLlm, defaultBrain, type MockCall } from './mockLlm';
 import { makeRuntime, tmpDir, waitFor, stateOf } from './helpers';
-import { submit, resumeAll } from '../src/main/runtime/orchestrator';
+import { submit, resumeAll, createTask } from '../src/main/runtime/orchestrator';
 import { parsePrinceAsk } from '../src/main/runtime/askEmperor';
 import { executeTool } from '../src/main/runtime/tools';
 import type { Runtime } from '../src/main/runtime/runtime';
@@ -14,7 +15,7 @@ import type { RunNode, Task } from '../src/shared/types';
 const EDICT = '把登录页改一下';
 const ASK = { type: 'ask', title: '修改登录页', question: '要改哪个项目的登录页？', options: ['后台管理', '用户前台'], assume: '改用户前台的登录页', reason: '工作区里有两个登录页' };
 
-/** Mock court whose prince asks about EDICT (everything else as usual); records every call. */
+/** Mock court whose prince still replies with an ask about EDICT (as an older prompt would); records every call. */
 async function court() {
   const seen: MockCall[] = [];
   const base = defaultBrain({});
@@ -46,176 +47,50 @@ test('parsePrinceAsk: only a well-formed ask; at most 3 options', () => {
   assert.deepEqual(parsePrinceAsk({ type: 'ask', question: '改哪个？' }), { question: '改哪个？', options: [], assume: '' });
 });
 
-test('太子追问: the edict waits in 太子分拣 for one question; the chosen option reaches 中书省 and the flow proceeds', async () => {
-  const { mock, zhongshu } = await court();
-  const rt = makeRuntime(mock.url);
-  prepare(rt);
-  const r = await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true });
-  assert.equal(r.kind, 'task');
-  const id = (r as { taskId: string }).taskId;
-  const t = rt.tasks.get(id)!;
-  assert.equal(t.state, 'Taizi');
-  assert.equal(t.title, '修改登录页');
-  assert.ok(t.nodes.some((n) => n.id === 'triage' && n.status === 'done'));
-
-  const ap = await pendingQuestion(rt);
-  assert.equal(ap.agentId, 'taizi');
-  assert.equal(ap.taskId, id);
-  assert.equal(ap.summary, '太子请旨：父皇，要改哪个项目的登录页？');
-  assert.deepEqual(ap.choices!.map((c) => c.id), ['o0', 'o1', 'free', 'self']);
-  assert.deepEqual(ap.choices!.map((c) => c.label), ['后台管理', '用户前台', '回复', '不必问，照办']);
-  assert.equal(ap.choices!.find((c) => c.id === 'free')!.comment, 'required');
-  assert.match(ap.choices!.find((c) => c.id === 'self')!.hint ?? '', /改用户前台的登录页/);
-  assert.deepEqual(t.questions!.map((q) => [q.agentId, q.question, q.assume]), [['taizi', '要改哪个项目的登录页？', '改用户前台的登录页']]);
-  assert.ok(rt.activities(id, 100).some((a) => a.content === '太子请旨：父皇，要改哪个项目的登录页？（后台管理 / 用户前台）'));
-  assert.ok(rt.audit.list({ limit: 200 }).some((e) => e.action === 'ask_emperor' && e.actor === 'taizi' && e.taskId === id));
-
-  // nothing moves while the question is open, and driving again does not ask a second time
-  resumeAll(rt);
-  await settle();
-  assert.equal(stateOf(rt, id), 'Taizi');
-  assert.equal(zhongshu().length, 0);
-  assert.equal([...rt.approvals.values()].filter((a) => a.kind === 'question').length, 1);
-
-  rt.decideApproval(ap.id, true, 'emperor', 'o0');
-  await finished(rt, id);
-  assert.equal(stateOf(rt, id), 'Done', t.blockedReason);
-  assert.ok(t.edict.endsWith(`${EDICT}\n\n【太子请旨】要改哪个项目的登录页？\n【皇上示下】后台管理`), t.edict);
-  assert.ok(zhongshu().length > 0 && zhongshu().every((c) => c.lastUser.includes('【皇上示下】后台管理')), '中书省 plans with the answer');
-  assert.deepEqual([t.questions!.length, t.questions![0].how, t.questions![0].answer], [1, 'option', '后台管理']);
-  assert.ok(rt.audit.list({ limit: 300 }).some((e) => e.action === 'ask_emperor_answered' && e.actor === 'emperor' && e.taskId === id));
-  const m = rt.memorials.get(id)!;
-  assert.ok(m.stages.some((s) => s.key === 'questions' && s.items.some((i) => i.includes('太子 问：要改哪个项目的登录页？') && i.includes('后台管理'))));
-  assert.equal(rt.agents.get('taizi')!.status, 'idle');
-  rt.dispose();
-  await mock.close();
-});
-
-test('太子追问: 「不必问，照办」 continues on the prince\'s assumption; a free reply is passed on as written', async () => {
-  const { mock, zhongshu } = await court();
-  const rt = makeRuntime(mock.url);
-  prepare(rt);
-  let r = (await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true })) as { taskId: string };
-  let ap = await pendingQuestion(rt);
-  rt.decideApproval(ap.id, true, 'emperor', 'self');
-  await finished(rt, r.taskId);
-  let t = rt.tasks.get(r.taskId)!;
-  assert.equal(t.state, 'Done', t.blockedReason);
-  assert.equal(t.questions![0].how, 'self');
-  assert.match(t.edict, /【皇上示下】不必问，照太子所拟：改用户前台的登录页$/);
-  assert.ok(zhongshu().some((c) => c.lastUser.includes('不必问，照太子所拟：改用户前台的登录页')));
-
-  const before = zhongshu().length;
-  r = (await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true })) as { taskId: string };
-  ap = await pendingQuestion(rt);
-  assert.throws(() => rt.decideApproval(ap.id, true, 'emperor', 'free'), /写明/);
-  rt.decideApproval(ap.id, true, 'emperor', 'free', '两个都改，先改后台');
-  await finished(rt, r.taskId);
-  t = rt.tasks.get(r.taskId)!;
-  assert.equal(t.state, 'Done', t.blockedReason);
-  assert.deepEqual([t.questions![0].how, t.questions![0].answer], ['free', '两个都改，先改后台']);
-  assert.match(t.edict, /【太子请旨】要改哪个项目的登录页？\n【皇上示下】两个都改，先改后台$/);
-  assert.ok(zhongshu().slice(before).some((c) => c.lastUser.includes('【皇上示下】两个都改，先改后台')));
-  rt.dispose();
-  await mock.close();
-});
-
-test('太子追问 off (taiziAsk: false) or 直接下旨: no question, the edict goes straight on', async () => {
+test('the prince only sorts: even an ask-shaped triage reply is filed as an edict and goes straight on', async () => {
   const { mock, seen, zhongshu } = await court();
   const rt = makeRuntime(mock.url);
   prepare(rt);
-  rt.updateSettings({ taiziAsk: false });
-  let r = (await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true })) as { taskId: string };
+  const r = (await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true })) as { taskId: string };
   await finished(rt, r.taskId);
-  let t = rt.tasks.get(r.taskId)!;
+  const t = rt.tasks.get(r.taskId)!;
   assert.equal(t.state, 'Done', t.blockedReason);
   assert.equal(t.title, '修改登录页');
   assert.equal(t.edict, EDICT);
   assert.equal(t.questions, undefined);
   assert.ok(![...rt.approvals.values()].some((a) => a.kind === 'question'));
+  assert.equal(seen.filter((c) => c.system.includes('你是太子')).length, 1, 'one triage call, no follow-up question');
   assert.ok(zhongshu().every((c) => !c.lastUser.includes('太子请旨')));
-
-  rt.updateSettings({ taiziAsk: true });
-  const princeCalls = seen.filter((c) => c.system.includes('你是太子')).length;
-  r = (await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true, forceEdict: true })) as { taskId: string };
-  await finished(rt, r.taskId);
-  t = rt.tasks.get(r.taskId)!;
-  assert.equal(t.state, 'Done', t.blockedReason);
-  assert.equal(seen.filter((c) => c.system.includes('你是太子')).length, princeCalls, '直接下旨 skips triage');
-  assert.ok(![...rt.approvals.values()].some((a) => a.kind === 'question'));
+  assert.match(seen.find((c) => c.system.includes('你是太子'))!.system, /中书省规划前会向皇上细问/);
   rt.dispose();
   await mock.close();
 });
 
-test('太子追问 in 全自动: an unanswered question continues on the prince\'s assumption after the timeout', async () => {
-  const { mock, zhongshu } = await court();
-  const rt = makeRuntime(mock.url);
-  prepare(rt);
-  rt.updateSettings({ permissionMode: 'auto', askTimeoutMin: 0.002 });
-  const r = (await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true })) as { taskId: string };
-  const ap = await pendingQuestion(rt);
-  assert.match(ap.reason, /全自动模式/);
-  await finished(rt, r.taskId);
-  const t = rt.tasks.get(r.taskId)!;
-  assert.equal(t.state, 'Done', t.blockedReason);
-  assert.equal(rt.approvals.get(ap.id)!.status, 'approved');
-  assert.equal(t.questions![0].how, 'timeout');
-  assert.match(t.edict, /【皇上示下】（0.002 分钟未答复）照太子所拟：改用户前台的登录页$/);
-  assert.ok(zhongshu().some((c) => c.lastUser.includes('照太子所拟：改用户前台的登录页')));
-  assert.ok(rt.audit.list({ limit: 300 }).some((e) => e.action === 'ask_emperor_answered' && e.actor === 'system' && e.taskId === r.taskId));
-  rt.dispose();
-  await mock.close();
-});
-
-test('太子追问: cancelling while the question is open closes the card and the edict is not driven', async () => {
-  const { mock, zhongshu } = await court();
-  const rt = makeRuntime(mock.url);
-  prepare(rt);
-  const r = (await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true })) as { taskId: string };
-  const ap = await pendingQuestion(rt);
-  rt.cancel(r.taskId);
-  await settle();
-  const t = rt.tasks.get(r.taskId)!;
-  assert.equal(t.state, 'Cancelled');
-  assert.equal(rt.approvals.get(ap.id)!.status, 'denied');
-  assert.equal(t.questions![0].answeredAt, undefined);
-  assert.equal(t.edict, EDICT);
-  assert.equal(zhongshu().length, 0);
-  assert.equal(rt.agents.get('taizi')!.status, 'idle');
-  rt.dispose();
-  await mock.close();
-});
-
-test('太子追问 across a restart: the unanswered question is asked again on resume, not skipped', async () => {
+test('an older edict still waiting on the prince\'s question: asked again after a restart, the answer reaches 中书省', async () => {
   const { mock, zhongshu } = await court();
   const dataDir = tmpDir('edict-data-');
   const rt = makeRuntime(mock.url, 'openai-chat', dataDir);
   const ws = prepare(rt);
-  const r = (await submit(rt, { text: EDICT, tier: 'lite', multiAgent: true })) as { taskId: string };
-  await pendingQuestion(rt);
-  rt.flushAll(); // the app quits while the card is open
+  const t = createTask(rt, { text: EDICT, tier: 'lite', title: '修改登录页', model: null });
+  t.nodes.push({ id: 'triage', kind: 'triage', agentId: 'taizi', label: '太子分拣', status: 'done', attempts: 1, output: JSON.stringify(ASK) });
+  rt.transition(t, 'Taizi', 'taizi', '太子接旨分拣');
+  t.questions = [{ id: 'q-old', agentId: 'taizi', nodeId: 'triage', question: ASK.question, options: ASK.options, assume: ASK.assume, at: Date.now() }];
+  rt.touch(t);
+  rt.flushAll();
   const rt2 = makeRuntime(mock.url, 'openai-chat', dataDir);
   rt.dispose();
   prepare(rt2, ws);
-  const t2 = rt2.tasks.get(r.taskId)!;
-  assert.equal(t2.state, 'Taizi');
-  assert.equal(t2.questions!.length, 1);
-  assert.equal(t2.questions![0].answeredAt, undefined);
-  assert.equal([...rt2.approvals.values()].length, 0, 'cards are not persisted');
-
   resumeAll(rt2);
   const ap = await pendingQuestion(rt2);
-  assert.equal(ap.taskId, r.taskId);
   assert.equal(ap.summary, '太子请旨：父皇，要改哪个项目的登录页？');
-  assert.ok(rt2.activities(r.taskId, 100).some((a) => a.content.startsWith('太子再次请旨')));
+  assert.ok(rt2.activities(t.id, 100).some((a) => a.content.startsWith('太子再次请旨')));
   await settle();
-  assert.equal(stateOf(rt2, r.taskId), 'Taizi');
+  assert.equal(stateOf(rt2, t.id), 'Taizi');
   assert.equal(zhongshu().length, 0);
-  assert.equal(t2.questions!.length, 1, 'the same question, not a second one');
-
   rt2.decideApproval(ap.id, true, 'emperor', 'o1', '只改样式');
-  await finished(rt2, r.taskId);
-  assert.equal(stateOf(rt2, r.taskId), 'Done', t2.blockedReason);
+  await finished(rt2, t.id);
+  const t2 = rt2.tasks.get(t.id)!;
+  assert.equal(t2.state, 'Done', t2.blockedReason);
   assert.match(t2.edict, /【皇上示下】用户前台（只改样式）$/);
   assert.ok(zhongshu().some((c) => c.lastUser.includes('【皇上示下】用户前台（只改样式）')));
   rt2.dispose();

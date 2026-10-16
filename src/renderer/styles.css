@@ -316,7 +316,7 @@ select.input { padding: 4px 6px; }
 .gate-card { margin: 8px 10px; padding: 10px; border-radius: 8px; border: 1px solid color-mix(in srgb, var(--acc) 55%, transparent); background: color-mix(in srgb, var(--acc) 6%, var(--panel)); display: flex; flex-direction: column; gap: 8px; flex: none; max-height: 62%; overflow: auto; }
 .gate-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--acc); }
 .gate-head .muted { color: var(--muted); }
-.gate-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.gate-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
 .review-note { padding: 6px 8px; border-radius: 6px; border-left: 3px solid var(--jade); background: var(--bg); font-size: 12px; margin-bottom: 6px; }
 .review-note.reject { border-left-color: var(--danger); }
 .review-note ul { margin: 4px 0; padding-left: 16px; }
@@ -455,7 +455,10 @@ select.input { padding: 4px 6px; }
 .preview-edict { padding: 10px; border-radius: 8px; background: var(--bg); border: 1px dashed var(--line2); margin: 8px 0; white-space: pre-wrap; }
 
 /* models */
-.models-layout { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: 12px; }
+.models-layout { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+.models-layout > .provider-list { flex: 1 1 220px; }
+.models-layout > :last-child { flex: 999 1 400px; min-width: 0; }
+
 .models-table .input.num { width: 64px; }
 .card { min-width: 0; overflow-x: auto; }
 .provider-list { display: flex; flex-direction: column; gap: 4px; }
@@ -693,10 +696,11 @@ select.input { padding: 4px 6px; }
 .effort { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 6px; border: 1px solid var(--line2); border-radius: 5px; background: var(--bg); font-size: 11.5px; color: var(--muted); }
 .effort.none { opacity: 0.75; cursor: help; }
 .effort-k { font-size: 11px; }
-.effort-track { position: relative; display: inline-flex; align-items: center; width: 78px; }
+.effort-track { position: relative; display: inline-flex; align-items: center; width: 92px; }
 .effort input[type='range'] { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 3px; margin: 0; background: linear-gradient(90deg, var(--gold) 0 var(--pct), var(--line2) var(--pct) 100%); outline: none; cursor: pointer; }
 .effort input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--panel); border: 2px solid var(--gold); box-shadow: 0 1px 2px rgba(0,0,0,.25); position: relative; z-index: 2; }
 .effort input[type='range']:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--acc); }
+.effort-off { position: absolute; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: var(--bg); box-shadow: 0 0 0 1px var(--line2); pointer-events: none; z-index: 1; opacity: .9; }
 .effort-def { position: absolute; top: -5px; width: 2px; height: 3px; margin-left: -1px; background: var(--muted); pointer-events: none; }
 .effort-v { min-width: 30px; font-weight: 600; font-size: 11.5px; color: var(--text); }
 .effort-v.l3 { color: var(--warn); }
@@ -997,3 +1001,39 @@ select.input { padding: 4px 6px; }
 .fc-chip-model { margin-left: 4px; padding: 0 5px; border-radius: 8px; font-size: 11px; background: color-mix(in srgb, var(--text) 10%, transparent); opacity: 0.85; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: inline-block; vertical-align: middle; }
 .fc-chip-model.missing { color: var(--warn); }
 .de-fields .field.span2 { grid-column: span 2; }
+/* 查看原因 window */
+.block-dlg { width: 460px; max-height: 80vh; overflow: auto; }
+.block-dlg .block-h { display: flex; align-items: center; gap: 6px; font-weight: 600; color: var(--danger); }
+.block-dlg .block-h .icon-btn { margin-left: auto; }
+.block-dlg .block-title { font-weight: 600; }
+.block-dlg .block-reason { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.block-dlg .block-cause { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.block-dlg .block-cause-t { font-weight: 600; }
+.block-dlg .block-cause-d { color: var(--muted); font-size: 11.5px; word-break: break-all; }
+.block-dlg .block-fix-h { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.block-dlg .block-fixes { margin: 0; padding-left: 18px; line-height: 1.6; }
+.block-dlg .block-actions { display: flex; gap: 6px; justify-content: flex-end; }
+/* 模型服务: one card per model; prices only when 填写价格 is on */
+.models-head { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.models-head h4 { margin: 0; }
+.model-cards { display: flex; flex-direction: column; gap: 8px; }
+.model-card { position: relative; border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg2); padding: 8px 34px 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.model-card.on { border-color: var(--gold); }
+.model-card .mc-row { display: flex; align-items: flex-end; gap: 8px; flex-wrap: wrap; }
+.model-card .mc-f { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.model-card .mc-f > span { font-size: 11px; color: var(--muted); }
+.model-card .mc-id { flex: 2 1 160px; }
+.model-card .mc-name { flex: 1 1 100px; }
+.model-card .mc-ctx { flex: 0 0 76px; }
+.model-card .mc-ctx .input { width: 100%; }
+.model-card .mc-del { position: absolute; top: 6px; right: 6px; }
+.model-card .mc-think, .model-card .mc-price { align-items: center; }
+.model-card .mc-price { border-top: 1px dashed var(--line); padding-top: 8px; }
+.model-card .mc-p { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.model-card .mc-p .input.num { width: 70px; }
+/* 口谕: the composer talks to the selected running edict */
+.composer .oral-switch { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; min-width: 0; }
+.composer .oral-switch button { border: 1px solid var(--line); background: transparent; color: var(--muted); border-radius: 6px; padding: 2px 8px; font-size: 12px; cursor: pointer; }
+.composer .oral-switch button.on { border-color: var(--gold); color: var(--gold); background: color-mix(in srgb, var(--gold) 10%, transparent); }
+.composer .oral-switch .ellipsis { margin-left: 4px; }
+.composer.oral textarea { border-color: var(--gold); }

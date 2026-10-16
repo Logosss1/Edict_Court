@@ -30,7 +30,7 @@ export const SETTINGS_GROUPS: { title: string; items: SectionInfo[] }[] = [
     title: '运行',
     items: [
       { id: 'runtime', label: '运行策略', icon: 'zap', keywords: '预算 token 费用上限 封驳上限 审批门 方案御览 御批 议政 并行度 压缩 请旨 超时 需求说明 对照检查 验收标准 补办' },
-      { id: 'permissions', label: '权限与审批', icon: 'shield', keywords: '权限模式 只读 询问 自动编辑 全自动 写任务 允许规则 本工作区永久 发版 部署 续跑 超时 请旨 太子追问', isNew: true },
+      { id: 'permissions', label: '权限与审批', icon: 'shield', keywords: '权限模式 只读 询问 自动编辑 全自动 写任务 允许规则 本工作区永久 发版 部署 续跑 超时 请旨 细问 问答纪要 推荐答案', isNew: true },
       { id: 'canon', label: '典章', icon: 'rules', keywords: '项目规约 AGENTS.md CLAUDE.md rules.md 禁止 规矩 偏好 教训 封驳', isNew: true },
     ],
   },

@@ -32,6 +32,7 @@ export function attentionItems(tasks: Task[], approvals: ApprovalRequest[]): Att
     const who = agentName(a.agentId);
     const base = { key: `ap:${a.id}`, taskId: a.taskId, at: a.at, approval: a, task: t, who };
     if (a.kind === 'write_task') out.push({ ...base, kind: 'write_task', label: '写任务开工', tone: 'gold', title: t?.title ?? a.summary, sub: a.summary });
+    else if (a.kind === 'grill') out.push({ ...base, kind: 'question', label: a.grill?.phase === 'minutes' ? '问答纪要' : '细问', tone: 'blue', title: a.summary.replace(/^.*?细问（[^）]*）：/, ''), sub: t ? t.title : who });
     else if (a.kind === 'question') out.push({ ...base, kind: 'question', label: '请旨', tone: 'blue', title: a.summary.replace(/^.*?请旨：/, ''), sub: t ? t.title : who });
     else if (a.kind === 'schedule') out.push({ ...base, kind: 'schedule', label: '定时提议', tone: 'blue', title: a.summary.replace(/^.*?提议定时旨意：/, ''), sub: `${who}：${a.reason}` });
     else if (a.kind === 'attempt') out.push({ ...base, kind: 'attempt', label: '比试待选', tone: 'blue', title: t?.title ?? a.summary, sub: a.summary });

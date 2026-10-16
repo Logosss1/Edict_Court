@@ -35,6 +35,10 @@ export interface LlmRequest {
   idleTimeoutMs?: number;
   extraBody?: Record<string, unknown>; // e.g. reasoning params (merged into the request body)
   dropTemperature?: boolean; // reasoning models reject custom temperature
+  /** 回答参数 beyond temperature (sent only when set; Chat Completions has all three, Responses / Messages only top_p) */
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
 }
 
 export interface LlmResult {
@@ -95,6 +99,8 @@ const CONTEXT_PATTERNS = /context[_ ]?length|context window|maximum context|too 
 
 const CONFIG_PATTERNS = /不支持.*(模型|接入|方式)|分组|无可用渠道|no available (channel|distributor)|model[_ ]?not[_ ]?found|model .*(does not exist|not (found|supported|available))|unsupported model|invalid model|模型.*(不存在|不可用|未开放)|not supported (for|by) this|not allowed to use|does not have access to (the )?model/i;
 const PARAM_PATTERNS = /(reasoning|effort|thinking|enable_thinking|output_config|budget_tokens)[\s\S]{0,80}(unsupported|not supported|unknown|invalid|not permitted|unrecognized|extra)|(unsupported|unknown|unrecognized|invalid|extra)[\s\S]{0,40}(parameter|field|argument)[\s\S]{0,60}(reasoning|effort|thinking|output_config)/i;
+/** 回答参数 the service has no field for, a value out of its range, or a combination it refuses (temperature with top_p) */
+export const SAMPLING_PATTERNS = /(temperature|top_p|frequency_penalty|presence_penalty)[\s\S]{0,80}(unsupported|not supported|unknown|invalid|not permitted|unrecognized|extra|not allowed|out of range|must be|deprecated|cannot|can only|may only)|(unsupported|unknown|unrecognized|invalid|extra)[\s\S]{0,40}(parameter|field|argument)[\s\S]{0,60}(temperature|top_p|frequency_penalty|presence_penalty)/i;
 const BILLING_PATTERNS = /insufficient|quota|余额|额度|billing|credit/i;
 
 /** Map an LLM failure to an actionable category. `retryable` is false for configuration problems. */
@@ -104,6 +110,7 @@ export function classifyLlmError(e: unknown): ErrorInfo & { retryable: boolean }
     const s = e.status;
     if ((s === 400 || s === 413 || s === 422) && CONTEXT_PATTERNS.test(raw)) return { kind: 'context', status: s, retryable: false, raw, hint: '对话超出模型上下文长度：已自动压缩上下文重试；仍失败可调小「上下文窗口」或换长上下文模型。' };
     if (PARAM_PATTERNS.test(raw)) return { kind: 'param', status: s, retryable: false, raw, hint: '服务不接受思考程度参数：请在「模型配置」中把该模型的思考方式改为「不发送思考参数」或调低档位。' };
+    if (SAMPLING_PATTERNS.test(raw)) return { kind: 'param', status: s, retryable: false, raw, hint: '服务不接受所设的回答参数（Temperature / Top P / 惩罚）：在「模型服务」或「官员模型与路由」里取消勾选或调整数值。' };
     if (CONFIG_PATTERNS.test(raw) || s === 404) return { kind: 'config', status: s, retryable: false, raw, hint: s === 404 ? '接口地址或模型不存在：检查 base_url（是否需要 /v1）、协议选择与模型 id。' : '服务（或中转站当前分组）不支持该模型或接入方式：核对模型 id；在「模型配置 → 协议探测」中试试 Chat / Responses / Messages 哪种可用；或在中转站后台切换分组。' };
     if (s === 401 || s === 403) return { kind: 'auth', status: s, retryable: false, raw, hint: 'API Key 无效、过期或无此模型权限：在「模型配置」中重新填写 Key。' };
     if (s === 402 || BILLING_PATTERNS.test(raw)) return { kind: 'billing', status: s, retryable: false, raw, hint: '余额或额度不足：请充值或换用其他模型服务。' };

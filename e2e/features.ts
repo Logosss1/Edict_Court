@@ -26,6 +26,12 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     delayMs: 5,
     reject: (c) => (c.model === 'relay-bad' ? { status: 503, body: '{"error":{"message":"当前分组暂不支持您请求的模型或接入方式，请尝试其他模型","type":"new_api_error"}}' } : undefined),
     brain: (c) => {
+      // 细问 (GRILLTEST): look around once, ask one question with a recommendation plus one fact, then the 纪要
+      if (c.lastUser.includes('GRILLTEST') && c.lastUser.includes('【细问】')) {
+        if (c.tools.length && c.toolResults === 0) return { toolCalls: [{ name: 'list_dir', args: { path: '.' } }] };
+        if (c.lastUser.includes('【已经问过的】')) return { text: JSON.stringify({ type: 'done', minutes: '- 问候语：中文「你好」\n- 工作区：已有 index.html，greet.js 新建' }) };
+        return { text: JSON.stringify({ type: 'ask', facts: [{ text: '工作区里还没有 greet.js', source: 'list_dir .' }], questions: [{ title: '问候语用中文还是英文？', body: '决定 greet 返回的字样', options: ['英文 Hello', '中文 你好'], recommend: '英文 Hello' }] }) };
+      }
       if (c.system.includes('独相') && c.lastUser.includes('PREVIEWTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'index.html', wait_ms: 300 } }] };
       if (c.system.includes('独相') && c.lastUser.includes('MCPTEST') && c.toolResults === 0) return { toolCalls: [{ name: 'mcp__demo__echo', args: { text: '朕知道了' } }] };
       if (c.system.includes('独相') && c.lastUser.includes('PREVIEWACT') && c.toolResults === 0) return { toolCalls: [{ name: 'preview_page', args: { path: 'click.html', actions: [{ fill: '#name', value: '魏征' }, { click: '#go' }, { assertText: '已点名：李靖', timeoutMs: 300 }] } }] };
@@ -76,7 +82,8 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     ],
   }, 'sk-e2e-SECRET-KEY-111');
   await inv('setWorkspace', ws);
-  await inv('updateSettings', { permissionMode: 'auto', finalGate: false });
+  // 细问 and 方案御览 have their own section below; the others run as before (细问 off, Full plan gate on)
+  await inv('updateSettings', { permissionMode: 'auto', finalGate: false, grillAsk: false, planGate: { lite: false, full: true } });
   await win.waitForTimeout(600);
 
   // ── 1. 思考程度 slider
@@ -85,11 +92,13 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const slider = win.locator('[data-testid=composer] [data-testid=effort] input[type=range]');
     await slider.waitFor({ timeout: 5000 });
     const max = await slider.getAttribute('max');
-    ok('思考程度滑块按模型档位显示（mock-strong：Low→XHigh，4 档）', max === '3', `max=${max}`);
-    await slider.fill('3');
+    // 固定六档: 无思考 / 轻度 / 中度 / High / XHigh / Max always shown; mock-strong (low…xhigh) has no 无思考 or Max
+    const off = await win.locator('[data-testid=composer] [data-testid=effort] .effort-off').count();
+    ok('思考程度滑块固定六档，此模型没有的档位置灰（mock-strong：无思考、Max）', max === '5' && off === 2, `max=${max} off=${off}`);
+    await slider.fill('4');
     await win.waitForTimeout(200);
     const label = await win.textContent('[data-testid=composer] .effort-v');
-    ok('滑到最右 = 该模型最高档，显示英文原名 XHigh', label === 'XHigh', label ?? '');
+    ok('滑到 XHigh 一档，显示 XHigh', label === 'XHigh', label ?? '');
     const effTip = (await win.locator('[data-testid=composer] [data-testid=effort]').getAttribute('data-tip-desc')) ?? '';
     ok('思考程度说明：新文案，不再写「最右是该模型最高档」', effTip.startsWith('模型想得越深结果越好，但更慢、更费 token。') && !effTip.includes('最右'), effTip);
     await shot('30-effort-slider');
@@ -134,7 +143,7 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     await win.click('[data-testid=reasoning-detect]');
     await win.waitForSelector('.toast >> text=不校验思考档位', { timeout: 15000 });
     const summary = (await win.textContent('[data-testid=reasoning-btn] >> nth=0')) ?? '';
-    ok('检测思考档位：服务不校验时标「未能确认」，保留原档位', summary.startsWith('未能确认') && summary.includes('Low→XHigh') && mock.calls.length - before === 2, `${summary} calls=${mock.calls.length - before}`);
+    ok('检测思考档位：服务不校验时标「未能确认」，保留原档位', summary.startsWith('未能确认') && summary.includes('轻度→XHigh') && mock.calls.length - before === 2, `${summary} calls=${mock.calls.length - before}`);
     // per-official models (设置 · 官员模型与路由): one row each, model dropdown wide enough to read "model · service"
     await win.evaluate(() => (window as any).__openSettings('routing'));
     const rows = win.locator('[data-testid=agent-model-list] [data-testid^=agent-model-]');
@@ -143,6 +152,51 @@ const want = (k: string) => !ONLY.length || ONLY.includes(k);
     const boxes = await rows.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); const sel = e.querySelector('select')!.getBoundingClientRect(); return { y: r.y, w: sel.width }; }));
     ok('官员模型竖排：每位官员一行，模型下拉足够宽', boxes.length >= 10 && boxes.every((b, i) => i === 0 || b.y > boxes[i - 1].y) && boxes.every((b) => b.w >= 230), JSON.stringify(boxes.slice(0, 3)));
     await shot('33-models-agent-list');
+    // 回答参数 per official: 自定义 → own sliders; the protocol greys out what it has no field for
+    await win.click('[data-testid=agent-sampling-bingbu]');
+    await win.click('[data-testid=agent-sampling-custom-bingbu]');
+    await win.waitForSelector('[data-testid=agent-sampling-editor-bingbu]');
+    await win.fill('[data-testid=agent-sampling-editor-bingbu] [data-testid=smp-temperature-num]', '0.9');
+    await win.check('[data-testid=agent-sampling-editor-bingbu] [data-testid=smp-presencePenalty-on]');
+    await win.waitForTimeout(400);
+    let st: any = (await inv('snapshot')).settings;
+    ok('官员可自定义回答参数（Temperature、存在惩罚等），不勾的跟随模型', st.agentSampling?.bingbu?.temperature === 0.9 && st.agentSampling?.bingbu?.presencePenalty === 0 && st.agentSampling?.bingbu?.topP === undefined, JSON.stringify(st.agentSampling));
+    await win.locator('[data-testid=agent-sampling-panel-bingbu]').scrollIntoViewIfNeeded();
+    await shot('34-agent-sampling');
+    await win.click('[data-testid=agent-sampling-follow-bingbu]');
+    await win.waitForTimeout(300);
+    st = (await inv('snapshot')).settings;
+    ok('改回「跟随模型」清掉官员自己的回答参数', !st.agentSampling?.bingbu);
+    // 回答参数 per model (模型服务): tick to send, save with the provider
+    await win.evaluate(() => (window as any).__openPanel('models'));
+    await win.click('[data-testid=sampling-btn] >> nth=0');
+    await win.waitForSelector('[data-testid=model-sampling]');
+    await win.check('[data-testid=model-sampling] [data-testid=smp-temperature-on]');
+    await win.fill('[data-testid=model-sampling] [data-testid=smp-temperature-num]', '0.3');
+    await win.check('[data-testid=model-sampling] [data-testid=smp-topP-on]');
+    await win.fill('[data-testid=model-sampling] [data-testid=smp-topP-num]', '0.9');
+    await win.click('[data-testid=provider-save]');
+    await win.waitForTimeout(500);
+    const pv: any = ((await inv('snapshot')).providers as any[]).find((x) => x.name === 'Mock 中转');
+    const ms = pv?.models.find((m: any) => m.id === 'mock-strong')?.sampling;
+    ok('模型服务里每个模型可设回答参数，保存后生效', ms?.temperature === 0.3 && ms?.topP === 0.9 && ms?.frequencyPenalty === undefined, JSON.stringify(ms));
+    ok('按钮上显示已设的参数', ((await win.textContent('[data-testid=sampling-btn] >> nth=0')) ?? '').includes('温度 0.3'));
+    await shot('35-model-sampling');
+    // a Messages-protocol service has no penalties: those rows are greyed out
+    await inv('upsertProvider', { id: '', name: 'Mock Messages', preset: 'custom', protocol: 'anthropic-messages', baseUrl: mock.url.replace('/v1', ''), enabled: false, hasKey: false, models: [{ id: 'mock-strong', inputPrice: 0, outputPrice: 0, contextWindow: 128000 }] });
+    await win.evaluate(() => (window as any).__openPanel('models'));
+    await win.click('.provider-list .list-item:has-text("Mock Messages")');
+    await win.waitForTimeout(300);
+    await win.click('[data-testid=sampling-btn] >> nth=0');
+    await win.waitForSelector('[data-testid=model-sampling]');
+    const greyed = await win.locator('[data-testid=model-sampling] [data-testid=smp-frequencyPenalty-on]').isDisabled();
+    const topOk = !(await win.locator('[data-testid=model-sampling] [data-testid=smp-topP-on]').isDisabled());
+    ok('Anthropic 协议的服务：频率 / 存在惩罚置灰，Top P 可用', greyed && topOk);
+    const anth: any = ((await inv('snapshot')).providers as any[]).find((x) => x.name === 'Mock Messages');
+    if (anth) await inv('deleteProvider', anth.id);
+    // back to the service defaults so later sections send what they did before
+    const pv2: any = ((await inv('snapshot')).providers as any[]).find((x) => x.name === 'Mock 中转');
+    await inv('upsertProvider', { ...pv2, models: pv2.models.map((m: any) => ({ ...m, sampling: undefined })) });
   }
 
   // ── 3. HTML 预览
@@ -324,7 +378,7 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await win.click('[data-testid=gate-approve]');
     // (this E2E runs with finalGate off, which the copy inherited → the design ends without 御批)
     const t2 = await waitTask((x) => x.id === t1.id && ['Done', 'Blocked'].includes(x.state), 40000);
-    ok('设计更新为 v2 后，进行中的旨意仍按 v1（含尚书派发、六部执行、门下审议成果）完成', t2.state === 'Done' && t2.design.version === 1 && t2.nodes.some((n: any) => n.kind === 'dispatch' && n.status === 'done') && t2.nodes.some((n: any) => n.kind === 'result_review' && n.status === 'done'), t2.blockedReason);
+    ok('设计更新为 v2 后，进行中的旨意仍按 v1（含尚书派发、六部执行、对照检查；成果只审一遍）完成', t2.state === 'Done' && t2.design.version === 1 && t2.nodes.some((n: any) => n.kind === 'dispatch' && n.status === 'done') && t2.nodes.some((n: any) => n.kind === 'check' && n.status === 'done') && !t2.nodes.some((n: any) => n.kind === 'result_review'), t2.blockedReason);
     await shot('41-design-task');
     // rollback through the UI
     await win.evaluate(() => (window as any).__openPanel('designs'));
@@ -772,6 +826,37 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await shot('v21-83-schedules-list');
   }
 
+  if (want('oral')) {
+    // 口谕: with a running edict selected, the box talks to it instead of starting a new edict
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench', sideView: null, composerHidden: false }));
+    const o: any = await inv('submit', { text: 'ORALTEST 写一个 greet 函数并测试', tier: 'lite', multiAgent: true, forceEdict: true });
+    await inv('pause', o.taskId);
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ selectedTaskId: id }), o.taskId);
+    await win.waitForSelector('[data-testid=oral-mode][aria-checked=true]', { timeout: 5000 });
+    const ph = (await win.getAttribute('#composer-input', 'placeholder')) ?? '';
+    ok('选中正在办的旨意时，输入框默认是「口谕给本旨」', ph.startsWith('传口谕') && (await win.locator('[data-testid=composer-send]').count()) === 0, ph.slice(0, 30));
+    await shot('80-oral-composer');
+    const tasksBefore = ((await inv('snapshot')) as any).tasks.length;
+    await win.fill('#composer-input', '不用写测试文件，函数写好就收尾');
+    await win.click('[data-testid=oral-send]');
+    await win.waitForSelector('.toast >> text=口谕已记下', { timeout: 5000 });
+    const snap: any = await inv('snapshot');
+    const to = snap.tasks.find((x: any) => x.id === o.taskId);
+    ok('口谕记在这道旨意上，没有新建旨意', snap.tasks.length === tasksBefore && to.orals?.[0]?.text === '不用写测试文件，函数写好就收尾', `tasks ${tasksBefore}→${snap.tasks.length}`);
+    await inv('resume', o.taskId);
+    await waitTask((x) => x.id === o.taskId && (x.state === 'Done' || x.gate?.kind === 'final' || x.state === 'Blocked'), 40000);
+    const read = mock.bodies.some((b: any) => JSON.stringify(b.messages ?? b.input ?? []).includes('【皇上口谕】'));
+    const answered = ((await inv('snapshot')) as any).annotations.some((a: any) => a.oral && a.taskId === o.taskId && a.response);
+    ok('官员下一步读到【皇上口谕】并回应', read && answered, `read=${read} answered=${answered}`);
+    await win.click('[data-testid=new-edict-mode]').catch(() => null);
+    ok('可以切回「新下旨意」', (await win.locator('[data-testid=composer-send]').count()) === 1 || to.state === 'Done');
+    // leave nothing behind for the next section (a worktree edict at 结案 opens its merge dialog)
+    await inv('cancel', o.taskId, 'e2e 结束').catch(() => null);
+    await win.evaluate(() => (window as any).__edictUI.setUI({ selectedTaskId: null }));
+    await win.keyboard.press('Escape');
+    await win.waitForTimeout(300);
+  }
+
   if (want('lanes')) {
     // 2.1 客卿 and 排班: a fake ACP agent on the 外部智能体 page, 排班 on the plan card, the 比试 page, pick a lane
     const FAKE = path.resolve('tests/fixtures/fake-acp-agent.mjs');
@@ -864,6 +949,127 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     ok('方案卡上标出排班结果', ((await win.textContent('[data-testid=plan-lanes-S1]').catch(() => '')) ?? '').includes('采用甲路'));
     ok('奏折里有「排班比试」', ((await inv('memorialMarkdown', r.taskId)) as string).includes('排班比试'));
     await inv('updateSettings', { permissionMode: 'auto', planGate: { lite: false, full: true } });
+    await inv('setWorkspace', ws);
+  }
+
+  // ── 细问: 中书省 asks before planning; answers, 问答纪要, then a late answer that sends work back
+  if (want('grill')) {
+    // a dialog left open by the section before (e.g. the worktree merge dialog) would cover the task pane
+    for (let i = 0; i < 3 && (await win.locator('.modal-backdrop').count()); i++) {
+      if (await win.locator('[data-testid=wt-later]').count()) await win.click('[data-testid=wt-later]');
+      else await win.keyboard.press('Escape');
+      await win.waitForTimeout(300);
+    }
+    // a plain folder (not a git repo), so no worktree merge dialog at 结案; the built-in court, not a copied design
+    const gws = fs.mkdtempSync('/tmp/edict-e2e2-grill-');
+    await inv('setWorkspace', gws);
+    await inv('updateSettings', { grillAsk: true, permissionMode: 'auto', askTimeoutMin: 0, finalGate: false, defaultDesign: 'edict-court' });
+    await win.evaluate(() => (window as any).__openSettings('permissions'));
+    await win.waitForSelector('[data-testid=grill-ask]', { timeout: 5000 });
+    ok('设置里有「规划前细问」开关', (await win.locator('[data-testid=grill-ask]').count()) === 1);
+    await shot('49-settings-grill-ask');
+    await win.keyboard.press('Escape');
+    await win.waitForTimeout(300);
+    await win.evaluate(() => (window as any).__edictUI.setUI({ composerHidden: false, mode: 'workbench' }));
+    await win.check('[data-testid=composer] .switch input[type=checkbox]');
+    await win.click('[data-testid=composer] .tier-seg button:has-text("Court Lite")');
+    await win.waitForTimeout(200);
+    ok('下旨框有「这道不必问」（Solo 不显示）', (await win.locator('[data-testid=composer] [data-testid=no-grill]').count()) === 1);
+    const r: any = await inv('submit', { text: 'GRILLTEST 写一个 greet 函数并测试', tier: 'lite', multiAgent: true, forceEdict: true });
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ mode: 'workbench', selectedTaskId: id }), r.taskId);
+    await win.waitForSelector('[data-testid=grill-card]', { timeout: 30000 });
+    const cardText = (await win.textContent('[data-testid=grill-card]')) ?? '';
+    ok('Court Lite 下旨后中书省先细问：问题带推荐答案，查到的事实请皇上确认', cardText.includes('问候语用中文还是英文') && cardText.includes('推荐') && (await win.locator('[data-testid=grill-f-F1]').count()) === 1, cardText.slice(0, 80));
+    const t0: any = await waitTask((x) => x.id === r.taskId);
+    ok('细问由中书省来问，问清之前还没有方案', t0.state === 'Zhongshu' && !t0.planHistory.length && t0.grill?.by === 'zhongshu' && t0.grill.status === 'waiting');
+    await shot('50-grill-round');
+    await win.click('[data-testid=grill-answer]');
+    await win.waitForTimeout(300);
+    ok('事实没确认不能交卷', (await win.locator('[data-testid=grill-card]').count()) === 1);
+    await win.click('[data-testid=grill-opt-Q1-1]');
+    await win.click('[data-testid=grill-f-F1-fix]');
+    await win.fill('[data-testid=grill-f-F1-text]', '工作区里已有 index.html，没有 greet.js');
+    await win.click('[data-testid=grill-answer]');
+    await win.waitForSelector('[data-testid=grill-minutes]', { timeout: 20000 });
+    ok('答完一轮，中书省呈上问答纪要', ((await win.textContent('[data-testid=grill-minutes]')) ?? '').includes('中文「你好」'));
+    await shot('51-grill-minutes');
+    await win.click('[data-testid=grill-minutes] [data-testid=grill-ok]');
+    const t1: any = await waitTask((x) => x.id === r.taskId && ['Done', 'Blocked'].includes(x.state), 40000);
+    const g1 = t1.grill;
+    ok('准了纪要后照纪要规划并办完', t1.state === 'Done' && g1?.ended === 'confirmed' && g1.questions[0].answer === '中文 你好' && g1.questions[0].how === 'option' && g1.facts[0].status === 'corrected', `${t1.state} ${t1.blockedReason ?? ''}`);
+    const planCall = mock.calls.find((c) => c.system.includes('你是中书省') && c.lastUser.includes('GRILLTEST') && !c.lastUser.includes('【细问】') && c.lastUser.includes('【细问纪要】'));
+    const execCall = mock.calls.find((c) => c.system.includes('兵部尚书') && c.lastUser.includes('GRILLTEST'));
+    ok('规划和各部的提示里都带着细问纪要', !!planCall && !!execCall?.lastUser.includes('【细问纪要】') && execCall!.lastUser.includes('中文「你好」'));
+    await win.waitForSelector('[data-testid=grill-panel]', { timeout: 5000 });
+    await win.click('[data-testid=grill-panel-toggle]');
+    ok('旨意页有「细问纪要」：问了几轮、怎么定的', ((await win.textContent('[data-testid=grill-panel]')) ?? '').includes('皇上准了纪要'));
+    await shot('52-grill-panel');
+    ok('奏折里有「细问纪要」', ((await inv('memorialMarkdown', r.taskId)) as string).includes('细问纪要'));
+
+    // 全自动, nobody answers: the recommendations stand for now, the questions stay open; a late answer reworks
+    await inv('updateSettings', { askTimeoutMin: 0.03, finalGate: true });
+    const r2: any = await inv('submit', { text: 'GRILLTEST 再写一个 greet 函数并测试', tier: 'lite', multiAgent: true, forceEdict: true });
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ mode: 'workbench', selectedTaskId: id }), r2.taskId);
+    const t2: any = await waitTask((x) => x.id === r2.taskId && (x.gate?.kind === 'final' || x.state === 'Blocked'), 40000);
+    ok('全自动无人答复：按推荐答案先办，问题留着', t2.gate?.kind === 'final' && t2.grill?.ended === 'timeout' && t2.grill.questions[0].how === 'timeout' && t2.grill.facts[0].status === 'unconfirmed', `${t2.state} ${t2.grill?.ended}`);
+    await win.waitForSelector('[data-testid=grill-late-open]', { timeout: 5000 });
+    await win.click('[data-testid=grill-late-open]');
+    await win.waitForSelector('[data-testid=grill-late]');
+    await win.click('[data-testid=grill-late] [data-testid=grill-opt-Q1-1]');
+    await win.click('[data-testid=grill-late] [data-testid=grill-f-F1-ok]');
+    await shot('53-grill-late');
+    const execBefore = t2.nodes.filter((n: any) => n.kind === 'exec').length;
+    await win.click('[data-testid=grill-late-submit]');
+    const t3: any = await waitTask((x) => x.id === r2.taskId && x.nodes.filter((n: any) => n.kind === 'exec').length > execBefore && (x.gate?.kind === 'final' || x.state === 'Blocked'), 40000);
+    const reworkCall = mock.calls.find((c) => c.system.includes('兵部尚书') && c.lastUser.includes('皇上补答细问'));
+    ok('补答后已办的部分返工调整，再呈御批', t3.gate?.kind === 'final' && t3.grill.questions[0].answer === '中文 你好' && !!t3.grill.questions[0].lateAt && !!reworkCall, `${t3.state} ${t3.blockedReason ?? ''}`);
+    await inv('decideGate', r2.taskId, { approve: true });
+    // 这道不必问
+    const r3: any = await inv('submit', { text: 'GRILLTEST 写一个不必问的 greet', tier: 'lite', multiAgent: true, forceEdict: true, noGrill: true });
+    const t4: any = await waitTask((x) => x.id === r3.taskId && (x.gate?.kind === 'final' || ['Done', 'Blocked'].includes(x.state)), 40000);
+    ok('勾「这道不必问」：不细问，直接规划', !t4.grill && t4.noGrill === true && t4.planHistory.length > 0);
+    if (t4.gate?.kind === 'final') await inv('decideGate', r3.taskId, { approve: true });
+    await inv('updateSettings', { grillAsk: false, askTimeoutMin: 10, finalGate: false });
+    await inv('setWorkspace', ws);
+  }
+
+  // ── 预算不限、「不限预算，跑完为止」
+  if (want('budget')) {
+    for (let i = 0; i < 3 && (await win.locator('.modal-backdrop').count()); i++) {
+      if (await win.locator('[data-testid=wt-later]').count()) await win.click('[data-testid=wt-later]');
+      else await win.keyboard.press('Escape');
+      await win.waitForTimeout(300);
+    }
+    const bws = fs.mkdtempSync('/tmp/edict-e2e2-budget-');
+    await inv('setWorkspace', bws);
+    await inv('updateSettings', { grillAsk: false, finalGate: false, defaultDesign: 'edict-court' });
+    await win.evaluate(() => (window as any).__openSettings('runtime'));
+    await win.waitForSelector('[data-testid=budget-lite]');
+    ok('运行策略写明预算填 0 = 不限', ((await win.textContent('[data-testid=settings-runtime]')) ?? '').includes('填 0 = 不限，跑完为止'));
+    await win.fill('[data-testid=budget-lite]', '0');
+    await win.keyboard.press('Tab');
+    await win.waitForTimeout(400);
+    const s0: any = await inv('snapshot');
+    ok('预算填 0 保存为不限', s0.settings.budgets.lite === 0 && ((await win.textContent('[data-testid=settings-runtime] .runp-tiers')) ?? '').includes('不限'), JSON.stringify(s0.settings.budgets));
+    await shot('54-budget-unlimited-setting');
+    const keep = s0.settings.budgets;
+    await inv('updateSettings', { budgets: { ...keep, lite: 600 } });
+    await win.keyboard.press('Escape');
+    await win.waitForTimeout(300);
+
+    const r: any = await inv('submit', { text: 'BUDGETTEST 写一个 greet 函数并测试', tier: 'lite', multiAgent: true, forceEdict: true });
+    await win.evaluate((id) => (window as any).__edictUI.setUI({ mode: 'workbench', selectedTaskId: id }), r.taskId);
+    await waitTask((x) => x.id === r.taskId && x.gate?.kind === 'budget', 40000);
+    await win.waitForSelector('[data-testid=gate-card] [data-testid=gate-unlimited]', { timeout: 10000 });
+    ok('预算超限卡片有「不限预算，跑完为止」', ((await win.textContent('[data-testid=gate-card]')) ?? '').includes('不限预算，跑完为止'));
+    await shot('55-budget-gate-unlimited');
+    await win.click('[data-testid=gate-card] [data-testid=gate-unlimited]');
+    const t1: any = await waitTask((x) => x.id === r.taskId && ['Done', 'Blocked'].includes(x.state), 40000);
+    ok('点了以后这道旨意不限 Token 和费用，一直跑到办完', t1.state === 'Done' && t1.budget.maxTokens === 0 && t1.budget.maxCostUsd === 0, `${t1.state} ${JSON.stringify(t1.budget)}`);
+    const ul = (await win.textContent('[data-testid=usage-line]').catch(() => '')) ?? '';
+    ok('用量一行显示「预算不限」，不再写「/ 0」', ul.includes('预算不限') && !ul.includes('/ 0'), ul.slice(0, 60));
+
+    await inv('updateSettings', { budgets: keep });
     await inv('setWorkspace', ws);
   }
 
