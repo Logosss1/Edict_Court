@@ -1,8 +1,8 @@
-// Generate placeholder pixel art (stage 1 of the art pipeline).
+// Generate the pixel art: characters, props and the code-drawn scenes.
 // Spec lock (2× detail): scenes 1280×720 shown at half scale over the 640×360 world · characters
 // 64×96 frames (shown at 32×48 world units) · Tang48 palette, ≤48 colours per scene · uniform 1px
 // ink outline · light from top-left · frame layout shared with the runtime via anims.json.
-// Formal art (stage 2) replaces these files 1:1 — see docs/ART_PIPELINE.md.
+// Scene modules and their interface: scripts/pixel/td/SPEC.md.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
