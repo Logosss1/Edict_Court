@@ -152,10 +152,9 @@ npm run package:mac      # 组装 Edict.app（arm64）、ad-hoc 签名、生成 
 
 ## 文档
 
-- [docs/STATUS.md](docs/STATUS.md) — 现状盘点、交付清单、已知限制
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 运行时、状态机、编排、Token 经济性
+- [docs/STATUS.md](docs/STATUS.md) — 现状与已知限制
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 运行时、状态机、编排、像素场景生成
 - [docs/SECURITY.md](docs/SECURITY.md) — 权限、路径边界、数据位置、外发范围
-- [docs/ART_PIPELINE.md](docs/ART_PIPELINE.md) — 像素美术规格与场景生成
 - [docs/TESTING.md](docs/TESTING.md) — 测试与验证方法
 
 ## 许可证

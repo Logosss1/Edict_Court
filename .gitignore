@@ -6,3 +6,4 @@ out/
 .DS_Store
 release/
 deps/
+docs/screenshots/e2e-*.json
