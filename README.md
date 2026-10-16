@@ -49,7 +49,7 @@ The Chancellery cannot be bypassed: there is no path from planning to execution 
 
 A file tree, Monaco editor with diagnostics, project-wide search and replace, an integrated terminal, a problems panel and Git. Edict uses the language servers already installed on your Mac. A sandboxed preview runs generated web pages, and officials test their own pages in it. The Kanban board has a lane for everything waiting on you. The edict pane on the right can be collapsed to a thin bar (⌘⌥B) that still shows how many things wait on you.
 
-| Kanban | Editor | Web preview |
+| Dashborad | Editor | Web preview |
 |---|---|---|
 | ![Kanban](docs/screenshots/04-kanban.png) | ![Editor](docs/screenshots/05-editor-problems.png) | ![Web preview](docs/screenshots/33-html-preview.png) |
 
