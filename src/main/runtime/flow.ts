@@ -11,11 +11,13 @@ import { ALL_TOOLS, READ_TOOLS, type ToolName } from './tools';
 import { TaskAbortedError, type Runtime } from './runtime';
 import { extractJson, now, sha256, truncate } from './util';
 import {
-  block, ensureNode, guidance, otherDoing, parseConclusion, parseVerdict, repoContext, runNode, summarizeChanges, validatePlan, drive,
-  type GateDecision,
+  block, deviationsText, ensureNode, guidance, opinionLines, otherDoing, parseConclusion, parseVerdict, reReviewText, repoContext, runNode, suggestionsText, summarizeChanges, validatePlan, drive,
+  VERDICT_FORMAT, type GateDecision, type Verdict,
 } from './orchestrator';
 import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt, scheduleExec, toolsForNode } from './execPolicy';
 import { CHECK_TOOLS, REQUIREMENTS_PROMPT, ownedRequirementsText, runRequirementCheck, supplementPlan, unmetRequirements, unmetText, withRequirements } from './requirements';
+import { edictBlock } from './oral';
+import { grillStep, takeLateRework } from './grill';
 
 type Outcome = { kind: 'next' } | { kind: 'wait' } | { kind: 'goto'; to: string; rework?: string[]; feedback?: string };
 
@@ -96,7 +98,7 @@ function context(t: Task, s: StepSpec): string {
 }
 
 function header(t: Task, s: StepSpec) {
-  return [`【旨意】${t.title}\n${truncate(t.edict, 3000)}`, `【本步骤：${s.label}】\n${s.instruction}`];
+  return [edictBlock(t, 3000), `【本步骤：${s.label}】\n${s.instruction}`];
 }
 
 // ───────────────────────── driver ─────────────────────────
@@ -107,6 +109,7 @@ export async function flowStep(rt: Runtime, t: Task): Promise<boolean> {
     if (!t.gate) rt.setGate(t, { kind: 'final', message: '请御览回奏与改动：准奏则结案，封驳则发回返工' });
     return false;
   }
+  if (lateRework(rt, t)) return true;
   if (r.cursor >= d.steps.length) return finish(rt, t);
   const group = groupAt(d, r.cursor);
   if (!moveTo(rt, t, PHASE_STATE[group[0].phase], `进入「${group[0].label}」`)) return false;
@@ -132,6 +135,21 @@ export async function flowStep(rt: Runtime, t: Task): Promise<boolean> {
   }
   r.cursor += group.length;
   rt.touch(t);
+  return true;
+}
+
+/** A late 细问 answer after the fan-out had started: back to the fan-out for the subtasks that began before it. */
+function lateRework(rt: Runtime, t: Task): boolean {
+  if (!t.grill?.lateRework) return false;
+  const d = spec(t);
+  const r = run(t);
+  const fanIdx = d.steps.map((x, i) => (x.type === 'fanout' && i < r.cursor ? i : -1)).filter((i) => i >= 0).at(-1);
+  if (fanIdx === undefined) return false; // not executed yet: the work starts from the answer anyway
+  const fan = d.steps[fanIdx];
+  const late = takeLateRework(rt, t, (id) => latestNode(t, fan.id, (n) => n.subtaskId === id));
+  if (!late) return false;
+  jump(rt, t, { ...d.steps[Math.min(r.cursor, d.steps.length - 1)], role: undefined }, fan.id, late.ids, late.feedback);
+  rt.activity('human', `皇上补答细问，${late.ids.join('、')} 返工调整`, { taskId: t.id });
   return true;
 }
 
@@ -202,7 +220,14 @@ async function agentStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
   await runNode(rt, t, node, async () => {
     const tools = toolsFor(rt, t, role);
     const parts = [...header(t, s), context(t, s)];
-    if (s.type === 'summary') parts.push(`【系统核验的文件改动】\n${summarizeChanges(t) || '无'}`);
+    if (s.type === 'summary') {
+      parts.push(`【系统核验的文件改动】\n${summarizeChanges(t) || '无'}`);
+      const fan = spec(t).steps.filter((x) => x.type === 'fanout').map((x) => x.id);
+      const plan = t.plan;
+      const dev = deviationsText((plan?.subtasks ?? []).map((st) => [...t.nodes].reverse().find((n) => fan.includes(n.stepId ?? '') && n.subtaskId === st.id && n.status === 'done')));
+      if (dev) parts.push(dev);
+      parts.push('回奏要有「## 与旨意的出入」一节：做法和旨意字面不同、但没违背硬要求的地方写在这里（没有就写「无」）。');
+    }
     if (tools) parts.push(repoContext(rt, t));
     parts.push(guidance(rt, t));
     if (s.output === 'conclusion') parts.push(EXEC_OUTPUT_RULE);
@@ -222,6 +247,11 @@ const executorMap = (t: Task, s: StepSpec) => Object.fromEntries((s.executors ??
 
 async function planStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
   const role = roleOf(spec(t), s.role)!;
+  // 细问: this step's role asks the emperor before the first plan of the edict
+  if (!t.planHistory.length) {
+    const tools = toolsFor(rt, t, role)?.filter((x) => READ_TOOLS.includes(x));
+    if ((await grillStep(rt, t, { by: role.avatar, name: role.name, roleId: role.id, role: roleRun(t, role), tools: tools?.length ? tools : undefined })) === 'wait') return { kind: 'wait' };
+  }
   const node = nodeFor(t, s, 'plan');
   if (node.status === 'done') return { kind: 'next' };
   const allowed = executorMap(t, s);
@@ -232,7 +262,7 @@ async function planStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
     const parts = [...header(t, s), context(t, s), tools ? repoContext(rt, t) : '', guidance(rt, t)];
     if (prev && lastRej && lastRej.at > prev.at) {
       parts.push(`【上一版方案 v${prev.version}】\n${JSON.stringify(prev.plan, null, 1)}`);
-      parts.push(`【${lastRej.reviewer === 'emperor' ? '皇上' : '审议'}封驳意见（第 ${lastRej.round} 轮）】\n${lastRej.comment}\n${lastRej.issues.map((i, k) => `${k + 1}. ${i}`).join('\n')}\n必须逐条修正。`);
+      parts.push(`【${lastRej.reviewer === 'emperor' ? '皇上' : '审议'}封驳意见（第 ${lastRej.round} 轮）】\n${lastRej.comment}\n${lastRej.issues.map((i, k) => `${k + 1}. ${i}`).join('\n')}\n以上必改须逐条修正。${lastRej.suggestions?.length ? `\n建议（可参考，不强求）：\n${lastRej.suggestions.map((i) => `- ${i}`).join('\n')}` : ''}`);
     }
     parts.push(`【可分派的执行角色】\n${(s.executors ?? []).map((id) => `- ${id}：${allowed[id]}（${roleOf(spec(t), id)?.duty ?? ''}）`).join('\n')}`);
     const withReq = spec(t).steps.some((x) => x.type === 'check' && x.planStep === s.id);
@@ -262,12 +292,12 @@ async function reviewStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
   const target = d.steps.find((x) => x.id === s.onReject!.goto)!;
   const stage: 'plan' | 'result' = target.type === 'plan' ? 'plan' : 'result';
   const node = nodeFor(t, s, stage === 'plan' ? 'review' : 'result_review');
-  let verdict: ReturnType<typeof parseVerdict> = null;
+  let verdict: Verdict | null = null;
   if (node.status === 'done') {
     // restart / re-entry: re-derive the outcome from the recorded verdict
     try {
       const j = JSON.parse(node.output ?? '{}');
-      if (j.verdict) verdict = j;
+      if (j.verdict) verdict = { suggestions: [], issues: [], rework: [], comment: '', ...j };
     } catch {
       /* fall through */
     }
@@ -276,18 +306,20 @@ async function reviewStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
     await runNode(rt, t, node, async () => {
       const prior = t.reviews.filter((x) => x.stage === stage);
       const tools = toolsFor(rt, t, role, ['view_changes']);
+      const format = stage === 'result' ? `${VERDICT_FORMAT.slice(0, -1)},"rework":["需返工的子任务 id"]}` : VERDICT_FORMAT;
       const parts = [
         ...header(t, s),
         context(t, s),
         prior.length ? `【此前审议】\n${prior.map((x) => `第${x.round}轮 ${x.verdict === 'approve' ? '准奏' : '封驳'}：${x.comment}`).join('\n')}` : '',
+        reReviewText([...prior].reverse().find((x) => x.verdict === 'reject')),
         guidance(rt, t),
         stage === 'result' ? `【系统核验的文件改动】\n${summarizeChanges(t) || '无'}` : '',
-        `这是第 ${iterOf(t, s.id)} 轮审议（封驳上限 ${s.onReject!.max} 次，超限将升级皇上裁决）。只输出 JSON：{"verdict":"approve"|"reject","issues":[],"comment":"","rework":[${stage === 'result' ? '"需返工的子任务 id"' : ''}]}`,
+        `这是第 ${iterOf(t, s.id)} 轮审议（封驳上限 ${s.onReject!.max} 次，超限将升级皇上裁决）。意见分两种：必改（偏离旨意重点、做不出来、漏了旨意或问答纪要里的要求、安全风险）和建议（其余一切）。只有必改才封驳；和旨意字面不同但达到目的的，不算必改。只输出 JSON：${format}`,
       ];
       const r = await runAgent({ rt, agentId: role.avatar, role: roleRun(t, role), task: t, node, prompt: parts.filter(Boolean).join('\n\n'), tools, maxSteps: tools ? 6 : 1, maxTokens: 1500, temperature: 0.2, label: node.label });
       verdict = parseVerdict(r.text);
       if (!verdict) {
-        const r2 = await runAgent({ rt, agentId: role.avatar, role: roleRun(t, role), task: t, node, history: r.messages, prompt: '请只输出审议结论 JSON：{"verdict":"approve"|"reject","issues":[],"comment":"","rework":[]}', maxTokens: 800, temperature: 0, label: `${role.name}修正格式` });
+        const r2 = await runAgent({ rt, agentId: role.avatar, role: roleRun(t, role), task: t, node, history: r.messages, prompt: `请只输出审议结论 JSON：${format}`, maxTokens: 800, temperature: 0, label: `${role.name}修正格式` });
         verdict = parseVerdict(r2.text);
       }
       return JSON.stringify(verdict ?? { error: '审议结论无法解析' });
@@ -297,12 +329,12 @@ async function reviewStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
     rt.setGate(t, { kind: 'reject_limit', message: `${role.name}的审议结论无法解析，关卡不可跳过——请皇上亲自裁决（准奏 / 封驳）`, nodeId: node.id });
     return { kind: 'wait' };
   }
-  const v = verdict as NonNullable<ReturnType<typeof parseVerdict>>;
+  const v = verdict as Verdict;
   const round = t.reviews.filter((x) => x.stage === stage).length + 1;
-  t.reviews.push({ round, stage, verdict: v.verdict, issues: v.issues, comment: v.comment, reviewer: 'menxia', at: now() });
+  t.reviews.push({ round, stage, verdict: v.verdict, issues: v.issues, ...(v.suggestions?.length ? { suggestions: v.suggestions } : {}), comment: v.comment, reviewer: 'menxia', at: now() });
   run(t).lastReview = { ...(run(t).lastReview ?? {}), [s.id]: node.id };
-  rt.audit.record(role.avatar, `${stage}_${v.verdict === 'approve' ? 'approved' : 'rejected'}`, { round, step: s.id, role: role.id, issues: v.issues, comment: v.comment, rework: v.rework }, t.id);
-  rt.activity('log', `${role.name}${v.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'}：${v.comment}${v.issues.length ? '\n' + v.issues.map((i) => '· ' + i).join('\n') : ''}`, { taskId: t.id, agentId: role.avatar, nodeId: node.id, data: { verdict: v.verdict } });
+  rt.audit.record(role.avatar, `${stage}_${v.verdict === 'approve' ? 'approved' : 'rejected'}`, { round, step: s.id, role: role.id, issues: v.issues, suggestions: v.suggestions, comment: v.comment, rework: v.rework }, t.id);
+  rt.activity('log', `${role.name}${v.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'}：${v.comment}${opinionLines(v)}`, { taskId: t.id, agentId: role.avatar, nodeId: node.id, data: { verdict: v.verdict } });
   rt.touch(t);
   if (v.verdict === 'approve') {
     if (s.gate === 'plan') {
@@ -317,7 +349,7 @@ async function reviewStep(rt: Runtime, t: Task, s: StepSpec): Promise<Outcome> {
     rt.setGate(t, { kind: 'reject_limit', message: `${role.name}已封驳 ${r.rejections[s.id]} 次，超出上限 ${s.onReject!.max}，请皇上裁决`, nodeId: node.id });
     return { kind: 'wait' };
   }
-  return { kind: 'goto', to: target.id, rework: v.rework, feedback: [v.comment, ...v.issues].filter(Boolean).join('\n') };
+  return { kind: 'goto', to: target.id, rework: v.rework, feedback: [v.comment, ...v.issues.map((i) => `必改：${i}`), ...(v.suggestions ?? []).map((i) => `建议（参考）：${i}`)].filter(Boolean).join('\n') };
 }
 
 const lastAppliedReview = (t: Task, s: StepSpec) => run(t).lastReview?.[s.id];
@@ -370,10 +402,11 @@ async function execSubtask(rt: Runtime, t: Task, s: StepSpec, plan: Plan, node: 
     const prev = latestNode(t, s.id, (n) => n.subtaskId === sub.id && n.id !== node.id);
     const tools = toolsForNode(node, baseTools);
     const parts = [
-      `【旨意】${t.title}\n${truncate(t.edict, 3000)}`,
+      edictBlock(t, 3000),
       `【方案概述】${plan.summary}`,
       `【你的子任务 ${sub.id}】${sub.title}\n做法：${sub.detail}\n验收标准：${sub.acceptance}`,
       ownedRequirementsText(plan, sub),
+      suggestionsText(t),
       // context: explicit inputs, or by default the dispatch-phase steps (e.g. 尚书执行令) before this fan-out
       context(t, { ...s, inputs: (s.inputs ?? d.steps.slice(0, d.steps.findIndex((x) => x.id === s.id)).filter((x) => x.phase === 'dispatch').map((x) => x.id)).filter((x) => x !== s.planStep) }),
       deps.length ? `【上游子任务结论】\n${deps.join('\n')}` : '',

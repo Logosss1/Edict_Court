@@ -130,6 +130,7 @@ for (const tier of ['lite', 'full'] as const) {
   test(`copied 三省六部 (${tier}) runs on the interpreter with the same court flow, gates and loops`, async () => {
     const mock = await startMockLlm({ rejectPlanTimes: 1 });
     const rt = makeRuntime(mock.url);
+    rt.updateSettings({ planGate: { lite: false, full: true } }); // 方案御览 is off by default since 细问; this test covers the gate
     const ws = tmpDir('edict-ws-');
     rt.setWorkspace(ws);
     const d = rt.designs.copy(BUILTIN_DESIGN_ID, { tier });
@@ -151,7 +152,9 @@ for (const tier of ['lite', 'full'] as const) {
     assert.equal(t.nodes.filter((n) => n.kind === 'exec' && n.status === 'done').length, 2);
     if (tier === 'full') {
       assert.ok(t.nodes.some((n) => n.kind === 'dispatch' && n.status === 'done'));
-      assert.ok(t.nodes.some((n) => n.kind === 'result_review' && n.status === 'done'));
+      // 对照检查 is on: it is the one review of the result, so the copy has no 门下审议成果 step
+      assert.ok(t.nodes.some((n) => n.kind === 'check' && n.status === 'done'));
+      assert.ok(!t.nodes.some((n) => n.kind === 'result_review'));
     }
     // final 封驳 → rework of S1 only → final gate again
     decideGate(rt, r.taskId, { approve: false, comment: '再加一行注释', reworkTargets: ['S1'] });

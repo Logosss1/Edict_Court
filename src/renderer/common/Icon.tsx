@@ -50,6 +50,7 @@ const P: Record<string, string> = {
   flag: 'M5 21V4M5 4h11l-2 4 2 4H5',
   panel: 'M3 4h18v16H3zM3 15h18',
   sidebar: 'M3 4h18v16H3zM9 4v16',
+  sidebarRight: 'M3 4h18v16H3zM15 4v16',
   refresh: 'M20 11a8 8 0 0 0-14-5l-2 2M4 13a8 8 0 0 0 14 5l2-2M4 4v4h4M20 20v-4h-4',
   pin: 'M12 17v5M8 3h8l-1 7 3 3H6l3-3z',
   mail: 'M3 5h18v14H3zM3 6l9 7 9-7',
@@ -75,6 +76,10 @@ const P: Record<string, string> = {
   merge: 'M6 3v18M6 9a3 3 0 1 0 0-.01M18 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 9c0 5 4 6 9 7',
   filter: 'M3 5h18l-7 8v6l-4 2v-8z',
   dots: 'M5 12h.01M12 12h.01M19 12h.01',
+  thermometer: 'M14 14.8V5a2 2 0 0 0-4 0v9.8a4 4 0 1 0 4 0zM12 9v7',
+  target: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 11a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
+  repeat: 'M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4',
+  ban: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM5.6 5.6l12.8 12.8',
 };
 
 export function Icon({ name, size = 16, style, className, stroke = 1.8 }: { name: string; size?: number; style?: CSSProperties; className?: string; stroke?: number }) {

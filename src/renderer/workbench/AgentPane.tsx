@@ -1,6 +1,6 @@
 // Agent pane: task switcher, live activity, gates, and the 下旨 composer.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore, setUI, selectTask, openTaskTab, openPanel, toast, getState } from '../store';
+import { useStore, setUI, setAgentPaneHidden, selectTask, openTaskTab, openPanel, toast, getState } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
@@ -14,6 +14,7 @@ import { tip } from '../common/Tip';
 import { GateCard, ModelErrorCard, Pipeline, TaskControls, UsageLine, failedModelNode, revertTaskChanges, useSelectedTask } from '../panels/TaskWidgets';
 import { OtherPendingNotice, PendingChoices } from './ChoiceCard';
 import { PlanCard } from './PlanCard';
+import { GrillPanel } from './GrillCard';
 import { openWorktreeDialog, worktreeLabel } from './WorktreeDialog';
 import { useMcpPicker } from './McpPicker';
 
@@ -45,6 +46,9 @@ export function AgentPane() {
             <Icon name="crown" size={14} />
           </button>
         )}
+        <button className="icon-btn" {...tip('收起旨意面板', '把右边这一栏收成一条窄边，编辑区更宽；点窄边或再按快捷键展开', '⌘⌥B', 'below')} onClick={() => setAgentPaneHidden(true)} data-testid="agent-pane-hide">
+          <Icon name="sidebarRight" size={14} />
+        </button>
       </div>
       {pickerOpen && (
         <div className="ap-picklist" onMouseLeave={() => setPickerOpen(false)}>
@@ -91,7 +95,7 @@ export function AgentPane() {
           {task.state === 'Blocked' && failedModelNode(task) && <ModelErrorCard task={task} node={failedModelNode(task)!} />}
           {task.gate && <GateCard key={task.gate.since} task={task} />}
           <div className="ap-stream">
-            <ActivityStream taskId={task.id} header={<PlanCard task={task} />} footer={<PendingChoices taskId={task.id} />} />
+            <ActivityStream taskId={task.id} header={<><GrillPanel task={task} /><PlanCard task={task} /></>} footer={<PendingChoices taskId={task.id} />} />
           </div>
           <OtherPendingNotice taskId={task.id} />
           {task.state === 'Done' && task.result?.summary && task.tier === 'solo' && null}
@@ -164,6 +168,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   const custom = !!design && !design.native;
   const setDesignId = (v: string) => void call('updateSettings', { defaultDesign: v });
   const [force, setForce] = useState(false);
+  const [noGrill, setNoGrill] = useState(false);
   const [cont, setCont] = useState(false);
   const [busy, setBusy] = useState(false);
   const [est, setEst] = useState<{ tokens: number; costUsd: number; breakdown: string } | null>(null);
@@ -171,6 +176,11 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   const mcpPick = useMcpPicker(text, setText, ta); // `/` MCP prompts, `@` MCP resources
   const effTier: Tier = custom ? 'lite' : multi ? tier : 'solo';
   const canContinue = !!selected && selected.tier === 'solo' && !!selected.sessionId && effTier === 'solo';
+  // 口谕: while the selected edict is still being worked on, the box talks to it instead of starting a new one
+  const live = variant === 'pane' && !!selected && !TERMINAL.includes(selected.state);
+  const [oralPick, setOralPick] = useState<boolean | null>(null);
+  useEffect(() => setOralPick(null), [selected?.id]);
+  const oral = live && (oralPick ?? true);
 
   useEffect(() => {
     const draft = (window as unknown as { __edictDraft?: string }).__edictDraft;
@@ -196,9 +206,24 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
 
   const models = providers.flatMap((p) => p.models.map((m) => ({ key: `${p.id}::${m.id}`, label: `${m.label || m.id}`, provider: p.name })));
 
+  const sendOral = async (t: string) => {
+    setBusy(true);
+    try {
+      const r = await call<{ to: string[]; waiting?: 'paused' | 'gate' | 'blocked' | 'idle' }>('oralOrder', selected!.id, t);
+      setText('');
+      const next = { paused: '旨意已叫停，恢复后官员会先读到', gate: '旨意正等你御批，下一位开工的官员会先读到；也可以直接在御批卡片里批示', blocked: '旨意阻塞中，重试或继续后官员会先读到', idle: '下一位开工的官员会先读到并照办' } as const;
+      toast(r.to.length ? `口谕已送达 ${r.to.join('、')}，下一步就会照办` : `口谕已记下：${next[r.waiting ?? 'idle']}`, 'success');
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const send = async () => {
     const t = text.trim();
     if (!t || busy) return;
+    if (oral) return sendOral(t);
     if (!providers.length) {
       toast('请先在「模型配置」中添加模型服务', 'warn');
       openPanel('models');
@@ -208,9 +233,10 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
     try {
       const r = await call<{ kind: 'chat'; sessionId: string; reply: string } | { kind: 'task'; taskId: string }>('submit', {
         text: t, tier, multiAgent: custom ? true : multi, model: parseModel(model), effort, forceEdict: force, withDebate: !custom && tier === 'full' ? debate : false, sessionId: canContinue && cont ? selected!.sessionId : undefined,
-        designId: custom ? design!.id : undefined,
+        designId: custom ? design!.id : undefined, noGrill: effTier !== 'solo' && noGrill ? true : undefined,
       });
       setText('');
+      setNoGrill(false);
       if (r.kind === 'chat') {
         selectTask(null);
         setUI({ lastChat: { sessionId: r.sessionId, reply: r.reply } });
@@ -228,7 +254,14 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
   };
 
   return (
-    <div className={`composer ${variant}`} data-testid="composer">
+    <div className={`composer ${variant} ${oral ? 'oral' : ''}`} data-testid="composer">
+      {live && (
+        <div className="oral-switch" role="radiogroup" aria-label="输入框用途">
+          <button role="radio" aria-checked={oral} className={oral ? 'on' : ''} onClick={() => setOralPick(true)} {...tip('传口谕', '对正在办的这道旨意追加指示：正在干活的官员下一步就会读到并照办，后面的审议、对照检查也按口谕来', undefined, 'above')} data-testid="oral-mode">口谕给本旨</button>
+          <button role="radio" aria-checked={!oral} className={!oral ? 'on' : ''} onClick={() => setOralPick(false)} {...tip('新下旨意', '另起一道新的旨意，和正在办的这道无关', undefined, 'above')} data-testid="new-edict-mode">新下旨意</button>
+          {oral && <span className="muted small ellipsis">对「{selected!.title}」</span>}
+        </div>
+      )}
       <div className="mcp-pick-anchor">
       {mcpPick.popup}
       <textarea
@@ -239,7 +272,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
         onSelect={(e) => mcpPick.track(e.currentTarget)}
         onFocus={(e) => mcpPick.track(e.currentTarget, true)}
         onBlur={(e) => mcpPick.track(e.currentTarget, false)}
- placeholder={custom ? `按协同设计「${design!.name}」下旨…（⌘↵ 下旨）` : multi ? '皇上请下旨…（⌘↵ 下旨；闲聊由太子直接回复）' : 'Solo：直接吩咐独相…（⌘↵ 发送）'}
+ placeholder={oral ? '传口谕：比如「不用凑满1万字，现在这样就行，收尾吧」。正在办事的官员下一步就会读到并照办（⌘↵ 发送）' : custom ? `按协同设计「${design!.name}」下旨…（⌘↵ 下旨）` : multi ? '皇上请下旨…（⌘↵ 下旨；闲聊由太子直接回复）' : 'Solo：直接吩咐独相…（⌘↵ 发送）'}
         onKeyDown={(e) => {
           if (mcpPick.onKeyDown(e)) return;
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -250,6 +283,15 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
         rows={3}
       />
       </div>
+      {oral ? (
+        <div className="composer-row">
+          <span className="muted small">口谕不会新建旨意，也不经太子分拣</span>
+          <span style={{ flex: 1 }} />
+          <button className="btn primary send" disabled={busy || !text.trim()} onClick={send} {...tip('传口谕', '交给正在办这道旨意的官员', '⌘↵', 'above')} data-testid="oral-send">
+            <Icon name="send" size={13} /> {busy ? '传达中…' : '传口谕'}
+          </button>
+        </div>
+      ) : (<>
       <div className="composer-row">
         <select className="mini-select" value={model} onChange={(e) => setModel(e.target.value)} {...tip('主模型', 'Solo、中书省、门下省等要动脑的角色用它；太子、六部等粗活用「模型配置」里的经济模型', undefined, 'above')}>
           {!models.length && <option value="">未配置模型</option>}
@@ -286,6 +328,11 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
             <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} /> 直接下旨
           </label>
         )}
+        {effTier !== 'solo' && settings.grillAsk !== false && (
+          <label className="chk small" {...tip('这道不必问', `下旨后，${custom ? '协同设计里负责规划的角色' : '中书省'}会先把旨意向你问清楚再规划；勾上，这一道就不问，直接规划`, undefined, 'above')} data-testid="no-grill">
+            <input type="checkbox" checked={noGrill} onChange={(e) => setNoGrill(e.target.checked)} /> 这道不必问
+          </label>
+        )}
         {canContinue && (
           <label className="chk small" {...tip('续上一会话', '接着上一次的对话继续，AI 记得之前说过的内容', undefined, 'above')}>
             <input type="checkbox" checked={cont} onChange={(e) => setCont(e.target.checked)} /> 续上一会话
@@ -304,6 +351,7 @@ export function Composer({ variant = 'pane' }: { variant?: 'pane' | 'court' }) {
           <Icon name="send" size={13} /> {busy ? '分拣中…' : multi || custom ? '下旨' : '发送'}
         </button>
       </div>
+      </>)}
     </div>
   );
 }
@@ -319,6 +367,7 @@ export function parseModel(key: string): ModelRef | null {
 export function draftToComposer(text: string) {
   (window as unknown as { __edictDraft?: string }).__edictDraft = text;
   setUI({ composerHidden: false, mode: 'workbench' });
+  setAgentPaneHidden(false);
   selectTask(null);
   // remount composer to pick up draft
   setTimeout(() => {

@@ -22,7 +22,7 @@ import { PERMISSION_LABEL } from './runtime/permissions';
 import { LspUnavailableError } from './lsp/manager';
 import { addCanon, canonFromReview, projectRules, removeCanon, updateCanon } from './runtime/canon';
 import { worktreeCreate, worktreeDiffStat, worktreeFinish, worktreeList, worktreeOnDelete, worktreeOpen, worktreeRemove } from './runtime/worktrees';
-import type { WorktreeAction } from '../shared/types';
+import type { GrillAnswer, WorktreeAction } from '../shared/types';
 import { backupNow, backupPath, storageInfo } from './runtime/storage';
 import { saveWebSettings, testSearch, webStatus } from './runtime/webTools';
 import type { SandboxSettings, SearchConfig, SearchProviderKind, WebSettings, WorktreeSetup } from '../shared/types';
@@ -31,6 +31,8 @@ import { saveWorktreeSetup } from './runtime/worktreeSetup';
 import { guestStatuses, removeGuest, saveGuest, setGuestDefaults, testGuest, guestSettingsOf } from './guests';
 import type { GuestConfig, LaneSpec, MinistryId } from '../shared/types';
 import { attemptDiff, chooseAttempt, estimateLanes } from './runtime/attemptRun';
+import { giveOralOrder } from './runtime/oral';
+import { answerGrill, answerGrillLate } from './runtime/grill';
 
 /** Editor-side LSP calls: a missing / disabled server is a normal answer (with install hints), not an error. */
 async function lspSoft<T>(fn: () => Promise<T>): Promise<{ ok: true; result: T } | { ok: false; reason: string; message: string; candidates: { id: string; name: string; hint: string; homepage: string; note?: string }[] }> {
@@ -67,7 +69,7 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     retryNode: (id: string, nodeId: string) => retryNode(rt, id, nodeId),
     retryNodeWithModel: (id: string, nodeId: string, ref: ModelRef) => retryNodeWithModel(rt, id, nodeId, ref),
     unblock: (id: string) => unblock(rt, id),
-    decideGate: (id: string, d: { approve: boolean; comment?: string; plan?: Plan; reworkTargets?: string[] }) => decideGate(rt, id, d),
+    decideGate: (id: string, d: { approve: boolean; comment?: string; plan?: Plan; reworkTargets?: string[]; unlimited?: boolean }) => decideGate(rt, id, d),
     decideApproval: (id: string, approve: boolean, choice?: string, comment?: string) => rt.decideApproval(id, approve, 'emperor', choice, comment),
     removeAllowRule: (root: string, key: string) => rt.removeAllowRule(root, key),
     removeTaskAllowRule: (taskId: string, key: string) => rt.removeTaskAllowRule(taskId, key),
@@ -81,6 +83,10 @@ export function buildApi(rt: Runtime, terminals: TerminalManager, host: ApiHost)
     canonFromReview: (taskId: string, index: number, o?: Parameters<typeof canonFromReview>[3]) => canonFromReview(rt, taskId, index, o),
     projectRules: () => (rt.workspace ? projectRules(rt.workspace) : { files: [], text: '' }),
     annotate: (agentId: AgentId, text: string, taskId?: string) => rt.annotate(agentId, text, taskId),
+    oralOrder: (taskId: string, text: string) => giveOralOrder(rt, taskId, text),
+    // ── 细问
+    answerGrill: (approvalId: string, a: GrillAnswer) => answerGrill(rt, approvalId, a),
+    answerGrillLate: (taskId: string, a: GrillAnswer) => answerGrillLate(rt, taskId, a),
     revertChange: (taskId: string, changeId: string, force?: boolean) => rt.revertChange(taskId, changeId, force),
     /** E3: all of one node's changes, newest first → { reverted, conflicts, skipped }; a conflict reverts nothing */
     revertNode: (taskId: string, nodeId: string, force?: boolean) => rt.revertNode(taskId, nodeId, { force }),

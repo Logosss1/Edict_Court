@@ -16,7 +16,8 @@ import { checkEvidence, confirmWriteTask, effectOf, execBlockReason, grantPrompt
 export { parseConclusion, type ExecConclusion } from './execPolicy';
 import { flowDecideGate, flowStep } from './flow';
 import { canonBlock } from './canon';
-import { askPrince, parsePrinceAsk, princeWaiting, type PrinceAsk } from './askEmperor';
+import { princeWaiting } from './askEmperor';
+import { grillStep, takeLateRework } from './grill';
 import { hasOwnTree, prepareWorkspace } from './worktrees';
 import { scheduleNote } from './scheduler';
 import { worktreeNote } from './worktreeSetup';
@@ -30,6 +31,8 @@ import {
   supplementPlan, uncovered, unmetRequirements, unmetText, withRequirements,
 } from './requirements';
 import { reqLabel } from '../../shared/requirements';
+import { edictBlock } from './oral';
+import { faithBlock } from './faithful';
 
 const drivingByRt = new WeakMap<Runtime, Set<string>>();
 const drivingSet = (rt: Runtime) => {
@@ -57,6 +60,8 @@ export interface SubmitInput {
   sessionId?: string;
   effort?: string; // 思考程度 slider: a level name, 'default' or 'top'
   designId?: string; // 协同设计（缺省 = 内置三省六部）
+  /** 「这道不必问」: no 细问 before planning */
+  noGrill?: boolean;
   /** 定时旨意: the folder it was scheduled for (null = none), its permission mode, and which schedule issued it */
   workspace?: string | null;
   permissionMode?: PermissionMode;
@@ -96,7 +101,6 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
   // 太子分拣
   let title = typed.replace(/\s+/g, ' ').slice(0, 20);
   let triageOutput = '{"type":"edict","reason":"皇上直接下旨"}';
-  let ask: PrinceAsk | null = null; // 太子追问 (never with 直接下旨, and Solo has no prince)
   const session: Session = { id: uid('ss'), title: typed.slice(0, 30), source: 'taizi-chat', agentId: 'taizi', messages: [{ role: 'user', content: text, at: now() }], createdAt: now(), updatedAt: now(), status: 'active', usage: emptyUsage() };
   if (!input.forceEdict) {
     rt.sessions.set(session.id, session);
@@ -104,7 +108,7 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
     const ta = rt.agents.get('taizi');
     if (ta) ta.sessions++;
     const r = await runAgent({ rt, agentId: 'taizi', session, prompt: `皇上输入：\n${text}`, maxTokens: 800, temperature: 0.2, label: '太子分拣' });
-    let j = extractJson<{ type?: string; title?: string; reply?: string; reason?: string; question?: string; options?: string[]; assume?: string }>(r.text);
+    let j = extractJson<{ type?: string; title?: string; reply?: string; reason?: string }>(r.text);
     if (!j) {
       const r2 = await runAgent({ rt, agentId: 'taizi', session, history: r.messages, prompt: '请只输出规定的 JSON 对象。', maxTokens: 600, temperature: 0, label: '太子分拣（格式修正）' });
       j = extractJson(r2.text);
@@ -120,24 +124,21 @@ export async function submit(rt: Runtime, input: SubmitInput): Promise<SubmitRes
       return { kind: 'chat', sessionId: session.id, reply: j.reply };
     }
     if (j?.title) title = String(j.title).slice(0, 40);
-    if (rt.settings.taiziAsk !== false) ask = parsePrinceAsk(j);
-    session.messages.push({ role: 'assistant', content: ask ? `已分拣为旨意：${title}（先向父皇请旨：${ask.question}）` : `已分拣为旨意：${title}`, at: now() });
+    session.messages.push({ role: 'assistant', content: `已分拣为旨意：${title}`, at: now() });
     session.status = 'done';
     rt.emit({ type: 'session', session });
   }
   if (input.schedule) title = input.schedule.title || title;
-  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: pinned ? false : (input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan)), templateId: input.templateId, effort: input.effort, design: pinned, ...scheduled(input) });
+  const task = createTask(rt, { text, tier, title, model: input.model ?? null, withDebate: pinned ? false : (input.withDebate ?? (tier === 'full' && rt.settings.debateBeforePlan)), templateId: input.templateId, effort: input.effort, design: pinned, noGrill: input.noGrill, ...scheduled(input) });
   task.nodes.push({ id: 'triage', kind: 'triage', agentId: 'taizi', label: '太子分拣', status: 'done', attempts: 1, startedAt: now(), endedAt: now(), exitStatus: 'ok', output: triageOutput, usage: session.usage });
   rt.transition(task, 'Taizi', 'taizi', input.schedule ? '定时旨意，直接接旨' : '太子接旨分拣');
-  // the edict waits in 太子分拣 until the emperor answers; the answer drives it on
-  if (ask) askPrince(rt, task, ask);
-  else void drive(rt, task.id);
+  void drive(rt, task.id);
   return { kind: 'task', taskId: task.id };
 }
 
 const scheduled = (i: SubmitInput) => (i.schedule ? { workspace: i.workspace ?? null, permissionMode: i.permissionMode, schedule: i.schedule } : {});
 
-export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string; design?: { pin: DesignPin; spec?: CollabDesign }; workspace?: string | null; permissionMode?: PermissionMode; schedule?: TaskScheduleRef }): Task {
+export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: string; model: ModelRef | null; withDebate?: boolean; sessionId?: string; templateId?: string; effort?: string; design?: { pin: DesignPin; spec?: CollabDesign }; workspace?: string | null; permissionMode?: PermissionMode; schedule?: TaskScheduleRef; noGrill?: boolean }): Task {
   const s = rt.settings;
   const design = o.design ?? rt.designs.pin(BUILTIN_DESIGN_ID);
   const pol = design.spec?.policies;
@@ -152,6 +153,7 @@ export function createTask(rt: Runtime, o: { text: string; tier: Tier; title: st
     estimate: { tokens: est.tokens, costUsd: est.costUsd },
     strongModel: o.model ?? undefined, withDebate: o.withDebate, sessionId: o.sessionId, templateId: o.templateId, effort: o.effort && o.effort !== 'default' ? o.effort : undefined, lastActivityAt: now(), execRound: 1,
     ...(o.schedule ? { schedule: o.schedule, permissionMode: o.permissionMode } : {}),
+    ...(o.noGrill && o.tier !== 'solo' ? { noGrill: true } : {}),
   };
   rt.tasks.set(t.id, t);
   rt.audit.record(t.schedule ? 'system' : 'emperor', 'edict_issued', { id: t.id, title: t.title, tier: t.tier, estimate: t.estimate, budget: t.budget, workspace: t.workspace, ...(t.schedule ? { schedule: t.schedule.id, permission: t.schedule.permission } : {}), design: { id: design.pin.id, version: design.pin.version, hash: design.pin.hash } }, t.id);
@@ -172,7 +174,7 @@ export async function drive(rt: Runtime, taskId: string): Promise<void> {
       if (!t) return;
       ws = t.workspace;
       if (TERMINAL.includes(t.state) || t.state === 'Blocked' || t.paused || t.gate) return;
-      // 太子追问 still unanswered (put again after a restart): nothing moves, not even the worktree
+      // an older edict's 太子追问 still unanswered (put again after a restart): nothing moves, not even the worktree
       if (t.state === 'Taizi' && princeWaiting(rt, t)) return;
       // its own worktree is made when the edict leaves triage, before anything reads or writes files
       const missing = await prepareWorkspace(rt, t);
@@ -343,7 +345,7 @@ export function repoContext(rt: Runtime, t: Task, node?: RunNode): string {
 
 /** E2: the workspace's rule files plus the emperor's 典章, for every prompt that plans, reviews or does the work. */
 export function guidance(rt: Runtime, t: Task): string {
-  return [scheduleNote(t), canonBlock(rt, t, rt.workspaceFor(t))].filter(Boolean).join('\n\n');
+  return [scheduleNote(t), faithBlock(t), canonBlock(rt, t, rt.workspaceFor(t))].filter(Boolean).join('\n\n');
 }
 
 /** 排班 lanes as the plan card sent them: 2–3 entries, each an executor ('self' or a guest id) and maybe a model. */
@@ -422,6 +424,8 @@ export function validatePlan(p: unknown, allowed?: Record<string, string>): { pl
 }
 
 async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
+  // 细问: 中书省 asks the emperor before the first plan (and before 朝堂议政, which then debates the answers too)
+  if (!t.planHistory.length && (await grillStep(rt, t, { by: 'zhongshu', name: '中书省', tools: rt.workspaceFor(t) ? READ_TOOLS : undefined })) === 'wait') return false;
   // optional 朝堂议政 before planning (Full Court)
   if (t.withDebate && t.tier === 'full') {
     const dn = ensureNode(t, 'debate', { kind: 'debate', agentId: 'zhongshu', label: '朝堂议政' });
@@ -450,12 +454,12 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
   const node = ensureNode(t, `plan-${version}`, { kind: 'plan', agentId: 'zhongshu', label: version === 1 ? '中书规划' : `中书重拟 v${version}` });
   if (node.status === 'failed' || node.status === 'cancelled') return false;
   await runNode(rt, t, node, async () => {
-    const parts = [`【旨意】${t.title}\n${t.edict}`, repoContext(rt, t), guidance(rt, t)].filter(Boolean);
+    const parts = [edictBlock(t), repoContext(rt, t), guidance(rt, t)].filter(Boolean);
     const debate = t.debateId ? rt.debates.get(t.debateId) : undefined;
     if (debate?.conclusion) parts.push(`【朝堂议政结论】\n${truncate(debate.conclusion, 3000)}`);
     if (latest && lastRej) {
       parts.push(`【上一版方案 v${latest.version}】\n${JSON.stringify(latest.plan, null, 1)}`);
-      parts.push(`【${lastRej.reviewer === 'emperor' ? '皇上' : '门下省'}封驳意见（第 ${lastRej.round} 轮）】\n${lastRej.comment}\n${lastRej.issues.map((i, k) => `${k + 1}. ${i}`).join('\n')}\n必须逐条修正。`);
+      parts.push(`【${lastRej.reviewer === 'emperor' ? '皇上' : '门下省'}封驳意见（第 ${lastRej.round} 轮）】\n${lastRej.comment}\n${lastRej.issues.map((i, k) => `${k + 1}. ${i}`).join('\n')}\n以上必改须逐条修正。${lastRej.suggestions?.length ? `\n建议（可参考，不强求）：\n${lastRej.suggestions.map((i) => `- ${i}`).join('\n')}` : ''}`);
     }
     parts.push(t.tier === 'lite' ? '档位：Court Lite —— 子任务控制在 1~3 个，避免仪式性步骤。' : '档位：Full Court —— 子任务 2~6 个，充分利用六部并行，写清依赖。');
     const reqOn = requirementCheckOn(rt, t.tier);
@@ -484,13 +488,52 @@ async function stepZhongshu(rt: Runtime, t: Task): Promise<boolean> {
 }
 
 // ───────────────────────── 门下省 ─────────────────────────
-export function parseVerdict(text: string): { verdict: 'approve' | 'reject'; issues: string[]; comment: string; rework: string[] } | null {
-  const j = extractJson<{ verdict?: string; issues?: unknown; comment?: string; rework?: unknown }>(text);
+export type Verdict = { verdict: 'approve' | 'reject'; issues: string[]; suggestions: string[]; comment: string; rework: string[] };
+
+const SUGGEST_MARK = /^\s*[（(【\[]?\s*(建议|可选|optional|suggest(ion)?|nit)\s*[）)】\]]?\s*[：:、]?\s*/i;
+const MUST_MARK = /^\s*[（(【\[]?\s*(必改|必须|must)\s*[）)】\]]?\s*[：:、]?\s*/i;
+
+/**
+ * A review verdict. Opinions are 必改 (must) or 建议 (suggest), and only 必改 rejects: a 'reject' with nothing
+ * but suggestions is an approval, an 'approve' that still lists 必改 is a rejection. The older `issues` list is
+ * read as 必改 when rejecting and as 建议 when approving (an item marked 「建议：」 is always a suggestion).
+ */
+export function parseVerdict(text: string): Verdict | null {
+  const j = extractJson<{ verdict?: string; issues?: unknown; must?: unknown; suggest?: unknown; suggestions?: unknown; comment?: string; rework?: unknown }>(text);
   if (!j || typeof j !== 'object') return null;
   const v = String(j.verdict ?? '').toLowerCase();
-  const verdict = ['approve', 'approved', '准奏', 'pass'].includes(v) ? 'approve' : ['reject', 'rejected', '封驳', 'fail'].includes(v) ? 'reject' : null;
-  if (!verdict) return null;
-  return { verdict, issues: Array.isArray(j.issues) ? j.issues.map(String) : [], comment: String(j.comment ?? ''), rework: Array.isArray(j.rework) ? j.rework.map(String) : [] };
+  const raw = ['approve', 'approved', '准奏', 'pass'].includes(v) ? 'approve' : ['reject', 'rejected', '封驳', 'fail'].includes(v) ? 'reject' : null;
+  if (!raw) return null;
+  const list = (x: unknown) => (Array.isArray(x) ? x : typeof x === 'string' && x.trim() ? [x] : []).map((i) => (typeof i === 'string' ? i : typeof i === 'object' && i ? String((i as { text?: unknown }).text ?? JSON.stringify(i)) : String(i)).trim()).filter(Boolean);
+  const must = list(j.must).map((x) => x.replace(MUST_MARK, ''));
+  const suggestions = [...list(j.suggest), ...list(j.suggestions)].map((x) => x.replace(SUGGEST_MARK, ''));
+  for (const i of list(j.issues)) {
+    if (SUGGEST_MARK.test(i)) suggestions.push(i.replace(SUGGEST_MARK, ''));
+    else if (MUST_MARK.test(i) || raw === 'reject') must.push(i.replace(MUST_MARK, ''));
+    else suggestions.push(i);
+  }
+  const comment = String(j.comment ?? '');
+  // a bare 'reject' with no opinion at all: its comment is the 必改
+  if (raw === 'reject' && !must.length && !suggestions.length && comment.trim()) must.push(comment.trim());
+  return { verdict: must.length ? 'reject' : 'approve', issues: must, suggestions, comment, rework: Array.isArray(j.rework) ? j.rework.map(String) : [] };
+}
+
+export const VERDICT_FORMAT = '{"verdict":"approve"|"reject","must":["必改"],"suggest":["建议"],"comment":"总评"}';
+
+/** Round 2+: only last round's 必改 are checked; no new ones unless the revision itself caused them. */
+export function reReviewText(prev: { round: number; issues: string[] } | undefined): string {
+  if (!prev?.issues.length) return '';
+  return `【上一轮（第 ${prev.round} 轮）的必改】\n${prev.issues.map((x, k) => `${k + 1}. ${x}`).join('\n')}\n本轮只核对这几条改好了没有：改好了就准奏。不要另提新的必改，除非这次修改本身带来了新问题；其他想法写进 suggest。`;
+}
+
+/** 必改 / 建议 lines for the activity log. */
+export const opinionLines = (v: { issues: string[]; suggestions?: string[] }) => [...v.issues.map((i) => `\n· 必改：${i}`), ...(v.suggestions ?? []).map((i) => `\n· 建议：${i}`)].join('');
+
+/** 门下省's 建议 on the approved plan, for the officials who do the work (reference only). */
+export function suggestionsText(t: Task): string {
+  const r = [...t.reviews].reverse().find((x) => x.stage === 'plan' && x.verdict === 'approve' && x.reviewer === 'menxia');
+  if (!r?.suggestions?.length) return '';
+  return `【门下省建议（参考，可不采纳）】\n${r.suggestions.map((x) => `- ${x}`).join('\n')}`;
 }
 
 async function stepMenxia(rt: Runtime, t: Task): Promise<boolean> {
@@ -516,18 +559,19 @@ async function stepMenxia(rt: Runtime, t: Task): Promise<boolean> {
   let verdict: ReturnType<typeof parseVerdict> = null;
   await runNode(rt, t, node, async () => {
     const prompt = [
-      `【旨意】${t.title}\n${t.edict}`,
+      edictBlock(t),
       `【中书省方案 v${latest.version}${latest.author === 'emperor' ? '（皇上涂改版）' : ''}】\n${JSON.stringify(latest.plan, null, 1)}`,
       latest.plan.requirements ? `${requirementsText(latest.plan, true)}${uncovered(latest.plan).length ? `\n注意：${uncovered(latest.plan).join('、')} 没有子任务负责。` : ''}\n审议完整性时，请核对需求说明是否漏了旨意里的要求、验收标准能否核对、每条是否都有子任务负责。` : '',
       reviews.length ? `【此前审议】\n${reviews.map((r) => `第${r.round}轮 ${r.verdict === 'approve' ? '准奏' : '封驳'}：${r.comment}`).join('\n')}` : '',
+      reReviewText([...reviews].reverse().find((r) => r.verdict === 'reject')),
       guidance(rt, t),
-      `这是第 ${round} 轮审议（封驳上限 ${t.budget.maxRejections} 次，超限将升级皇上裁决）。请从可行性、完整性、风险、资源四个维度审议，输出 JSON。`,
+      `这是第 ${round} 轮审议（封驳上限 ${t.budget.maxRejections} 次，超限将升级皇上裁决）。从可行性、完整性、风险、资源看方案，对照【忠于旨意】和问答纪要：改了旨意重点、把约数改成硬下限、把流程文书写成验收标准、漏了纪要里定下的决定，是必改；其余都是建议。只有必改才封驳。只输出 JSON：${VERDICT_FORMAT}`,
     ].filter(Boolean).join('\n\n');
     const tools = rt.workspaceFor(t) ? READ_TOOLS : undefined;
     const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt, tools, maxSteps: 4, maxTokens: 1500, temperature: 0.2, label: node.label });
     verdict = parseVerdict(r.text);
     if (!verdict) {
-      const r2 = await runAgent({ rt, agentId: 'menxia', task: t, node, history: r.messages, prompt: '请只输出审议结论 JSON：{"verdict":"approve"|"reject","issues":[],"comment":""}', maxTokens: 800, temperature: 0, label: '门下省修正格式' });
+      const r2 = await runAgent({ rt, agentId: 'menxia', task: t, node, history: r.messages, prompt: `请只输出审议结论 JSON：${VERDICT_FORMAT}`, maxTokens: 800, temperature: 0, label: '门下省修正格式' });
       verdict = parseVerdict(r2.text);
     }
     return JSON.stringify(verdict ?? { error: '审议结论无法解析' });
@@ -537,10 +581,10 @@ async function stepMenxia(rt: Runtime, t: Task): Promise<boolean> {
     return false;
   }
   const v = verdict as NonNullable<ReturnType<typeof parseVerdict>>;
-  const rev: Review = { round, stage: 'plan', verdict: v.verdict, issues: v.issues, comment: v.comment, reviewer: 'menxia', at: now() };
+  const rev: Review = { round, stage: 'plan', verdict: v.verdict, issues: v.issues, ...(v.suggestions.length ? { suggestions: v.suggestions } : {}), comment: v.comment, reviewer: 'menxia', at: now() };
   t.reviews.push(rev);
-  rt.audit.record('menxia', v.verdict === 'approve' ? 'plan_approved' : 'plan_rejected', { round, planVersion: latest.version, issues: v.issues, comment: v.comment }, t.id);
-  rt.activity('log', `门下省${v.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'}：${v.comment}${v.issues.length ? '\n' + v.issues.map((i) => '· ' + i).join('\n') : ''}`, { taskId: t.id, agentId: 'menxia', nodeId: node.id, data: { verdict: v.verdict } });
+  rt.audit.record('menxia', v.verdict === 'approve' ? 'plan_approved' : 'plan_rejected', { round, planVersion: latest.version, issues: v.issues, suggestions: v.suggestions, comment: v.comment }, t.id);
+  rt.activity('log', `门下省${v.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'}：${v.comment}${opinionLines(v)}`, { taskId: t.id, agentId: 'menxia', nodeId: node.id, data: { verdict: v.verdict } });
   rt.touch(t);
   if (v.verdict === 'approve') {
     const gateOn = t.tier === 'full' ? rt.settings.planGate.full : rt.settings.planGate.lite;
@@ -573,7 +617,7 @@ async function stepAssigned(rt: Runtime, t: Task): Promise<boolean> {
     if (node.status === 'failed' || node.status === 'cancelled') return false;
     if (node.status !== 'done') {
       await runNode(rt, t, node, async () => {
-        const r = await runAgent({ rt, agentId: 'shangshu', task: t, node, prompt: `【旨意】${t.title}\n${t.edict}\n\n【准奏方案】\n${JSON.stringify(plan, null, 1)}\n\n请为每个子任务写执行令，输出 JSON。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2500, temperature: 0.2, label: '尚书派发' });
+        const r = await runAgent({ rt, agentId: 'shangshu', task: t, node, prompt: `${edictBlock(t)}\n\n【准奏方案】\n${JSON.stringify(plan, null, 1)}\n\n请为每个子任务写执行令，输出 JSON。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2500, temperature: 0.2, label: '尚书派发' });
         const j = extractJson<{ orders?: { subtaskId: string; instruction: string }[]; note?: string }>(r.text);
         const orders = (j?.orders ?? []).filter((o) => plan.subtasks.some((s) => s.id === o.subtaskId));
         return JSON.stringify({ orders, note: j?.note ?? '' });
@@ -663,10 +707,11 @@ async function execBody(rt: Runtime, t: Task, node: RunNode, sub: Subtask, order
   const firstRun = lane || node.id.endsWith('-r1') || (sub.supplement && !prev);
   const lanes = lane ? t.attempts?.find((a) => a.lanes.includes(lane))?.lanes.length ?? 2 : 0;
   const parts = [
-    `【旨意】${t.title}\n${truncate(t.edict, 3000)}`,
+    edictBlock(t, 3000),
     `【方案概述】${plan.summary}`,
     `【你的子任务 ${sub.id}】${sub.title}\n做法：${sub.detail}\n验收标准：${sub.acceptance}`,
     ownedRequirementsText(plan, sub),
+    suggestionsText(t),
     order ? `【尚书省执行令】${order}` : '',
     lane ? `【排班】这个子任务由 ${lanes} 路同时办，你是${lane.label}路，在自己的工作树里独立完成，不必顾及其他各路。办完后门下省会比较各路成果，择优采用。` : '',
     deps.length ? `【上游子任务结论】\n${deps.join('\n')}` : '',
@@ -699,6 +744,12 @@ async function execBody(rt: Runtime, t: Task, node: RunNode, sub: Subtask, order
 /** Latest exec nodes whose conclusion is partial (成果存疑). */
 function doubtfulNodes(t: Task): RunNode[] {
   return (t.plan?.subtasks ?? []).map((s) => latestExecNode(t, s.id)).filter((n): n is RunNode => !!n && nodeConclusion(n)?.status === 'partial');
+}
+
+/** 与旨意的出入 the ministries reported in their conclusions ('' when none). */
+export function deviationsText(nodes: (RunNode | undefined)[]): string {
+  const lines = nodes.flatMap((n) => (n ? (nodeConclusion(n)?.deviations ?? []).map((d) => `- ${n.label}：${d}`) : []));
+  return lines.length ? `【各部报告的与旨意的出入】\n${lines.join('\n')}` : '';
 }
 
 const doubtText = (nodes: RunNode[]) => nodes.map((n) => `${n.label}（${(nodeConclusion(n)?.issues ?? []).slice(0, 2).join('；') || '自报部分完成'}）`).join('；');
@@ -738,6 +789,13 @@ function checkText(t: Task): string {
 }
 
 async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
+  // a late 细问 answer that came after some subtasks had started: those redo first
+  const late = takeLateRework(rt, t, (id) => latestExecNode(t, id));
+  if (late) {
+    startRework(rt, t, late.ids, late.feedback, 'emperor');
+    rt.transition(t, 'Doing', 'emperor', `皇上补答细问，${late.ids.join('、')} 返工调整`);
+    return true;
+  }
   const round = t.execRound ?? 1;
   if (t.plan?.requirements && requirementCheckOn(rt, t.tier)) {
     const c = await stepCheck(rt, t, round);
@@ -752,12 +810,15 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       const concl = plan.subtasks.map((s) => `- ${s.id}（${AGENT_MAP[s.dept].name}）${s.title}：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1500)}`);
       const changes = summarizeChanges(t);
       const chk = checkText(t);
-      const r = await runAgent({ rt, agentId: 'shangshu', task: t, node: sNode, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}\n\n【各部结构化结论】\n${concl.join('\n')}\n\n【系统核验的文件改动】\n${changes || '无'}${chk ? `\n\n${chk}\n未满足或无法判断的需求，要在「遗留问题」里如实写明。` : ''}\n\n请撰写回奏折（Markdown）。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2000, temperature: 0.3, label: sNode.label });
+      const dev = deviationsText(plan.subtasks.map((s) => latestExecNode(t, s.id)));
+      const r = await runAgent({ rt, agentId: 'shangshu', task: t, node: sNode, prompt: `${edictBlock(t, 2000)}\n\n【各部结构化结论】\n${concl.join('\n')}\n\n【系统核验的文件改动】\n${changes || '无'}${chk ? `\n\n${chk}\n未满足或无法判断的需求，要在「遗留问题」里如实写明。` : ''}${dev ? `\n\n${dev}` : ''}\n\n请撰写回奏折（Markdown），含「## 与旨意的出入」一节（没有就写「无」）。`, tools: ['load_skill'], maxSteps: 4, maxTokens: 2000, temperature: 0.3, label: sNode.label });
       t.result = { summary: r.text.trim(), artifacts: t.result?.artifacts ?? [] };
       return truncate(r.text.trim(), 4000);
     });
   }
-  if (t.tier === 'full') {
+  // 成果只审一遍: with 对照检查 on, it is the one review of the result (门下审议成果 would judge the same criteria again)
+  const checked = !!t.plan?.requirements && requirementCheckOn(rt, t.tier);
+  if (t.tier === 'full' && !checked) {
     const resultReviews = t.reviews.filter((r) => r.stage === 'result' && r.round === round);
     const last = resultReviews.at(-1);
     if (!last) {
@@ -767,10 +828,12 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
       await runNode(rt, t, node, async () => {
         const concl = plan.subtasks.map((s) => `- ${s.id} ${s.title}（验收：${s.acceptance}）：${truncate(latestExecNode(t, s.id)?.output ?? '无', 1200)}`);
         const tools = rt.workspaceFor(t) ? (['view_changes', 'read_file', 'list_dir', 'search', 'load_skill'] as const) : (['view_changes', 'load_skill'] as const);
-        const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `【旨意】${t.title}\n${truncate(t.edict, 2000)}${(() => { const g = guidance(rt, t); return g ? `\n\n${g}` : ''; })()}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}${(() => { const c = checkText(t); return c ? `\n\n${c}` : ''; })()}\n\n请核对实际改动（view_changes）与验收标准，审议成果。不合格则 reject 并在 rework 中列出需返工的子任务 id。输出 JSON。`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
+        const prevRej = [...t.reviews].reverse().find((r) => r.stage === 'result' && r.verdict === 'reject' && r.reviewer === 'menxia');
+        const again = prevRej ? `\n\n${reReviewText(prevRej)}` : '';
+        const r = await runAgent({ rt, agentId: 'menxia', task: t, node, prompt: `${edictBlock(t, 2000)}${(() => { const g = guidance(rt, t); return g ? `\n\n${g}` : ''; })()}\n\n【方案验收标准与各部结论】\n${concl.join('\n')}\n\n【尚书回奏】\n${truncate(t.result?.summary ?? '', 3000)}${(() => { const c = checkText(t); return c ? `\n\n${c}` : ''; })()}${again}\n\n请核对实际改动（view_changes）与验收标准，审议成果。成品违背硬要求、或做不出旨意要的东西才是必改，必改才 reject，并在 rework 中列出需返工的子任务 id；和旨意字面不同但达到目的的，不算必改。只输出 JSON：{"verdict":"approve"|"reject","must":["必改"],"suggest":["建议"],"comment":"总评","rework":["子任务 id"]}`, tools: [...tools], maxSteps: 6, maxTokens: 1500, temperature: 0.2, label: node.label });
         verdict = parseVerdict(r.text);
         if (!verdict) {
-          const r2 = await runAgent({ rt, agentId: 'menxia', task: t, node, history: r.messages, prompt: '请只输出审议结论 JSON：{"verdict":"approve"|"reject","issues":[],"comment":"","rework":[]}', maxTokens: 800, temperature: 0, label: '门下省修正格式' });
+          const r2 = await runAgent({ rt, agentId: 'menxia', task: t, node, history: r.messages, prompt: '请只输出审议结论 JSON：{"verdict":"approve"|"reject","must":[],"suggest":[],"comment":"","rework":[]}', maxTokens: 800, temperature: 0, label: '门下省修正格式' });
           verdict = parseVerdict(r2.text);
         }
         return JSON.stringify(verdict ?? { error: '审议结论无法解析' });
@@ -780,16 +843,16 @@ async function stepReview(rt: Runtime, t: Task): Promise<boolean> {
         return false;
       }
       const v = verdict as NonNullable<ReturnType<typeof parseVerdict>>;
-      t.reviews.push({ round, stage: 'result', verdict: v.verdict, issues: v.issues, comment: v.comment, reviewer: 'menxia', at: now() });
-      rt.audit.record('menxia', v.verdict === 'approve' ? 'result_approved' : 'result_rejected', { round, issues: v.issues, rework: v.rework }, t.id);
-      rt.activity('log', `门下省审议成果：${v.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'} ${v.comment}`, { taskId: t.id, agentId: 'menxia', nodeId: node.id, data: { verdict: v.verdict } });
+      t.reviews.push({ round, stage: 'result', verdict: v.verdict, issues: v.issues, ...(v.suggestions.length ? { suggestions: v.suggestions } : {}), comment: v.comment, reviewer: 'menxia', at: now() });
+      rt.audit.record('menxia', v.verdict === 'approve' ? 'result_approved' : 'result_rejected', { round, issues: v.issues, suggestions: v.suggestions, rework: v.rework }, t.id);
+      rt.activity('log', `门下省审议成果：${v.verdict === 'approve' ? '✅ 准奏' : '❌ 封驳'} ${v.comment}${opinionLines(v)}`, { taskId: t.id, agentId: 'menxia', nodeId: node.id, data: { verdict: v.verdict } });
       if (v.verdict === 'reject') {
         const rej = t.reviews.filter((r) => r.stage === 'result' && r.verdict === 'reject' && r.reviewer === 'menxia').length;
         if (rej > t.budget.maxRejections) {
           rt.setGate(t, { kind: 'reject_limit', message: `门下省已封驳成果 ${rej} 次，超出上限，请皇上裁决`, nodeId: node.id });
           return false;
         }
-        startRework(rt, t, v.rework, [v.comment, ...v.issues].filter(Boolean).join('\n'), 'menxia');
+        startRework(rt, t, v.rework, [v.comment, ...v.issues.map((i) => `必改：${i}`), ...v.suggestions.map((i) => `建议（参考）：${i}`)].filter(Boolean).join('\n'), 'menxia');
         rt.transition(t, 'Doing', 'menxia', `❌ 封驳成果，发回返工：${truncate(v.comment, 80)}`);
         return true;
       }
@@ -862,6 +925,8 @@ export interface GateDecision {
   plan?: Plan; // edited plan (L2 涂改)
   reworkTargets?: string[];
   raiseBudget?: boolean;
+  /** budget gate: lift this edict's token and cost caps altogether (跑完为止) */
+  unlimited?: boolean;
 }
 
 export function decideGate(rt: Runtime, taskId: string, d: GateDecision) {
@@ -869,19 +934,27 @@ export function decideGate(rt: Runtime, taskId: string, d: GateDecision) {
   const g = t.gate;
   if (!g) throw new Error('此旨意当前没有待批关卡');
   const comment = (d.comment ?? '').trim();
-  rt.audit.record('emperor', 'gate_decision', { kind: g.kind, approve: d.approve, comment, edited: !!d.plan }, t.id);
+  rt.audit.record('emperor', 'gate_decision', { kind: g.kind, approve: d.approve, comment, edited: !!d.plan, ...(g.kind === 'budget' && d.unlimited ? { unlimited: true } : {}) }, t.id);
 
   if (g.kind === 'budget') {
-    if (d.approve) {
+    if (!d.approve) {
+      rt.clearGate(t);
+      rt.cancel(taskId, `预算超限，皇上取消${comment ? '：' + comment : ''}`);
+      return;
+    }
+    if (d.unlimited) {
+      t.budget.maxTokens = 0;
+      t.budget.maxCostUsd = 0;
+      rt.activity('human', '皇上取消此旨意的预算上限：不限 Token 和费用，跑完为止', { taskId });
+    } else {
       const used = t.usage.inputTokens + t.usage.outputTokens;
       t.budget.maxTokens = Math.max(Math.round(t.budget.maxTokens * 1.5), Math.round(used * 1.3));
       if (t.budget.maxCostUsd) t.budget.maxCostUsd = +Math.max(t.budget.maxCostUsd * 1.5, t.usage.costUsd * 1.3).toFixed(3);
       rt.activity('human', `皇上追加预算：${t.budget.maxTokens} tokens`, { taskId });
-      rt.clearGate(t);
-    } else {
-      rt.clearGate(t);
-      rt.cancel(taskId, `预算超限，皇上取消${comment ? '：' + comment : ''}`);
     }
+    rt.clearGate(t);
+    // a run waiting at the gate is woken by clearGate; after a restart none is waiting, so start one (no-op if one runs)
+    void drive(rt, taskId);
     return;
   }
 

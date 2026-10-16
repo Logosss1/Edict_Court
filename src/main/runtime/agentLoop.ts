@@ -3,8 +3,9 @@
 import type { Activity, AgentId, ModelRef, RunNode, Session, Task } from '../../shared/types';
 import { AGENT_MAP, agentName } from '../../shared/court';
 import type { LlmMessage, LlmResult, ToolSpec } from '../llm/types';
-import { backoffMs, classifyLlmError, LlmCallError, LlmHttpError } from '../llm/types';
-import { reasoningParams, levelLabel } from '../../shared/reasoning';
+import { backoffMs, classifyLlmError, LlmCallError, LlmHttpError, SAMPLING_PATTERNS } from '../llm/types';
+import { reasoningParams, tierLabel } from '../../shared/reasoning';
+import { resolveSampling, samplingSummary, type ResolvedSampling } from '../../shared/sampling';
 import { streamLlm } from '../llm/adapters';
 import { SOULS } from './souls';
 import { executeTool, describeToolCall, TOOL_SPECS, type ToolName } from './tools';
@@ -87,6 +88,23 @@ function effortRequest(o: AgentRunOptions, model: ModelRef, withEffort: boolean)
   return { level: eff?.level, maxTokens, extraBody: rp.body, dropTemperature: rp.dropTemperature };
 }
 
+/**
+ * 回答参数 for one call: the official's own (built-in officials only; a 协同设计 role follows the model), else the
+ * model's, else the step's temperature. `withUser` false = the service rejected the set values once: step default only.
+ */
+export function samplingFor(o: Pick<AgentRunOptions, 'rt' | 'agentId' | 'role' | 'temperature'>, model: ModelRef, withUser = true): ResolvedSampling {
+  const protocol = o.rt.providerRuntime(model.providerId).config.protocol;
+  return resolveSampling({
+    agent: withUser && !o.role ? o.rt.settings.agentSampling?.[o.agentId] : undefined,
+    model: withUser ? o.rt.modelInfo(model)?.sampling : undefined,
+    stepTemperature: o.temperature,
+    protocol,
+  });
+}
+
+/** Set by the emperor (agent / model), not a step default. */
+const userSet = (s: ResolvedSampling) => Object.values(s.from).some((f) => f !== 'step');
+
 async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, messages: LlmMessage[], tools: ToolSpec[] | undefined, acts: { thinking?: Activity; text?: Activity }, useEffort = true): Promise<LlmResult> {
   const { rt, agentId, task, node } = o;
   const provider = rt.providerRuntime(model.providerId);
@@ -94,8 +112,10 @@ async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, mess
   let lastErr: unknown;
   let withEffort = useEffort;
   let paramFallback = false;
+  let withSampling = !rt.noSampling.has(`${model.providerId}/${model.model}`);
   for (let attempt = 0; attempt < 3; attempt++) {
     const er = effortRequest(o, model, withEffort);
+    const sp = samplingFor(o, model, withSampling);
     try {
       let reasoning = '';
       let text = '';
@@ -103,8 +123,10 @@ async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, mess
         provider,
         model.model,
         {
-          system, messages, tools, maxTokens: er.maxTokens, temperature: o.temperature, signal, idleTimeoutMs: 120_000,
-          extraBody: er.extraBody, dropTemperature: er.dropTemperature,
+          system, messages, tools, maxTokens: er.maxTokens, temperature: sp.temperature, signal, idleTimeoutMs: 120_000,
+          topP: sp.topP, frequencyPenalty: sp.frequencyPenalty, presencePenalty: sp.presencePenalty,
+          // a reasoning model gets no step-default temperature; a temperature the emperor set is sent as set
+          extraBody: er.extraBody, dropTemperature: er.dropTemperature && sp.from.temperature !== 'agent' && sp.from.temperature !== 'model',
           onDelta: (type, d) => {
             rt.heartbeat(agentId, task?.id);
             if (type === 'reasoning') {
@@ -143,12 +165,21 @@ async function callLlm(o: AgentRunOptions, model: ModelRef, system: string, mess
       if (isAbort(e, signal)) throw new TaskAbortedError();
       lastErr = e;
       const info = classifyLlmError(e);
+      // The service rejected the 回答参数 the emperor set → send none of them for this model this session, carry on.
+      if (info.kind === 'param' && withSampling && userSet(sp) && SAMPLING_PATTERNS.test(info.raw ?? '')) {
+        withSampling = false;
+        rt.noSampling.add(`${model.providerId}/${model.model}`);
+        rt.activity('log', `${model.model} 不接受所设的回答参数（${samplingSummary(sp)}），已改为不发送这些参数重试；可在「模型服务」或「官员模型与路由」里调整。`, { taskId: task?.id, agentId, nodeId: node?.id });
+        rt.toast('warn', `${model.model} 不接受所设的回答参数，已自动去掉`);
+        attempt--;
+        continue;
+      }
       // The service rejected the reasoning parameters → drop them once, remember for this session, carry on.
       if (info.kind === 'param' && er.level && !paramFallback) {
         paramFallback = true;
         withEffort = false;
         rt.noReasoning.add(`${model.providerId}/${model.model}`);
-        rt.activity('log', `${model.model} 不接受思考程度参数（${levelLabel(er.level)}），已自动改为不发送思考参数重试；可在「模型配置」中调整该模型的思考方式。`, { taskId: task?.id, agentId, nodeId: node?.id });
+        rt.activity('log', `${model.model} 不接受思考程度参数（${tierLabel(er.level)}），已自动改为不发送思考参数重试；可在「模型配置」中调整该模型的思考方式。`, { taskId: task?.id, agentId, nodeId: node?.id });
         rt.toast('warn', `${model.model} 不支持所选思考程度，已自动关闭思考参数`);
         attempt--;
         continue;
@@ -255,7 +286,7 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
     node.model = model.model;
     node.providerId = model.providerId;
     node.protocol = provider.config.protocol;
-    node.effort = rt.resolveEffort(agentId, model, task, role?.modelClass, role?.effort).level;
+    node.effort = rt.resolveEffort(agentId, model, task, role?.modelClass, role?.effort).tier;
   };
   if (node) {
     node.runId = runId;
@@ -335,10 +366,16 @@ export async function runAgent(o: AgentRunOptions): Promise<AgentRunResult> {
       if (signal?.aborted) throw new TaskAbortedError();
       const anns = rt.pendingAnnotations(agentId, task?.id);
       if (anns.length) {
-        messages.push({ role: 'user', content: `【皇上朱批】\n${anns.map((a) => `- ${a.text}`).join('\n')}\n请在本次回复开头明确回应朱批（写明将如何调整），然后继续工作。` });
+        const oral = anns.filter((a) => a.oral);
+        const marks = anns.filter((a) => !a.oral);
+        const parts = [
+          oral.length ? `【皇上口谕】（皇上在你办事途中追加的指示，优先于先前的要求；与旨意冲突时以口谕为准）\n${oral.map((a) => `- ${a.text}`).join('\n')}` : '',
+          marks.length ? `【皇上朱批】\n${marks.map((a) => `- ${a.text}`).join('\n')}` : '',
+        ].filter(Boolean);
+        messages.push({ role: 'user', content: `${parts.join('\n\n')}\n请在本次回复开头明确回应${oral.length ? '口谕' : '朱批'}（写明将如何调整），然后照此继续工作。` });
         rt.markAnnotationsConsumed(anns);
         pendingResp = [...(pendingResp ?? []), ...anns];
-        rt.activity('annotation', `${agentName(agentId)} 已接阅朱批 ${anns.length} 条`, { taskId: task?.id, agentId, nodeId: node?.id });
+        rt.activity('annotation', `${agentName(agentId)} 已接阅${[oral.length ? `口谕 ${oral.length} 条` : '', marks.length ? `朱批 ${marks.length} 条` : ''].filter(Boolean).join('、')}`, { taskId: task?.id, agentId, nodeId: node?.id });
       }
       const pr = pruneToolResults(messages, Math.floor(contextWindow(rt, model) * 0.4));
       if (pr.pruned) {

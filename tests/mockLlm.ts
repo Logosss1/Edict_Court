@@ -59,6 +59,11 @@ export function defaultBrain(opts: MockOptions): Brain {
       return { text: answeringEmperor ? '回禀皇上：臣遵旨，先按皇上所言补充测试，再议其余。' : '臣以为此事可行，但需先写测试。' };
     }
     if (u.includes('议政结论') || u.includes('总结议政结论')) return { text: '## 共识\n先写测试后实现。\n## 建议旨意\n实现 greet 函数并补测试。' };
+    if (s.includes('你是中书省') && u.includes('【细问】')) {
+      // 细问: look around once (when there are tools), then nothing left to ask — the 纪要 straight away
+      if (c.tools.length && c.toolResults === 0) return { toolCalls: [{ name: 'list_dir', args: { path: '.' } }] };
+      return { text: JSON.stringify({ type: 'done', minutes: '- 照旨意原文办：实现 greet 并补测试' }) };
+    }
     if (s.includes('你是中书省')) {
       if (c.tools.length && c.toolResults === 0 && !u.includes('不合规')) return { toolCalls: [{ name: 'list_dir', args: { path: '.' } }] };
       const req = u.includes('《需求说明》') && opts.writeRequirements !== false;

@@ -8,7 +8,7 @@ import { AgentChip, StateChip, fmtCost, fmtDur, fmtTime, fmtTokens, usageTokens 
 import { AGENTS, AGENT_MAP, TIER_LABEL } from '../../shared/court';
 import type { AgentId, RevertResult, RunNode, Task } from '../../shared/types';
 import { ChangesList, GateCard, ModelErrorCard, Pipeline, PlanEditor, TaskControls, UsageLine, failedModelNode, revertTaskChanges, runRevert } from './TaskWidgets';
-import { levelLabel } from '../../shared/reasoning';
+import { tierLabel } from '../../shared/reasoning';
 import { PERMISSION_TEXT } from '../../shared/schedule';
 import { ActivityStream } from '../workbench/ActivityStream';
 import { openWorktreeDialog, worktreeLabel } from '../workbench/WorktreeDialog';
@@ -85,7 +85,7 @@ function Nodes({ task }: { task: Task }) {
             <td><AgentChip id={n.agentId} small />{n.guest && <div className="muted small" data-testid="td-node-guest">客卿 {n.guest.name} 代办</div>}</td>
             <td><span className={`node-status st-${n.status}`}>{({ pending: '待执行', running: '执行中', done: '完成', failed: '失败', skipped: '跳过', waiting: '等待', cancelled: '中断' } as Record<string, string>)[n.status]}</span>{n.exitStatus && <div className="muted small">exit={n.exitStatus}</div>}</td>
             <td>{n.attempts}</td>
-            <td className="small">{n.model ?? '—'}{n.effort && <span className="chip chip-sm" title="思考程度">{levelLabel(n.effort)}</span>}<div className="muted"><code>{n.runId ?? ''}</code></div></td>
+            <td className="small">{n.model ?? '—'}{n.effort && <span className="chip chip-sm" title="思考程度">{tierLabel(n.effort)}</span>}<div className="muted"><code>{n.runId ?? ''}</code></div></td>
             <td className="small">{fmtDur(n.startedAt, n.endedAt)}</td>
             <td className="small">{fmtTokens(usageTokens(n.usage))} · {fmtCost(n.usage?.costUsd ?? 0)}</td>
             <td className="small node-out">{n.error ? <span style={{ color: '#d0453a' }} title={n.errorInfo?.raw}>{n.errorInfo ? `${n.errorInfo.hint}${n.errorInfo.status ? `（HTTP ${n.errorInfo.status}）` : ''}` : n.error}</span> : <NodeOutput text={n.output} />}</td>

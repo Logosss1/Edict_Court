@@ -113,6 +113,8 @@ export interface ExecConclusion {
   artifacts: string[];
   verification: string;
   issues: string[];
+  /** 与旨意的出入: where the work differs from the edict's wording without breaking a hard requirement, and why */
+  deviations?: string[];
 }
 
 /** Parse a ministry's structured conclusion. Unknown or missing status, or no JSON at all, counts as partial. */
@@ -123,7 +125,8 @@ export function parseConclusion(text: string): ExecConclusion & { structured: bo
     const issues = Array.isArray(j.issues) ? j.issues.map(String) : [];
     const ok = ['done', 'partial', 'failed'].includes(st);
     if (!ok) issues.push(st ? `结论 status 无效：${st}` : '结论缺少 status');
-    return { status: (ok ? st : 'partial') as ExecConclusion['status'], summary: String(j.summary ?? ''), artifacts: Array.isArray(j.artifacts) ? j.artifacts.map(String) : [], verification: String(j.verification ?? '未说明'), issues, structured: true };
+    const deviations = Array.isArray(j.deviations) ? j.deviations.map(String).map((x) => x.trim()).filter(Boolean) : [];
+    return { status: (ok ? st : 'partial') as ExecConclusion['status'], summary: String(j.summary ?? ''), artifacts: Array.isArray(j.artifacts) ? j.artifacts.map(String) : [], verification: String(j.verification ?? '未说明'), issues, ...(deviations.length ? { deviations } : {}), structured: true };
   }
   return { status: 'partial', summary: truncate(text.trim(), 600), artifacts: [], verification: '未提供结构化结论', issues: ['未按格式输出结构化结论'], structured: false };
 }

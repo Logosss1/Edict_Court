@@ -92,6 +92,9 @@ export async function streamOpenAiChat(p: ProviderRuntime, model: string, req: L
   if (withUsageOpt) body.stream_options = { include_usage: true };
   if (req.maxTokens) body.max_tokens = req.maxTokens;
   if (req.temperature !== undefined) body.temperature = req.temperature;
+  if (req.topP !== undefined) body.top_p = req.topP;
+  if (req.frequencyPenalty !== undefined) body.frequency_penalty = req.frequencyPenalty;
+  if (req.presencePenalty !== undefined) body.presence_penalty = req.presencePenalty;
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } }));
   applyExtra(body, req);
   let res: Response;
@@ -182,6 +185,7 @@ export async function streamAnthropic(p: ProviderRuntime, model: string, req: Ll
     stream: true,
   };
   if (req.temperature !== undefined) body.temperature = req.temperature;
+  if (req.topP !== undefined) body.top_p = req.topP; // Messages has no frequency / presence penalty
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters }));
   applyExtra(body, req);
   const res = await post(fetchImpl, endpointFor(p), headersFor(p), body, req.signal);
@@ -256,6 +260,7 @@ export async function streamResponses(p: ProviderRuntime, model: string, req: Ll
   };
   if (req.maxTokens) body.max_output_tokens = req.maxTokens;
   if (req.temperature !== undefined) body.temperature = req.temperature;
+  if (req.topP !== undefined) body.top_p = req.topP; // Responses has no frequency / presence penalty
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ type: 'function', name: t.name, description: t.description, parameters: t.parameters }));
   applyExtra(body, req);
   const res = await post(fetchImpl, endpointFor(p), headersFor(p), body, req.signal);

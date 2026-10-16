@@ -30,21 +30,24 @@ The workbench and the court are two views of the same live state. Approve in the
 |---|---|---|
 | **Solo** | One agent talks to you, reads and writes files, runs commands | Quick tasks |
 | **Court Lite** (default) | Triage → plan → review → ministries → report | Everyday work |
-| **Full Court** | The whole court, with an optional debate, a plan you can edit before it is released, parallel ministries with a dependency graph, and a review of the results | Large, long tasks |
+| **Full Court** | The whole court, with an optional debate, an optional plan review where you can edit the plan before it is released, parallel ministries with a dependency graph, and a check of the results | Large, long tasks |
 
-The Chancellery cannot be bypassed: there is no path from planning to execution that skips its review, and a plan it sends back must be reworked.
+The Chancellery cannot be bypassed: there is no path from planning to execution that skips its review, and a plan it sends back must be reworked. Its notes are marked *must fix* or *suggestion*, and only a must-fix can send the work back; a second round checks only the last round's must-fix items.
 
 ### You stay in charge
 
 - Subtasks are read, write or verify. Read subtasks run side by side; each write subtask asks before it starts, and you can allow it, allow it without further questions, keep it read-only, or reject it.
 - Approvals can be remembered for one edict or permanently for a workspace. High-risk actions always ask, and release or deploy commands ask every time unless the workspace opts in.
 - When something is unclear, officials stop and ask you, with options to pick from.
+- While an edict is running you can send it a correction from the input box, an *oral order*. The official at work reads it on the next step, and the later reviews and checks follow it too.
+- Each mode has a token budget, and 0 means no limit. When an edict reaches its budget it waits for you: raise the budget by half, lift the limit for that edict so it runs to the end, or cancel it.
+- When an edict is blocked, *See why* opens a window with the cause, each failed step, how to fix it, and buttons that do it.
 - Results are checked against the changes Edict actually recorded, and any step or a whole edict can be reverted, including changes made by shell commands.
 - Officials' shell commands run in a macOS sandbox: they can write only to the workspace (or the edict's worktree), temporary folders and package caches, and cannot read the folders that hold keys, tokens and browser data. Network access is on by default and can be turned off. When the sandbox blocks a command, a card lets you run it once without the sandbox, allow that folder for the workspace, or stop.
 
 ### A full coding workbench
 
-A file tree, Monaco editor with diagnostics, project-wide search and replace, an integrated terminal, a problems panel and Git. Edict uses the language servers already installed on your Mac. A sandboxed preview runs generated web pages, and officials test their own pages in it. The Kanban board has a lane for everything waiting on you.
+A file tree, Monaco editor with diagnostics, project-wide search and replace, an integrated terminal, a problems panel and Git. Edict uses the language servers already installed on your Mac. A sandboxed preview runs generated web pages, and officials test their own pages in it. The Kanban board has a lane for everything waiting on you. The edict pane on the right can be collapsed to a thin bar (⌘⌥B) that still shows how many things wait on you.
 
 | Kanban | Editor | Web preview |
 |---|---|---|
@@ -59,6 +62,8 @@ Each new worktree can be prepared before the officials start: untracked files su
 ### Requirements, checked at the end
 
 The Secretariat starts each plan with a short requirement spec: the goal, numbered acceptance criteria, what is out of scope, and constraints. Each subtask says which criteria it delivers. When the ministries are done, the Chancellery checks every criterion and gives a verdict with evidence; anything unmet goes back to the ministry for another round, and if it is still unmet the edict waits for your decision. You can read and edit the spec on the plan, and the final report lists the check. On by default in Court Lite and Full Court.
+
+The court stays true to the edict. The Secretariat may not change what the edict is mainly about, word counts are targets rather than exact numbers (within about 15%), and the final check compares the finished work with the edict, not the paperwork along the way. Small differences that break no hard requirement are listed in the report under *differences from the edict* instead of being reworked.
 
 ### Scheduled edicts
 
@@ -77,7 +82,9 @@ Set an edict to run on its own: daily, on chosen weekdays, every few hours, at m
 
 - Officials can read web pages, and search the web through a search service you set up or the model's own web search. If an edict needs search and none is set up, the official asks you and the setup opens right there.
 - OpenAI Chat Completions, OpenAI Responses and Anthropic Messages, with any compatible service. No keys are built in; yours are encrypted with a key kept in the macOS keychain.
-- Strong and economy models, a thinking-level slider whose steps are detected from the model itself, and a model of your choice for each official.
+- Strong and economy models, and a model of your choice for each official. The Models page shows one card per model; prices stay hidden unless you choose to enter them.
+- A thinking slider with the same six steps for every model: none, light, medium, high, extra high and max. Steps a model lacks are greyed out and skipped, and the way each step maps to the model's own levels is detected from the model and can be changed.
+- Response settings (temperature, top-p, frequency and presence penalties) for each model and each official. An official's own settings win over the model's.
 - 37 built-in skills for planning, review, investigation, QA, release and deploy, plus your own.
 - MCP servers (stdio, Streamable HTTP, SSE) with OAuth login, resources and prompts, and per-tool risk levels. Editors that speak ACP can drive Edict too.
 
@@ -112,12 +119,19 @@ The court mode is a pixel-art palace that runs on your Mac's clock and acts out 
 | **Eastern Palace** | **Imperial Garden** | **Corner Tower at night** |
 | ![Eastern Palace](docs/screenshots/77-court-donggong.png) | ![Imperial Garden](docs/screenshots/78-court-garden.png) | ![Corner Tower at night](docs/screenshots/79-court-night.png) |
 
-### The Crown Prince asks before he guesses
+### The planning official asks before planning
 
-When an edict is ambiguous, the Crown Prince asks you one short question with a few likely answers before the court starts work, then carries on with your answer. Other officials ask in their own voice when they need a decision. You can turn the prince's question off in Settings › Permissions & approvals.
+Before the first plan, the official who plans (the Secretariat, or the planning role in your own design) asks you about the edict in rounds. Each question comes with a recommended answer, and questions that depend on an earlier answer wait until it is given; there is no limit on rounds, and you can tell it to stop and plan at any time. What the official can look up itself (files, code, web pages) is not asked: it is listed as facts it found, and each one is used only after you confirm it. The questions and answers end in a short summary that you confirm before work starts, and every later official works from it.
+
+In full-auto mode nobody may be there to answer. Unanswered questions then go ahead on the recommended answer but stay open, and an answer you give later reaches the officials as an oral order, with the work done so far adjusted before the report. Solo and scheduled edicts don't ask; you can skip the questions for one edict, or turn them off in Settings › Permissions & approvals.
+
+| A round of questions | The summary to confirm | An oral order |
+|---|---|---|
+| ![The planning official asks](docs/screenshots/50-grill-round.png) | ![The questions and answers summary](docs/screenshots/51-grill-minutes.png) | ![Sending a correction to a running edict](docs/screenshots/80-oral-composer.png) |
 
 ## Recent updates
 
+- **2.1.1**: the planning official asks before planning, review notes split into must-fix and suggestions, oral orders to a running edict, six fixed thinking steps, response settings per model and official, a *See why* window for blocked edicts, token budgets that can be unlimited, and an edict pane that collapses.
 - **2.1.0**: web reading and search, a command sandbox, requirement specs checked at the end, scheduled edicts, outside coding agents as officials, several attempts at one subtask, and worktree setup with ports of their own.
 - **2.0.3**: the living palace, ten new scenes, and the Crown Prince's clarifying question.
 - **2.0**: execution you stay in charge of, one git worktree per edict, MCP login with resources and prompts, language servers, editors over ACP, built-in skills, SQLite storage and a new settings center.

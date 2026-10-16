@@ -120,6 +120,7 @@ function buildMenu() {
       { label: '命令面板', accelerator: 'CmdOrCtrl+Shift+P', click: cmd('command-palette') },
       { label: '显示/隐藏 终端', accelerator: 'Ctrl+`', click: cmd('toggle-terminal') },
       { label: '显示/隐藏 侧栏', accelerator: 'CmdOrCtrl+B', click: cmd('toggle-sidebar') },
+      { label: '显示/收起 旨意面板', accelerator: 'CmdOrCtrl+Alt+B', click: cmd('toggle-agent-pane') },
       { type: 'separator' },
       { role: 'resetZoom', label: '实际大小' }, { role: 'zoomIn', label: '放大' }, { role: 'zoomOut', label: '缩小' },
       { type: 'separator' },

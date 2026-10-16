@@ -148,7 +148,10 @@ export interface Review {
   round: number;
   stage: 'plan' | 'result';
   verdict: 'approve' | 'reject';
+  /** 必改: what must change (only these can reject) */
   issues: string[];
+  /** 建议: passed on to whoever does the work; never a reason to reject */
+  suggestions?: string[];
   comment: string;
   reviewer: 'menxia' | 'emperor';
   at: number;
@@ -168,7 +171,8 @@ export type NodeKind =
   | 'solo'
   | 'step'
   | 'lane' // 2.1 排班: one lane's run of a multi-attempt subtask
-  | 'judge'; // 2.1 排班: 门下省 scores the lanes
+  | 'judge' // 2.1 排班: 门下省 scores the lanes
+  | 'grill'; // 细问: the planning official interviews the emperor before planning
 
 export type NodeStatus = 'pending' | 'running' | 'done' | 'failed' | 'skipped' | 'waiting' | 'cancelled';
 
@@ -261,6 +265,10 @@ export interface Annotation {
   consumedAt?: number;
   response?: string;
   respondedAt?: number;
+  /** 口谕 given in the composer while the edict runs (朱批 otherwise) */
+  oral?: boolean;
+  /** read by whichever official on this edict works next (nobody was working when it was given) */
+  anyAgent?: boolean;
 }
 
 export interface TaskProgress {
@@ -309,7 +317,12 @@ export interface Task {
   allowRules?: AllowRule[]; // 「本旨意内不再询问」 rules granted on approvals
   skillsUsed?: SkillUse[]; // load_skill calls during this edict
   canonUsed?: string[]; // 典章 entries injected into this edict's prompts
+  orals?: { text: string; at: number }[]; // 口谕 given while the edict ran; quoted after the edict in later prompts
   questions?: EdictQuestion[]; // 请旨 (ask_emperor) asked during this edict
+  /** 细问: the planning official's rounds of questions before planning (absent = not started / not wanted) */
+  grill?: GrillState;
+  /** 「这道不必问」 ticked when the edict was issued: no 细问 */
+  noGrill?: boolean;
   /** 联网: the emperor chose 「只用抓取」 or declined setting up search for this edict (asked once per edict) */
   webSearchDeclined?: boolean;
   /** 需求对照检查 results, newest last */
@@ -479,7 +492,68 @@ export interface Activity {
   streaming?: boolean;
 }
 
-export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree' | 'search_setup' | 'sandbox' | 'web_domain' | 'schedule' | 'attempt' | 'guest';
+export type ApprovalKind = 'action' | 'write_task' | 'escalate' | 'loop' | 'question' | 'worktree' | 'search_setup' | 'sandbox' | 'web_domain' | 'schedule' | 'attempt' | 'guest' | 'grill';
+
+/**
+ * 细问: before planning, the official who plans asks the emperor in rounds. Each round puts every
+ * question whose prerequisites are settled, each with a recommended answer, plus the facts it looked up itself
+ * (used only once the emperor confirms them). It ends with 问答纪要 the emperor confirms, or when he says stop.
+ */
+export interface GrillQuestion {
+  id: string; // Q1, Q2 … numbered across rounds
+  round: number;
+  title: string;
+  body: string;
+  options: string[];
+  recommend: string;
+  answer?: string;
+  /** recommend / option / free: the emperor's answer; timeout: nobody answered, the recommendation stands for now */
+  how?: 'recommend' | 'option' | 'free' | 'timeout';
+  answeredAt?: number;
+  /** answered after its round timed out (the late answer reached the running edict as a 口谕) */
+  lateAt?: number;
+}
+
+export interface GrillFact {
+  id: string; // F1, F2 …
+  round: number;
+  text: string;
+  source?: string;
+  /** pending: put to the emperor; confirmed / corrected / wrong: his word; unconfirmed: nobody answered (not used) */
+  status: 'pending' | 'confirmed' | 'corrected' | 'wrong' | 'unconfirmed';
+  correction?: string;
+  lateAt?: number;
+}
+
+export interface GrillState {
+  /** the official who asks (中书省, or a 协同设计's plan-step role avatar) */
+  by: AgentId;
+  roleId?: string;
+  name: string;
+  /** asking: the next round runs · waiting: a round's questions are out · confirming: 问答纪要 is out · done · skipped */
+  status: 'asking' | 'waiting' | 'confirming' | 'done' | 'skipped';
+  rounds: number;
+  questions: GrillQuestion[];
+  facts: GrillFact[];
+  /** the emperor's own notes (补充说明) given with his answers, oldest first */
+  notes: string[];
+  /** 问答纪要 as the official wrote it */
+  minutes?: string;
+  /** how it ended: confirmed (就这样办) · stopped (不必再问) · timeout (全自动, nobody answered) · skipped */
+  ended?: 'confirmed' | 'stopped' | 'timeout' | 'skipped';
+  endedAt?: number;
+  /** late answers not yet worked into the edict (rework pending) */
+  lateRework?: { at: number; text: string };
+}
+
+/** What the emperor sends back for one 细问 round (or a late answer). */
+export interface GrillAnswer {
+  answers: { id: string; answer: string; how: 'recommend' | 'option' | 'free' }[];
+  facts: { id: string; status: 'confirmed' | 'corrected' | 'wrong'; correction?: string }[];
+  note?: string;
+  /** 不必再问，开始规划 */
+  stop?: boolean;
+}
 
 export interface EdictQuestion {
   id: string;
@@ -525,6 +599,8 @@ export interface ApprovalRequest {
   choice?: string; // picked choice id
   comment?: string; // the emperor's note
   ruleLabel?: string; // what an always-allow choice would allow, e.g. 「npm test」
+  /** 细问 card: one round's questions and facts, or (phase minutes) the 问答纪要 to confirm */
+  grill?: { phase: 'round' | 'minutes'; round: number; questions: GrillQuestion[]; facts: GrillFact[]; minutes?: string };
 }
 
 /** An always-allow rule: `key` like cmd:npm test · tool:write · mcp:server/tool. */
@@ -722,7 +798,7 @@ export interface Session {
 }
 
 export interface MemorialStage {
-  key: 'edict' | 'zhongshu' | 'menxia' | 'ministries' | 'questions' | 'skills' | 'requirements' | 'attempts' | 'report';
+  key: 'edict' | 'grill' | 'zhongshu' | 'menxia' | 'ministries' | 'questions' | 'skills' | 'requirements' | 'attempts' | 'report';
   label: string;
   at?: number;
   items: string[];
@@ -776,6 +852,16 @@ export interface ModelInfo {
   contextWindow: number;
   maxOutputTokens?: number; // hard output cap for this model (used when raising effort)
   reasoning?: ReasoningConfig; // 思考程度配置（见 shared/reasoning.ts）
+  /** 回答参数: sent with every request to this model (a field left out is not sent) */
+  sampling?: SamplingParams;
+}
+
+/** 回答参数 (temperature, Top P, frequency / presence penalty). A field that is absent is not sent. */
+export interface SamplingParams {
+  temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
 }
 
 export type ReasoningStyle = 'none' | 'openai' | 'anthropic' | 'anthropic-budget' | 'qwen' | 'glm' | 'custom';
@@ -786,6 +872,8 @@ export interface ReasoningConfig {
   default: string;
   budgets?: Record<string, number>; // thinking token budgets (anthropic-budget / qwen)
   custom?: Record<string, Record<string, unknown>>; // style=custom: JSON merged into the request body per level
+  /** 固定六档 → this model's level name, set by hand; absent = automatic (see shared/reasoning.ts tierMap) */
+  tierMap?: Partial<Record<string, string>>;
   /** set by 检测思考档位: levels the service actually accepted. reliable=false → it accepted a made-up level too, so levels are a guess */
   detected?: { at: number; reliable: boolean; accepted: string[]; rejected: string[] };
 }
@@ -818,6 +906,8 @@ export interface ProviderConfig {
   extraHeaders?: Record<string, string>;
   replayReasoning?: boolean; // pass reasoning_content back (DeepSeek thinking etc.)
   enabled: boolean;
+  /** 模型服务 page: show the per-model price fields; absent = shown only when some price is filled in */
+  showPrices?: boolean;
 }
 
 export type PermissionMode = 'readonly' | 'ask' | 'auto-edit' | 'auto';
@@ -885,6 +975,8 @@ export interface Settings {
   lastWorkspace: string | null;
   ceremonyShownOn?: string; // yyyy-mm-dd
   composerHidden: boolean;
+  /** the 旨意 pane on the right of the workbench is collapsed to a thin bar */
+  agentPaneHidden?: boolean;
   composerEffort?: string;
   defaultDesign?: string; // design id preselected in the composer
   previewAllowNetwork?: boolean; // HTML 预览可加载外部网络资源（默认仅本地） // last 思考程度 slider value ('default' | 'top' | level)
@@ -903,8 +995,14 @@ export interface Settings {
   acpHighRiskInEdictOnly: boolean;
   /** 全自动 mode only: an unanswered 请旨 (ask_emperor) continues on the default after this many minutes (0 = wait) */
   askTimeoutMin: number;
-  /** 太子追问: at triage the prince may ask one short question when the edict is unclear (default on) */
+  /** retired: the prince no longer asks at triage (细问 by the planning official replaced it); kept so old settings load */
   taiziAsk?: boolean;
+  /** 细问: the planning official interviews the emperor before every Court Lite / Full edict (default on; Solo and scheduled edicts never) */
+  grillAsk?: boolean;
+  /** 回答参数 per official (absent = follow the model's own) */
+  agentSampling?: Partial<Record<AgentId, SamplingParams>>;
+  /** one-time settings migrations already applied */
+  migrations?: string[];
   /** 典章: the emperor's standing rules, preferences and lessons, injected into prompts by keyword */
   canon: CanonEntry[];
   /** record files changed by run_command (shadow git snapshots before / after each command) */

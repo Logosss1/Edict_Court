@@ -5,8 +5,10 @@ import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { EffortSelect, ModelSelect, effortDefaultLabel, useModelShort } from '../common/ModelPick';
 import { AGENTS } from '../../shared/court';
-import type { ModelInfo, ModelRef, PermissionMode, ProbeRow, ProviderConfig, Protocol, ReasoningConfig, ReasoningDetectResult, ReasoningStyle, Settings } from '../../shared/types';
-import { STYLE_LABEL, STYLE_LEVELS, levelLabel, presetFor } from '../../shared/reasoning';
+import type { ModelInfo, ModelRef, SamplingParams, PermissionMode, ProbeRow, ProviderConfig, Protocol, ReasoningConfig, ReasoningDetectResult, ReasoningStyle, Settings } from '../../shared/types';
+import { SamplingEditor } from '../common/SamplingEditor';
+import { samplingSummary } from '../../shared/sampling';
+import { STYLE_LABEL, STYLE_LEVELS, TIERS, TIER_LABEL, availableTiers, defaultTier, levelLabel, presetFor, tierHint, tierMap, type Tier } from '../../shared/reasoning';
 
 interface Preset { id: string; name: string; protocol: Protocol; baseUrl: string; replayReasoning?: boolean; hint: string }
 
@@ -80,6 +82,8 @@ function ProviderEditor({ draft, setDraft, onSaved }: { draft: ProviderConfig; s
   const [testHint, setTestHint] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [openReasoning, setOpenReasoning] = useState<number | null>(null);
+  const [openSampling, setOpenSampling] = useState<number | null>(null);
+  const showPrices = draft.showPrices ?? draft.models.some((m) => m.inputPrice > 0 || m.outputPrice > 0 || (m.cachedInputPrice ?? 0) > 0);
   const [probe, setProbe] = useState<ProbeRow[] | null>(null);
   const [detecting, setDetecting] = useState<string | null>(null);
   const savedProviders = useStore((st) => st.providers);
@@ -194,25 +198,44 @@ function ProviderEditor({ draft, setDraft, onSaved }: { draft: ProviderConfig; s
           {draft.hasKey && <button className="link small" onClick={async () => { await call('upsertProvider', draft, ''); toast('已删除 Key', 'success'); }}>删除已存 Key</button>}
         </div>
       </div>
-      <h4>模型（价格单位：美元 / 百万 tokens，用于费用统计与预估；未知可填 0）</h4>
-      <div className="table-scroll">
-      <table className="table small models-table">
-        <thead><tr><th>模型 id</th><th>显示名</th><th>输入价</th><th>输出价</th><th>缓存价</th><th>上下文</th><th>思考程度</th><th /></tr></thead>
-        <tbody>
-          {draft.models.map((m, i) => [
-            <tr key={i} className={openReasoning === i ? 'on' : ''}>
-              <td><input className="input" value={m.id} placeholder="模型 id" onChange={(e) => setModel(i, { id: e.target.value })} data-testid="model-id" /></td>
-              <td><input className="input" value={m.label ?? ''} onChange={(e) => setModel(i, { label: e.target.value })} /></td>
-              <td><input className="input num" type="number" step="0.01" value={m.inputPrice} onChange={(e) => setModel(i, { inputPrice: +e.target.value })} /></td>
-              <td><input className="input num" type="number" step="0.01" value={m.outputPrice} onChange={(e) => setModel(i, { outputPrice: +e.target.value })} /></td>
-              <td><input className="input num" type="number" step="0.01" value={m.cachedInputPrice ?? ''} placeholder="同输入" onChange={(e) => setModel(i, { cachedInputPrice: e.target.value === '' ? undefined : +e.target.value })} /></td>
-              <td><input className="input num" type="number" value={m.contextWindow} onChange={(e) => setModel(i, { contextWindow: +e.target.value })} /></td>
-              <td><button className="btn sm reasoning-btn" data-testid="reasoning-btn" title="设置该模型的思考档位与参数" onClick={() => setOpenReasoning(openReasoning === i ? null : i)}>{reasoningSummary(m, draft.protocol)}</button></td>
-              <td><button className="icon-btn" onClick={() => set({ models: draft.models.filter((_, k) => k !== i) })}><Icon name="trash" size={12} /></button></td>
-            </tr>,
-          ])}
-        </tbody>
-      </table>
+      <div className="models-head">
+        <h4>模型 <span className="muted small">{draft.models.length} 个</span></h4>
+        <span style={{ flex: 1 }} />
+        <label className="chk small" title="价格只用于费用统计与预估；不填按 0 计"><input type="checkbox" checked={showPrices} onChange={(e) => set({ showPrices: e.target.checked })} data-testid="show-prices" /> 填写价格（用于费用统计）</label>
+      </div>
+      <div className="model-cards" data-testid="model-cards">
+        {draft.models.map((m, i) => (
+          <div key={i} className={`model-card ${openReasoning === i ? 'on' : ''}`} data-testid="model-card">
+            <div className="mc-row">
+              <label className="mc-f mc-id"><span>模型 id</span><input className="input" value={m.id} placeholder="模型 id" onChange={(e) => setModel(i, { id: e.target.value })} data-testid="model-id" /></label>
+              <label className="mc-f mc-name"><span>显示名</span><input className="input" value={m.label ?? ''} placeholder="可不填" onChange={(e) => setModel(i, { label: e.target.value })} /></label>
+              <label className="mc-f mc-ctx"><span>上下文</span><CtxInput value={m.contextWindow} onChange={(v) => setModel(i, { contextWindow: v })} /></label>
+              <button className="icon-btn mc-del" title="删除这个模型" onClick={() => set({ models: draft.models.filter((_, k) => k !== i) })}><Icon name="trash" size={12} /></button>
+            </div>
+            <div className="mc-row mc-think">
+              <span className="muted small">思考程度</span>
+              <button className="btn sm reasoning-btn" data-testid="reasoning-btn" title="设置该模型的思考档位与参数" onClick={() => setOpenReasoning(openReasoning === i ? null : i)}>{reasoningSummary(m, draft.protocol)} ▾</button>
+            </div>
+            <div className="mc-row mc-think">
+              <span className="muted small">回答参数</span>
+              <button className={`btn sm reasoning-btn ${openSampling === i ? 'on' : ''}`} data-testid="sampling-btn" title="Temperature、Top P 等：勾上才发送，不勾用服务默认" onClick={() => setOpenSampling(openSampling === i ? null : i)}>{samplingSummary(m.sampling) || '服务默认'} ▾</button>
+            </div>
+            {openSampling === i && (
+              <div className="mc-sampling" data-testid="model-sampling">
+                <SamplingEditor value={m.sampling} protocol={draft.protocol} onChange={(v) => setModel(i, { sampling: v })} inheritedLabel="这里设的对用这个模型的所有官员生效；某位官员在「官员模型与路由」里自己设了的，以官员的为准。改完点「保存」。" />
+              </div>
+            )}
+            {showPrices && (
+              <div className="mc-row mc-price" data-testid="model-prices">
+                <span className="muted small">价格（美元 / 百万 tokens）</span>
+                <label className="mc-p">输入 <input className="input num" type="number" step="0.01" min={0} value={m.inputPrice} onChange={(e) => setModel(i, { inputPrice: +e.target.value })} /></label>
+                <label className="mc-p">输出 <input className="input num" type="number" step="0.01" min={0} value={m.outputPrice} onChange={(e) => setModel(i, { outputPrice: +e.target.value })} /></label>
+                <label className="mc-p">缓存 <input className="input num" type="number" step="0.01" min={0} value={m.cachedInputPrice ?? ''} placeholder="同输入" onChange={(e) => setModel(i, { cachedInputPrice: e.target.value === '' ? undefined : +e.target.value })} /></label>
+              </div>
+            )}
+          </div>
+        ))}
+        {!draft.models.length && <div className="muted small">还没有模型。点「添加模型」或「从服务获取列表」。</div>}
       </div>
       {openReasoning !== null && draft.models[openReasoning] && (
         <div className="card inset reasoning-card">
@@ -281,7 +304,9 @@ function reasoningSummary(m: ModelInfo, protocol: Protocol) {
   const d = cfg.detected;
   const tag = !m.reasoning ? '推测：' : d ? (d.reliable ? '已检测：' : '未能确认：') : '';
   if (cfg.style === 'none' || !cfg.levels.length) return d?.reliable ? '已检测：不支持' : `${tag}不发送`;
-  return `${tag}${levelLabel(cfg.levels[0])}→${levelLabel(cfg.levels[cfg.levels.length - 1])} · 默认 ${levelLabel(cfg.default)}`;
+  const av = availableTiers(cfg);
+  const def = defaultTier(cfg);
+  return `${tag}${TIER_LABEL[av[0]]}→${TIER_LABEL[av[av.length - 1]]} · 默认 ${def ? TIER_LABEL[def] : '—'}`;
 }
 
 function ReasoningEditor({ model, protocol, onChange }: { model: ModelInfo; protocol: Protocol; onChange: (p: Partial<ModelInfo>) => void }) {
@@ -294,6 +319,12 @@ function ReasoningEditor({ model, protocol, onChange }: { model: ModelInfo; prot
   const setStyle = (style: ReasoningStyle) => {
     const levels = style === auto.style ? auto.levels : STYLE_LEVELS[style];
     onChange({ reasoning: { style, levels, default: style === auto.style ? auto.default : levels[Math.floor(levels.length / 2)] ?? '', custom: style === 'custom' ? safeJson(customText) ?? undefined : undefined } });
+  };
+  const tm = tierMap(cfg);
+  const putTier = (t: Tier, l: string) => {
+    const next: Partial<Record<string, string>> = { ...tm, [t]: l || undefined };
+    if (!l) delete next[t];
+    put({ tierMap: next });
   };
   const toggle = (l: string) => {
     const on = cfg.levels.includes(l);
@@ -329,6 +360,26 @@ function ReasoningEditor({ model, protocol, onChange }: { model: ModelInfo; prot
               <select className="input sm" value={cfg.default} onChange={(e) => put({ default: e.target.value })}>
                 {cfg.levels.map((l) => <option key={l} value={l}>{levelLabel(l)}</option>)}
               </select>
+            </div>
+          </>
+        )}
+        {cfg.style !== 'none' && cfg.levels.length > 0 && (
+          <>
+            <label>六档对应</label>
+            <div data-testid="tier-map">
+              <div className="row-gap">
+                {TIERS.map((t) => (
+                  <label key={t} className="small">
+                    {TIER_LABEL[t]}{' '}
+                    <select className="input sm" value={tm[t] ?? ''} onChange={(e) => putTier(t, e.target.value)} data-testid={`tier-${t}`}>
+                      <option value="">—（没有）</option>
+                      {cfg.levels.map((l) => <option key={l} value={l}>{levelLabel(l)}</option>)}
+                    </select>
+                  </label>
+                ))}
+                {cfg.tierMap && <button className="link small" onClick={() => put({ tierMap: undefined })}>恢复自动对应</button>}
+              </div>
+              <div className="muted small" data-testid="tier-hint">{tierHint(cfg)}{cfg.tierMap ? '（手动设置）' : '（按检测结果自动对应）'}</div>
             </div>
           </>
         )}
@@ -390,22 +441,49 @@ export function Routing() {
 
 export function AgentModels() {
   const s = useStore((st) => st.settings);
+  const providers = useStore((st) => st.providers);
   const short = useModelShort();
+  const [openAgent, setOpenAgent] = useState<string | null>(null);
+  const setSampling = (id: string, v: SamplingParams | undefined) => {
+    const next = { ...(s.agentSampling ?? {}) } as Record<string, SamplingParams>;
+    if (v) next[id] = v;
+    else delete next[id];
+    void call('updateSettings', { agentSampling: next });
+  };
 
   return (
     <section className="card">
       <h3>官员独立模型与思考程度</h3>
       <p className="muted small">只影响内置的三省六部（改完下一次调用生效）。自己的协同设计在「协同设计」里给每个角色选模型。</p>
       <div className="agent-model-list" data-testid="agent-model-list">
-        <div className="agent-model-row head muted small"><span>官员</span><span>档位</span><span>模型</span><span>思考程度</span></div>
+        <div className="agent-model-row head muted small"><span>官员</span><span>档位</span><span>模型</span><span>思考程度</span><span>回答参数</span></div>
         {AGENTS.map((a) => {
           const route = a.modelClass === 'strong' ? s.routing?.strong : s.routing?.economy;
+          const ref = s.agentModels?.[a.id] ?? route;
+          const pv = ref ? providers.find((p) => p.id === ref.providerId) : undefined;
+          const minfo = pv?.models.find((m) => m.id === ref?.model);
+          const own = s.agentSampling?.[a.id];
           return (
-            <div key={a.id} className="agent-model-row" data-testid={`agent-model-${a.id}`}>
-              <span className="amr-who"><b>{a.emoji} {a.name}</b><span className="muted small ellipsis">{a.duty}</span></span>
-              <span className={`chip chip-sm ${a.modelClass === 'strong' ? 'on' : ''}`}>{a.modelClass === 'strong' ? '强' : '经济'}</span>
-              <ModelSelect value={s.agentModels?.[a.id]} allowDefault={`跟随${a.modelClass === 'strong' ? '强' : '经济'}路由（${short(route)}）`} onChange={(r) => call('setAgentModel', a.id, r)} />
-              <EffortSelect model={s.agentModels?.[a.id] ?? route} defaultLabel={effortDefaultLabel(a.modelClass)} value={s.agentEffort?.[a.id]} onChange={(v) => call('updateSettings', { agentEffort: { ...(s.agentEffort ?? {}), [a.id]: v } })} />
+            <div key={a.id} className="agent-model-block">
+              <div className="agent-model-row" data-testid={`agent-model-${a.id}`}>
+                <span className="amr-who"><b>{a.emoji} {a.name}</b><span className="muted small ellipsis">{a.duty}</span></span>
+                <span className={`chip chip-sm ${a.modelClass === 'strong' ? 'on' : ''}`}>{a.modelClass === 'strong' ? '强' : '经济'}</span>
+                <ModelSelect value={s.agentModels?.[a.id]} allowDefault={`跟随${a.modelClass === 'strong' ? '强' : '经济'}路由（${short(route)}）`} onChange={(r) => call('setAgentModel', a.id, r)} />
+                <EffortSelect model={ref} defaultLabel={effortDefaultLabel(a.modelClass)} value={s.agentEffort?.[a.id]} onChange={(v) => call('updateSettings', { agentEffort: { ...(s.agentEffort ?? {}), [a.id]: v } })} />
+                <button className={`btn sm amr-smp ${own ? 'on' : ''}`} onClick={() => setOpenAgent(openAgent === a.id ? null : a.id)} title={own ? samplingSummary(own) : '跟随模型的回答参数'} data-testid={`agent-sampling-${a.id}`}>
+                  <span className="ellipsis">{own ? samplingSummary(own) : '跟随模型'}</span> ▾
+                </button>
+              </div>
+              {openAgent === a.id && (
+                <div className="amr-sampling" data-testid={`agent-sampling-panel-${a.id}`}>
+                  <div className="seg sm" role="radiogroup" aria-label="回答参数来源">
+                    <button role="radio" aria-checked={!own} className={!own ? 'on' : ''} onClick={() => setSampling(a.id, undefined)} data-testid={`agent-sampling-follow-${a.id}`}>跟随模型</button>
+                    <button role="radio" aria-checked={!!own} className={own ? 'on' : ''} onClick={() => !own && setSampling(a.id, { temperature: minfo?.sampling?.temperature ?? 0.7 })} data-testid={`agent-sampling-custom-${a.id}`}>自定义</button>
+                    <span className="muted small">{own ? `${a.name}用这里的值，没勾的跟随模型` : `用模型「${ref?.model ?? '未选'}」的设置：${samplingSummary(minfo?.sampling) || '服务默认'}`}</span>
+                  </div>
+                  {own && <SamplingEditor value={own} protocol={pv?.protocol} inherited={minfo?.sampling} onChange={(v) => setSampling(a.id, v ?? {})} testid={`agent-sampling-editor-${a.id}`} />}
+                </div>
+              )}
             </div>
           );
         })}
@@ -471,4 +549,29 @@ export function Policy() {
       )}
     </section>
   );
+}
+
+/** 上下文: shown as 64K / 1M; accepts 65536, 64k, 128K, 1M */
+function fmtCtx(n: number) {
+  if (n >= 1_000_000 && n % 1_000_000 === 0) return `${n / 1_000_000}M`;
+  if (n >= 1_048_576 && n % 1_048_576 === 0) return `${n / 1_048_576}M`;
+  if (n % 1000 === 0) return `${n / 1000}K`;
+  if (n % 1024 === 0) return `${n / 1024}K`;
+  return String(n);
+}
+export function parseCtx(s: string): number | null {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*([kKmM]?)\s*$/.exec(s);
+  if (!m) return null;
+  const v = +m[1] * (m[2].toLowerCase() === 'm' ? 1_000_000 : m[2].toLowerCase() === 'k' ? 1024 : 1);
+  return v > 0 ? Math.round(v) : null;
+}
+function CtxInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [text, setText] = useState<string | null>(null);
+  const commit = () => {
+    if (text === null) return;
+    const v = parseCtx(text);
+    if (v) onChange(v);
+    setText(null);
+  };
+  return <input className="input num" value={text ?? fmtCtx(value)} title={`${value} tokens（可填 65536、64K、1M）`} onFocus={() => setText(String(value))} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()} data-testid="model-ctx" />;
 }

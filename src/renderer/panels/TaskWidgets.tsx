@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import type { MinistryId, ModelRef, Plan, RequirementCheck, Requirements, RevertResult, RunNode, Subtask, Task, TaskState } from '../../shared/types';
 import { VERDICT_LABEL, VERDICT_MARK, normReqId, reqLabel } from '../../shared/requirements';
-import { levelLabel } from '../../shared/reasoning';
+import { tierLabel } from '../../shared/reasoning';
 import { AGENT_MAP, MINISTRIES, STATE_LABEL, TERMINAL } from '../../shared/court';
 import { call } from '../api';
 import { toast, useStore, openTab, openPanel } from '../store';
@@ -83,12 +83,13 @@ export function TaskControls({ task, compact }: { task: Task; compact?: boolean 
 
 export function UsageLine({ task }: { task: Task }) {
   const used = usageTokens(task.usage);
-  const pct = task.budget.maxTokens ? Math.min(100, (used / task.budget.maxTokens) * 100) : 0;
+  const capped = !!task.budget.maxTokens;
+  const pct = capped ? Math.min(100, (used / task.budget.maxTokens) * 100) : 0;
   return (
-    <div className="usage-line" title={`输入 ${task.usage.inputTokens} · 输出 ${task.usage.outputTokens} · 缓存命中 ${task.usage.cachedTokens} · 调用 ${task.usage.calls} 次${task.usage.estimated ? '（部分为估算）' : ''}`}>
-      <Icon name="zap" size={12} /> {fmtTokens(used)} / {fmtTokens(task.budget.maxTokens)} tokens · {fmtCost(task.usage.costUsd)}
+    <div className="usage-line" title={`输入 ${task.usage.inputTokens} · 输出 ${task.usage.outputTokens} · 缓存命中 ${task.usage.cachedTokens} · 调用 ${task.usage.calls} 次${task.usage.estimated ? '（部分为估算）' : ''}`} data-testid="usage-line">
+      <Icon name="zap" size={12} /> {fmtTokens(used)} {capped ? `/ ${fmtTokens(task.budget.maxTokens)} tokens` : 'tokens（预算不限）'} · {fmtCost(task.usage.costUsd)}
       {task.estimate && <span className="muted"> · 预估 {fmtTokens(task.estimate.tokens)} / {fmtCost(task.estimate.costUsd)}</span>}
-      <div className="budget-bar"><div style={{ width: `${pct}%`, background: pct > 90 ? '#d0453a' : pct > 70 ? '#d8a84e' : '#4fa38a' }} /></div>
+      {capped && <div className="budget-bar"><div style={{ width: `${pct}%`, background: pct > 90 ? '#d0453a' : pct > 70 ? '#d8a84e' : '#4fa38a' }} /></div>}
     </div>
   );
 }
@@ -243,12 +244,12 @@ export function GateCard({ task, variant = 'pane', onDecided }: { task: Task; va
   useEffect(() => setPlan(task.plan ? JSON.parse(JSON.stringify(task.plan)) : null), [task.plan, g.since]);
   const planGate = task.state === 'Menxia' && (g.kind === 'plan' || g.kind === 'reject_limit');
   const edited = planGate && plan && JSON.stringify(plan) !== JSON.stringify(task.plan);
-  const decide = async (approve: boolean) => {
+  const decide = async (approve: boolean, unlimited = false) => {
     if (!approve && !comment.trim() && g.kind !== 'budget') return toast('封驳须附朱批理由', 'warn');
     setBusy(true);
     try {
-      await call('decideGate', task.id, { approve, comment, plan: planGate && edited ? plan : undefined, reworkTargets: targets });
-      toast(approve ? (edited ? '已朱笔涂改并准奏' : '准奏') : '已封驳', approve ? 'success' : 'warn');
+      await call('decideGate', task.id, { approve, comment, plan: planGate && edited ? plan : undefined, reworkTargets: targets, ...(unlimited ? { unlimited: true } : {}) });
+      toast(unlimited ? '已不限预算，旨意跑完为止' : approve ? (edited ? '已朱笔涂改并准奏' : '准奏') : '已封驳', approve ? 'success' : 'warn');
       onDecided?.(approve);
     } catch (e) {
       toast((e as Error).message, 'error');
@@ -292,6 +293,11 @@ export function GateCard({ task, variant = 'pane', onDecided }: { task: Task; va
         <button className="btn primary zhunzou" disabled={busy} onClick={() => decide(true)} data-testid="gate-approve">
           <Icon name="check" size={13} /> {g.kind === 'budget' ? '追加预算，继续' : edited ? '朱笔涂改 · 放行' : '准奏'}
         </button>
+        {g.kind === 'budget' && (
+          <button className="btn" disabled={busy} onClick={() => decide(true, true)} title="这道旨意不再设 Token 和费用上限，一直跑到办完" data-testid="gate-unlimited">
+            <Icon name="zap" size={13} /> 不限预算，跑完为止
+          </button>
+        )}
         <button className="btn danger fengbo" disabled={busy} onClick={() => decide(false)} data-testid="gate-reject">
           <Icon name="x" size={13} /> {g.kind === 'budget' ? '取消旨意' : '封驳'}
         </button>
@@ -422,7 +428,7 @@ export function ModelErrorCard({ task, node }: { task: Task; node: RunNode }) {
     <div className="err-card" data-testid="model-error-card">
       <div className="err-h"><Icon name="alert" size={14} /> {node.label} · {ERR_KIND[e.kind] ?? '模型调用失败'}</div>
       <div className="err-meta">
-        {e.model ?? node.model} · {provider?.name ?? e.providerId} · {PROTO_SHORT[e.protocol ?? ''] ?? e.protocol}{e.status ? ` · HTTP ${e.status}` : ''}{node.effort ? ` · 思考 ${levelLabel(node.effort)}` : ''}
+        {e.model ?? node.model} · {provider?.name ?? e.providerId} · {PROTO_SHORT[e.protocol ?? ''] ?? e.protocol}{e.status ? ` · HTTP ${e.status}` : ''}{node.effort ? ` · 思考 ${tierLabel(node.effort)}` : ''}
       </div>
       <div className="err-hint">{e.hint}</div>
       {!terminal && (

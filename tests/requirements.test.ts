@@ -182,8 +182,8 @@ test('a planner that writes no 需求说明 gets one from the acceptance lines; 
   assert.equal(t.plan!.requirements!.criteria[1].text, 'greet("") 返回 "Hello, "');
   await waitFor(() => t.gate?.kind === 'final' || t.state === 'Blocked', 30000, 'final gate');
   assert.ok(t.nodes.some((n) => n.kind === 'check' && n.status === 'done'));
-  assert.ok(t.nodes.some((n) => n.kind === 'result_review' && n.status === 'done'));
-  assert.ok(t.nodes.findIndex((n) => n.kind === 'check') < t.nodes.findIndex((n) => n.kind === 'result_review'));
+  // the check is the one review of the result: Full Court no longer adds 门下审议成果 on top of it
+  assert.ok(!t.nodes.some((n) => n.kind === 'result_review'));
   rt.dispose();
   await mock.close();
 });

@@ -10,6 +10,7 @@ import type { Runtime } from './runtime';
 import { runAgent, type RoleRun } from './agentLoop';
 import type { ToolName } from './tools';
 import { extractJson, now, truncate } from './util';
+import { edictBlock } from './oral';
 
 export function requirementCheckOn(rt: Runtime, tier: Tier): boolean {
   const s = rt.settings.requirementCheck as Runtime['settings']['requirementCheck'] | undefined;
@@ -28,7 +29,10 @@ export const REQUIREMENTS_PROMPT = `先写《需求说明》，再按需求拆�
 "requirements":{"goal":"一两句话说清要达成什么","outOfScope":["明确不做的事"],"criteria":[{"id":"R1","text":"验收标准"}],"constraints":["从典章、项目规约里摘出与本旨意相关的约束"]}
 子任务写法：{"id":"S1",……,"covers":["R1","R2"]}
 - 验收标准逐条编号，一条只说一件事，写成做完后能核对的事实（文件内容、程序行为、命令输出、页面显示），不要写“代码质量好”这类无法核对的话。
-- 每条验收标准都要有子任务覆盖；旨意没提、你也不打算做的，写进 outOfScope。`;
+- 每条验收标准都要有子任务覆盖；旨意没提、你也不打算做的，写进 outOfScope。
+- R1 写旨意的核心要求，尽量用皇上原话；其余标准不能盖过它。
+- 验收标准只写硬要求：旨意原话的核心、明确的约束、问答纪要里皇上定下的决定。你自己补充的细节不要写成验收标准。
+- 验收标准只写对成品的要求：验收报告、复验记录、需求说明文件这类流程文书，旨意没要就不写；数量按【忠于旨意】给的范围写。`;
 
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
 const strList = (v: unknown) => (Array.isArray(v) ? v.map((x) => (typeof x === 'string' ? x.trim() : str((x as { text?: unknown })?.text))).filter(Boolean) : typeof v === 'string' && v.trim() ? [v.trim()] : []);
@@ -148,7 +152,7 @@ export async function runRequirementCheck(rt: Runtime, t: Task, node: RunNode, r
   const prev = t.requirementChecks?.at(-1);
   const prompt = [
     '【对照检查】',
-    `【旨意】${t.title}\n${truncate(t.edict, 2000)}`,
+    edictBlock(t, 2000),
     requirementsText(o.plan, true),
     `【各部结论】\n${o.conclusions || '无'}`,
     `【系统记录的文件改动】\n${o.changes || '无'}`,
@@ -158,6 +162,8 @@ export async function runRequirementCheck(rt: Runtime, t: Task, node: RunNode, r
 - met 必须写出证据：改了哪个文件的哪几行（用 view_changes / read_file 看过的）、哪条命令的输出、哪张预览截图。只写“已完成”不算证据，会按无法判断处理。
 - unmet 在 note 里写清还缺什么，让负责的部能照着补。
 - 只判定这些验收标准，不评价方案，不提新需求。
+- 按【忠于旨意】判定：数量是约数时落在范围内即 met；流程文书（报告、记录）没写或没回填，不算成品未满足。
+- 做法和字面不同、但达到了这条标准的目的，判 met，并在 note 写明出入；只有成品违背了它才判 unmet。
 只输出 JSON：{"items":[{"id":"R1","verdict":"met"|"unmet"|"unknown","evidence":"证据","note":"还缺什么"}]}`,
   ].filter(Boolean).join('\n\n');
   const agentId: AgentId = o.agentId ?? 'menxia';

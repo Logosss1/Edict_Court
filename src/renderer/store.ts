@@ -41,6 +41,8 @@ export interface UIState {
   bottomOpen: boolean;
   bottomTab: 'terminal' | 'problems' | 'output' | 'audit';
   composerHidden: boolean;
+  /** the 旨意 pane on the right of the workbench is collapsed (remembered in settings) */
+  agentPaneHidden: boolean;
   courtScene: CourtScene;
   courtDept: AgentId;
   review: { taskId: string; tab?: 'plan' | 'report' | 'diff' | 'timeline' } | null;
@@ -70,7 +72,7 @@ export interface AppState extends Snapshot {
 
 const initialUI: UIState = {
   mode: 'workbench', selectedTaskId: null, tabs: [{ id: 'panel:kanban', kind: 'panel', title: '旨意看板', panel: 'kanban' }], activeTab: 'panel:kanban',
-  sideView: 'explorer', settingsSection: 'appearance', kanbanView: 'board', bottomOpen: false, bottomTab: 'terminal', composerHidden: false, courtScene: 'taihe', courtDept: 'bingbu', review: null,
+  sideView: 'explorer', settingsSection: 'appearance', kanbanView: 'board', bottomOpen: false, bottomTab: 'terminal', composerHidden: false, agentPaneHidden: false, courtScene: 'taihe', courtDept: 'bingbu', review: null,
   agentDialog: null, debateId: null, toasts: [], palette: false, ceremony: false, lastChat: null, fsVersion: 0, changedPaths: [], previewBlocked: null, worktreeDialog: null, scheduleFocus: null, taskDetailTab: null,
 };
 
@@ -90,6 +92,13 @@ function set(next: Partial<AppState>) {
 
 export function getState() {
   return state;
+}
+
+/** Collapse or bring back the 旨意 pane on the right; remembered across restarts. */
+export function setAgentPaneHidden(hidden: boolean) {
+  if (state.ui.agentPaneHidden === hidden) return;
+  setUI({ agentPaneHidden: hidden });
+  void call('updateSettings', { agentPaneHidden: hidden });
 }
 
 export function setUI(patch: Partial<UIState> | ((ui: UIState) => Partial<UIState>)) {
@@ -248,7 +257,7 @@ export async function initStore() {
   const g = await call<Activity[]>('activities', undefined, 400);
   for (const a of g) actIndex.set(a.id, a);
   set({ activities: { ...state.activities, _global: g } });
-  setUI({ composerHidden: !!snap.settings.composerHidden });
+  setUI({ composerHidden: !!snap.settings.composerHidden, agentPaneHidden: !!snap.settings.agentPaneHidden });
   const active = snap.tasks.filter((t) => !['Done', 'Cancelled'].includes(t.state)).sort((a, b) => b.updatedAt - a.updatedAt)[0];
   if (active) selectTask(active.id);
 }

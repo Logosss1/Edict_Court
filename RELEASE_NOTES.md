@@ -2,6 +2,25 @@
 
 Release descriptions are on the [GitHub Releases page](https://github.com/Logosss1/Edict_Court/releases). Each version keeps its own installers.
 
+## 2.1.1
+
+**What's new**
+- **The planning official asks before planning.** In Court Lite, Full Court and your own designs, the official who plans (the Secretariat, or the planning role in a design) asks about the edict in rounds before the first plan. Every question has a recommended answer, follow-up questions wait for the answers they depend on, and there is no limit on rounds. Facts the official can look up itself are listed instead of asked and are used only once you confirm them. The rounds end in a summary of questions and answers that you confirm before work starts. In full-auto mode, unanswered questions go ahead on the recommended answer and stay open; a later answer reaches the officials as an oral order and the work is adjusted before the report. Solo and scheduled edicts don't ask. Skip it for one edict when you issue it, or turn it off in Settings › Permissions & approvals. This replaces the Crown Prince's single clarifying question.
+- **Lighter reviews.** The Chancellery marks each note *must fix* or *suggestion*, and only a must-fix sends work back; the second round checks only the last round's must-fix items. With the requirement check on, Full Court reviews the results once instead of twice. Your own plan review in Full Court is now off by default and can be turned on in Settings › Run policy. Small differences that break no hard requirement go into the report's *differences from the edict* section instead of another round.
+- **True to the edict.** The Secretariat may not change what an edict is mainly about, word counts are targets within about 15%, the final check compares only the finished work with the edict, and when the edict says you may be asked, the court asks before starting.
+- **Oral orders.** While an edict is running, switch the input box to send it a correction. The official at work reads it on the next step, and the later reviews and checks follow it. No new edict is created.
+- **Six thinking steps.** The thinking slider has the same six steps for every model: none, light, medium, high, extra high and max. Steps a model lacks are greyed out and skipped. Each step is mapped to the model's own levels from detection (or the model name), shown in a hint line, and can be changed on the model's card, with a button to go back to the automatic mapping.
+- **Response settings.** Temperature, top-p, frequency penalty and presence penalty can be set per model in Settings › Models and per official in the official model settings. Only the ones you tick are sent; an official's own settings win over the model's. If a service rejects them, the request is retried once without them.
+- **See why.** A blocked edict has a *See why* button that opens a window with the cause, each failed step, how to fix it, and buttons for the fixes.
+- **Model cards.** The Models page shows one card per model. Prices are hidden unless you tick the option to enter them, and a service's delete button sits in its card's corner.
+- **Collapsible edict pane.** The edict pane on the right of the workbench can be collapsed with the button at its top right or ⌘⌥B (View menu). It becomes a thin bar that shows how many things wait on you and whether an edict is running; click it or press the shortcut again to bring it back. Edict remembers the choice, and the pane opens again when you start a new edict with ⌘I.
+- **Unlimited budgets.** A token budget of 0 means no limit. The budget card has a new choice that lifts the limit for that edict so it runs to the end, next to raising the budget by half or cancelling. New installs keep the default budgets.
+
+**Fixes**
+- Approving a budget card after Edict was restarted now starts the edict again, instead of leaving it idle.
+
+**Install**: download `Edict-2.1.1-arm64.dmg`. Not signed with a Developer ID and not notarized — allow it once in System Settings → Privacy & Security → "Open Anyway". Your data is kept when you install over 2.1.0 or 2.0.x.
+
 ## 2.1.0
 
 **What's new**
