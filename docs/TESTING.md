@@ -12,9 +12,9 @@ xvfb-run -a npx tsx e2e/features.ts       # 功能（= npm run e2e:features）�
 xvfb-run -a npx tsx e2e/court-smoke.ts    # 朝堂冒烟
 xvfb-run -a npx tsx e2e/smoke.ts          # 启动冒烟：打开构建好的应用、截一张工作台
 ```
-- `e2e/features.ts` 的段（`ONLY=` 的取值，逗号分隔；不设则全跑）：`effort`、`error`、`preview`、`mcp`、`designs`、`designer`、`manage`、`tips`、`sidebar`、`worktree`、`v21`、`sched`、`oral`、`lanes`、`grill`、`budget`。
+- `e2e/features.ts` 的段（`ONLY=` 的取值，逗号分隔；不设则全跑）：`effort`、`error`、`preview`、`mcp`、`designs`、`designer`、`manage`、`tips`、`sidebar`、`worktree`、`v21`、`sched`、`oral`、`lanes`、`grill`、`budget`、`pane`。
 - 截图目录由 `SHOTS` 指定：`flow.ts` / `features.ts` 默认写进 `docs/screenshots/`（会改动仓库里的截图），`court-smoke.ts` 默认写到脚本里设定的临时目录；`features.ts` 里 2.1 各段（`v21`、`sched`、`lanes`）的截图以 `v21-` 开头，不会覆盖 README 用的朝堂截图；`smoke.ts` 的截图路径写死在脚本里。`EDICT_ELECTRON` 可换 Electron 可执行文件，`APP_DIR` 可让两个冒烟脚本启动别处的构建。每个脚本都用临时数据目录，不碰你的 EdictData。
-- 2.1.1 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 284/286，另有 2 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 22/22；`e2e/features.ts` 140/140（含 `oral`、`grill`、`budget` 段）。同一份代码在一台 Apple Silicon Mac 上：单元 + 集成 283/286，跳过 2 项，语言服务器探测 1 项超时（3 秒探测在这台 Mac 上偶尔不够，单独重跑 `tests/lsp.test.ts` 通过）。新功能还没用真实模型验证。
+- 2.1.1 的结果（Linux + Xvfb，mock LLM）：单元 + 集成 284/286，另有 2 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 22/22；`e2e/features.ts` 142/142（含 `oral`、`grill`、`budget`、`pane` 段）。同一份代码在一台 Apple Silicon Mac 上：单元 + 集成 283/286，跳过 2 项，语言服务器探测 1 项超时（3 秒探测在这台 Mac 上偶尔不够，单独重跑 `tests/lsp.test.ts` 通过）。新功能还没用真实模型验证。
 - 2.1.0 第三批的结果（Linux + Xvfb，mock LLM）：单元 + 集成 251/251，另有 2 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 21/21；`e2e/features.ts` 113/113（含 `lanes` 段 13 项）；`e2e/court-smoke.ts` 与 `e2e/smoke.ts`（正式构建）通过。客卿用的是按 ACP 写的测试程序，没有接真的外部智能体。同一份代码在一台 Apple Silicon Mac 上：单元 + 集成 251/251（含 2 项真实沙箱测试），跳过 2 项（没装 pyright、python3 没有 Pillow）。
 - 2.1.0 第二批的结果（Linux + Xvfb，mock LLM）：单元 + 集成 234/234，另有 2 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 21/21；`e2e/features.ts` 100/100（含 `sched` 段 14 项）；`e2e/court-smoke.ts` 与 `e2e/smoke.ts`（正式构建）通过。还没在 Mac 上跑。
 - 2.1.0 第一批的结果（Linux + Xvfb，mock LLM）：单元 + 集成 222/222，另有 2 项只在 macOS 上运行的真实沙箱测试跳过；`e2e/flow.ts` 21/21；`e2e/features.ts` 88/88（含 `v21` 段 11 项）；`e2e/court-smoke.ts` 与 `e2e/smoke.ts` 通过。同一份代码在一台 Apple Silicon Mac 上：单元 + 集成 222/222（含 2 项真实沙箱测试），跳过 2 项（没装 pyright、python3 没有 Pillow）。

@@ -1037,3 +1037,11 @@ select.input { padding: 4px 6px; }
 .composer .oral-switch button.on { border-color: var(--gold); color: var(--gold); background: color-mix(in srgb, var(--gold) 10%, transparent); }
 .composer .oral-switch .ellipsis { margin-left: 4px; }
 .composer.oral textarea { border-color: var(--gold); }
+
+/* 旨意 pane collapsed to a thin bar */
+.agent-rail { flex: none; width: 30px; display: flex; flex-direction: column; align-items: center; border-left: 1px solid var(--line); background: var(--bg2); }
+.agent-rail-btn { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; padding: 10px 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+.agent-rail-btn:hover { color: var(--text); background: var(--bg3); }
+.agent-rail-label { writing-mode: vertical-rl; font-size: 12px; letter-spacing: 2px; }
+.agent-rail-badge { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--gold); color: #fff; font-size: 10px; line-height: 16px; text-align: center; }
+.agent-rail-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--jade); }

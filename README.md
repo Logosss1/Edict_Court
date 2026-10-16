@@ -47,7 +47,7 @@ The Chancellery cannot be bypassed: there is no path from planning to execution 
 
 ### A full coding workbench
 
-A file tree, Monaco editor with diagnostics, project-wide search and replace, an integrated terminal, a problems panel and Git. Edict uses the language servers already installed on your Mac. A sandboxed preview runs generated web pages, and officials test their own pages in it. The Kanban board has a lane for everything waiting on you.
+A file tree, Monaco editor with diagnostics, project-wide search and replace, an integrated terminal, a problems panel and Git. Edict uses the language servers already installed on your Mac. A sandboxed preview runs generated web pages, and officials test their own pages in it. The Kanban board has a lane for everything waiting on you. The edict pane on the right can be collapsed to a thin bar (⌘⌥B) that still shows how many things wait on you.
 
 | Kanban | Editor | Web preview |
 |---|---|---|
@@ -131,7 +131,7 @@ In full-auto mode nobody may be there to answer. Unanswered questions then go ah
 
 ## Recent updates
 
-- **2.1.1**: the planning official asks before planning, review notes split into must-fix and suggestions, oral orders to a running edict, six fixed thinking steps, response settings per model and official, a *See why* window for blocked edicts, and token budgets that can be unlimited.
+- **2.1.1**: the planning official asks before planning, review notes split into must-fix and suggestions, oral orders to a running edict, six fixed thinking steps, response settings per model and official, a *See why* window for blocked edicts, token budgets that can be unlimited, and an edict pane that collapses.
 - **2.1.0**: web reading and search, a command sandbox, requirement specs checked at the end, scheduled edicts, outside coding agents as officials, several attempts at one subtask, and worktree setup with ports of their own.
 - **2.0.3**: the living palace, ten new scenes, and the Crown Prince's clarifying question.
 - **2.0**: execution you stay in charge of, one git worktree per edict, MCP login with resources and prompts, language servers, editors over ACP, built-in skills, SQLite storage and a new settings center.

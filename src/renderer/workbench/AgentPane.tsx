@@ -1,6 +1,6 @@
 // Agent pane: task switcher, live activity, gates, and the 下旨 composer.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore, setUI, selectTask, openTaskTab, openPanel, toast, getState } from '../store';
+import { useStore, setUI, setAgentPaneHidden, selectTask, openTaskTab, openPanel, toast, getState } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { Markdown } from '../common/Markdown';
@@ -46,6 +46,9 @@ export function AgentPane() {
             <Icon name="crown" size={14} />
           </button>
         )}
+        <button className="icon-btn" {...tip('收起旨意面板', '把右边这一栏收成一条窄边，编辑区更宽；点窄边或再按快捷键展开', '⌘⌥B', 'below')} onClick={() => setAgentPaneHidden(true)} data-testid="agent-pane-hide">
+          <Icon name="sidebarRight" size={14} />
+        </button>
       </div>
       {pickerOpen && (
         <div className="ap-picklist" onMouseLeave={() => setPickerOpen(false)}>
@@ -364,6 +367,7 @@ export function parseModel(key: string): ModelRef | null {
 export function draftToComposer(text: string) {
   (window as unknown as { __edictDraft?: string }).__edictDraft = text;
   setUI({ composerHidden: false, mode: 'workbench' });
+  setAgentPaneHidden(false);
   selectTask(null);
   // remount composer to pick up draft
   setTimeout(() => {

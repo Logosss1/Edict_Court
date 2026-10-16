@@ -1,6 +1,6 @@
 // 旨意看板 (2.0): what needs you first, then every edict by phase (分拣·规划 → 审议 → 执行 → 回奏·御批 → 已结).
 import { useMemo, useRef, useState } from 'react';
-import { useStore, selectTask, openTaskTab, openPanel, setUI, toast } from '../store';
+import { useStore, selectTask, openTaskTab, openPanel, setUI, setAgentPaneHidden, toast } from '../store';
 import { call } from '../api';
 import { AGENT_MAP, TIER_SHORT, TERMINAL } from '../../shared/court';
 import type { AgentRuntime, Task, TaskState, Tier } from '../../shared/types';
@@ -119,6 +119,7 @@ export function Kanban() {
 export function focusComposer() {
   selectTask(null);
   setUI({ composerHidden: false, lastChat: null, mode: 'workbench' });
+  setAgentPaneHidden(false);
   setTimeout(() => document.querySelector<HTMLTextAreaElement>('#composer-input')?.focus(), 40);
 }
 

@@ -22,6 +22,7 @@ export function defaultSettings(): Settings {
     theme: 'system',
     lastWorkspace: null,
     composerHidden: false,
+    agentPaneHidden: false,
     language: 'zh',
     confirmWriteTasks: true,
     autoResumeSafe: true,

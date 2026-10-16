@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { useStore, setAgentPaneHidden } from '../store';
+import { useAttentionCount } from '../common/attention';
 import { call } from '../api';
 import { openPreview } from './PreviewView';
 import { Icon } from '../common/Icon';
@@ -15,6 +16,7 @@ import { InboxView } from './Attention';
 export function Workbench() {
   const sideView = useStore((s) => s.ui.sideView);
   const bottomOpen = useStore((s) => s.ui.bottomOpen);
+  const paneHidden = useStore((s) => s.ui.agentPaneHidden);
   const [sideW, setSideW] = useState(250);
   const [rightW, setRightW] = useState(410);
   const [bottomH, setBottomH] = useState(240);
@@ -46,11 +48,33 @@ export function Workbench() {
           </>
         )}
       </main>
-      <Splitter dir="v" onDrag={(d) => setRightW((w) => Math.min(760, Math.max(320, w - d)))} />
-      <aside className="agent-pane" style={{ width: rightW }}>
-        <AgentPane />
-      </aside>
+      {paneHidden ? (
+        <AgentRail />
+      ) : (
+        <>
+          <Splitter dir="v" onDrag={(d) => setRightW((w) => Math.min(760, Math.max(320, w - d)))} />
+          <aside className="agent-pane" style={{ width: rightW }}>
+            <AgentPane />
+          </aside>
+        </>
+      )}
     </div>
+  );
+}
+
+/** The 旨意 pane collapsed: a thin bar on the right that brings it back, with what is waiting on you and what is running. */
+function AgentRail() {
+  const waiting = useAttentionCount();
+  const running = useStore((s) => s.tasks.filter((t) => !['Done', 'Cancelled', 'Blocked'].includes(t.state) && !t.paused && !t.gate).length);
+  return (
+    <aside className="agent-rail" data-testid="agent-rail">
+      <button className="agent-rail-btn" title="展开旨意面板（⌘⌥B）" onClick={() => setAgentPaneHidden(false)} data-testid="agent-pane-show">
+        <Icon name="sidebarRight" size={15} />
+        <span className="agent-rail-label">旨意</span>
+        {waiting > 0 && <span className="agent-rail-badge" title={`${waiting} 件等你处理`}>{waiting}</span>}
+        {running > 0 && <span className="agent-rail-dot" title={`${running} 道在办`} />}
+      </button>
+    </aside>
   );
 }
 

@@ -1,6 +1,6 @@
 // ⌘P / ⇧⌘P — quick open files and run commands.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useStore, setUI, openPanel, type PanelId } from '../store';
+import { useStore, setUI, setAgentPaneHidden, getState, openPanel, type PanelId } from '../store';
 import { call } from '../api';
 import { openFile } from './Explorer';
 
@@ -30,6 +30,7 @@ export function CommandPalette() {
       { label: '> 切换 工作台 / 朝堂', hint: '⌘J', run: () => setUI((u) => ({ mode: u.mode === 'court' ? 'workbench' : 'court' })) },
       { label: '> 打开工作区文件夹', hint: '⌘O', run: () => void call('openFolder') },
       { label: '> 显示/隐藏 终端', hint: '⌃`', run: () => setUI((u) => ({ bottomOpen: !u.bottomOpen, bottomTab: 'terminal' })) },
+      { label: '> 显示/收起 旨意面板', hint: '⌘⌥B', run: () => { setAgentPaneHidden(!getState().ui.agentPaneHidden); setUI({ mode: 'workbench' }); } },
       { label: '> 上朝仪式', run: () => setUI({ ceremony: true }) },
       ...panels.map(([id, l]) => ({ label: `> 军机处：${l}`, run: () => openPanel(id) })),
     ];

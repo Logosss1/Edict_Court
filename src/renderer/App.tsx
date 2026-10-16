@@ -1,5 +1,5 @@
 import { useEffect, useState, lazy, Suspense, Component, type ReactNode } from 'react';
-import { useStore, setUI, onMenu, getState, openPanel, openSettings, toast, dismissToast } from './store';
+import { useStore, setUI, setAgentPaneHidden, onMenu, getState, openPanel, openSettings, toast, dismissToast } from './store';
 import { call, isMac } from './api';
 import { Icon } from './common/Icon';
 import { TipLayer } from './common/Tip';
@@ -35,10 +35,12 @@ export function App() {
             const hidden = !ui.composerHidden;
             setUI({ composerHidden: hidden, mode: 'workbench' });
             void call('updateSettings', { composerHidden: hidden });
+            if (!hidden) setAgentPaneHidden(false);
             break;
           }
           case 'focus-composer':
             setUI({ composerHidden: false, mode: 'workbench' });
+            setAgentPaneHidden(false);
             setTimeout(() => document.querySelector<HTMLTextAreaElement>('#composer-input')?.focus(), 50);
             break;
           case 'open-panel':
@@ -49,6 +51,10 @@ export function App() {
             break;
           case 'toggle-terminal':
             setUI({ bottomOpen: !(ui.bottomOpen && ui.bottomTab === 'terminal'), bottomTab: 'terminal', mode: 'workbench' });
+            break;
+          case 'toggle-agent-pane':
+            setAgentPaneHidden(!ui.agentPaneHidden);
+            if (ui.mode !== 'workbench') setUI({ mode: 'workbench' });
             break;
           case 'toggle-sidebar':
             setUI({ sideView: ui.sideView ? null : 'explorer' });

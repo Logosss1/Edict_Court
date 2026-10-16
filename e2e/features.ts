@@ -1073,6 +1073,25 @@ document.getElementById('name').addEventListener('keydown', function (e) { if (e
     await inv('setWorkspace', ws);
   }
 
+  // ── 收起旨意面板
+  if (want('pane')) {
+    await win.evaluate(() => (window as any).__edictUI.setUI({ mode: 'workbench' }));
+    await win.waitForSelector('[data-testid=agent-pane-hide]');
+    const wide0 = (await win.locator('.wb-main').boundingBox())?.width ?? 0;
+    await win.click('[data-testid=agent-pane-hide]');
+    await win.waitForSelector('[data-testid=agent-rail]', { timeout: 5000 });
+    await win.waitForTimeout(400);
+    const wide1 = (await win.locator('.wb-main').boundingBox())?.width ?? 0;
+    const sp: any = await inv('snapshot');
+    ok('收起旨意面板：右边只剩一条窄边，编辑区变宽，设置记住了', (await win.locator('.agent-pane').count()) === 0 && wide1 > wide0 + 250 && sp.settings.agentPaneHidden === true, `${wide0} → ${wide1} ${sp.settings.agentPaneHidden}`);
+    await shot('56-agent-pane-collapsed');
+    await win.click('[data-testid=agent-pane-show]');
+    await win.waitForSelector('.agent-pane', { timeout: 5000 });
+    await win.waitForTimeout(300);
+    const sp2: any = await inv('snapshot');
+    ok('点窄边展开，设置也改回来', (await win.locator('[data-testid=agent-rail]').count()) === 0 && sp2.settings.agentPaneHidden === false);
+  }
+
   const leak = ['audit.jsonl', 'state.json', 'settings.json', 'mcp.json', 'edict.db', 'edict.db-wal'].map((f) => path.join(dataDir, 'EdictData', f)).some((f) => fs.existsSync(f) && fs.readFileSync(f, 'utf8').includes('SECRET-KEY'));
   ok('API Key 未出现在审计/状态/设置/mcp.json 中', !leak);
   ok('无前端运行时错误', errors.filter((e) => !/ResizeObserver|Autofocus|Electron Security|favicon|cdn\.example\.com|ERR_BLOCKED|undefinedFn|broken/.test(e)).length === 0, errors.slice(0, 3).join(' | '));

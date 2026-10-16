@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, lazy, Suspense } from 'react';
-import { useStore, setUI, closeTab, markDirty, onMenu, getState, toast, type Tab } from '../store';
+import { useStore, setUI, setAgentPaneHidden, closeTab, markDirty, onMenu, getState, toast, type Tab } from '../store';
 import { call } from '../api';
 import { Icon } from '../common/Icon';
 import { loadMonaco, languageFor, monacoTheme } from '../common/loaders';
@@ -302,7 +302,7 @@ function Welcome() {
       <p className="muted">下旨 → 太子分拣 → 中书规划 → 门下审议（准奏 / 封驳）→ 尚书派发 → 六部执行 → 回奏</p>
       <div className="welcome-actions">
         {!ws && <button className="btn primary" onClick={() => call('openFolder')}><Icon name="folder" /> 打开工作区</button>}
-        <button className="btn" onClick={() => setUI({ composerHidden: false })}><Icon name="send" /> 下旨（⌘I）</button>
+        <button className="btn" onClick={() => { setUI({ composerHidden: false }); setAgentPaneHidden(false); }}><Icon name="send" /> 下旨（⌘I）</button>
         <button className="btn" onClick={() => setUI({ mode: 'court' })}><Icon name="crown" /> 上朝（⌘J）</button>
       </div>
     </div>

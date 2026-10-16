@@ -13,6 +13,7 @@ Release descriptions are on the [GitHub Releases page](https://github.com/Logoss
 - **Response settings.** Temperature, top-p, frequency penalty and presence penalty can be set per model in Settings › Models and per official in the official model settings. Only the ones you tick are sent; an official's own settings win over the model's. If a service rejects them, the request is retried once without them.
 - **See why.** A blocked edict has a *See why* button that opens a window with the cause, each failed step, how to fix it, and buttons for the fixes.
 - **Model cards.** The Models page shows one card per model. Prices are hidden unless you tick the option to enter them, and a service's delete button sits in its card's corner.
+- **Collapsible edict pane.** The edict pane on the right of the workbench can be collapsed with the button at its top right or ⌘⌥B (View menu). It becomes a thin bar that shows how many things wait on you and whether an edict is running; click it or press the shortcut again to bring it back. Edict remembers the choice, and the pane opens again when you start a new edict with ⌘I.
 - **Unlimited budgets.** A token budget of 0 means no limit. The budget card has a new choice that lifts the limit for that edict so it runs to the end, next to raising the budget by half or cancelling. New installs keep the default budgets.
 
 **Fixes**

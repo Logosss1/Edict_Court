@@ -50,6 +50,7 @@ const P: Record<string, string> = {
   flag: 'M5 21V4M5 4h11l-2 4 2 4H5',
   panel: 'M3 4h18v16H3zM3 15h18',
   sidebar: 'M3 4h18v16H3zM9 4v16',
+  sidebarRight: 'M3 4h18v16H3zM15 4v16',
   refresh: 'M20 11a8 8 0 0 0-14-5l-2 2M4 13a8 8 0 0 0 14 5l2-2M4 4v4h4M20 20v-4h-4',
   pin: 'M12 17v5M8 3h8l-1 7 3 3H6l3-3z',
   mail: 'M3 5h18v14H3zM3 6l9 7 9-7',

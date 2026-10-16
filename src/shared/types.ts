@@ -975,6 +975,8 @@ export interface Settings {
   lastWorkspace: string | null;
   ceremonyShownOn?: string; // yyyy-mm-dd
   composerHidden: boolean;
+  /** the 旨意 pane on the right of the workbench is collapsed to a thin bar */
+  agentPaneHidden?: boolean;
   composerEffort?: string;
   defaultDesign?: string; // design id preselected in the composer
   previewAllowNetwork?: boolean; // HTML 预览可加载外部网络资源（默认仅本地） // last 思考程度 slider value ('default' | 'top' | level)
